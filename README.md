@@ -51,6 +51,8 @@ Twelve appearances are available: System / Qt, Charcoal, Midnight, Nord, Catppuc
 
 Preferences and recent paths are local. On Linux they live in `$XDG_CONFIG_HOME/flowa/settings.json`, normally `~/.config/flowa/settings.json`. Flowa makes no network requests and does not index your home directory. It scans only the folder you open.
 
+Control icons use bundled [Lucide](https://lucide.dev/) SVGs and follow the selected theme. They render locally and work offline. Icon license notices are available in Preferences → About → Icon licenses and in [assets/icons/lucide/LICENSE](assets/icons/lucide/LICENSE).
+
 ## Image support
 
 The core build reads JPEG, PNG/APNG, GIF, WebP, BMP, ICO, TIFF, TGA, DDS, QOI, PNM, farbfeld, OpenEXR, Radiance HDR, SVG/SVGZ, and JPEG XL. Default builds add AVIF and HEIC/HEIF.

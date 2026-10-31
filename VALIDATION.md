@@ -2,6 +2,14 @@
 
 Recorded on 2026-10-31 on Arch Linux with Rust 1.99.1. Native rendering used an NVIDIA GeForce GTX 1050 Ti through Vulkan.
 
+## Lucide control icons
+
+The Lucide replacement on 2026-10-31 passed `cargo fmt --check`, `cargo clippy -j 3 --all-targets -- -D warnings`, `cargo test -j 3`, `cargo check -j 3 --no-default-features`, and `cargo build -j 3`. All 30 tests passed. The three new tests cover rasterization of all 18 embedded SVGs at multiple sizes, premultiplied-alpha masks suitable for tinting, texture reuse across frames, separate entries for different display sizes, the 64-entry cache bound, and eviction after disuse.
+
+Native Vulkan captures were inspected in Nord and Paper, including disabled controls, selected accent swatches, thumbnail placeholders, and 150% UI scale. X11 interaction checks passed for keyboard and toolbar navigation, filmstrip selection, wheel zoom, drag panning, rotation, rename, trash cancellation and confirmation, clearing the last image, preferences, fullscreen, context menus, and clean exit. A separate check verified animation playback, pause, resume, and isolated settings persistence.
+
+Assets and the full upstream license are embedded in the executable. No dependencies were added. Native checks used copied fixtures and isolated configuration/trash directories under `/tmp/flowa-lucide-pv8d_2mp`. This pass rebuilt the debug executable; release measurements below remain historical.
+
 ## Readability and UI nesting
 
 The readability pass on 2026-10-31 split deeply nested filmstrip, canvas, dialog, inspector, toolbar, and preferences code into focused helpers. Layout scopes and widget order were retained. Application updates, UI composition, and maintenance now have named phases. Semantic blank lines separate setup, guards, calculations, worker requests, and results throughout application, service, and viewer code. `AGENTS.md` records these conventions for future edits.

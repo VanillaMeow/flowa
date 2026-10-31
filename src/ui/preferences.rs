@@ -241,6 +241,12 @@ fn about(ui: &mut egui::Ui, colors: Colors) {
         "Embedded RGB ICC profiles are converted to sRGB. Monitor-specific ",
         "profiling and full HDR output are not implemented.",
     ));
+
+    ui.add_space(12.);
+    ui.collapsing("Icon licenses", |ui| {
+        ui.label("Lucide icons");
+        ui.add(egui::Label::new(icons::LICENSE).wrap().selectable(true));
+    });
 }
 
 fn appearance(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors) {

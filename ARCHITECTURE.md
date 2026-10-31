@@ -9,7 +9,7 @@ Flowa is one Rust crate. `src/main.rs` handles the native entry point, codec reg
 | `app/` | Application construction and coordination | `application.rs`, `command.rs`, `command_handler.rs`, `worker_results.rs`, `launch.rs`, `capture.rs` |
 | `viewer/` | Viewing state and rules | `browser.rs`, `catalog.rs`, `image_session.rs`, `playback.rs`, `transform.rs` |
 | `ui/` | Egui components, styling, input, and drawing | `viewer_ui.rs`, `canvas.rs`, `filmstrip.rs`, `toolbar.rs`, `inspector.rs`, `dialogs.rs`, `preferences.rs`, `keyboard.rs`, `theme.rs`, `icons.rs` |
-| `ui/rendering/` | GPU textures and drawing geometry | `image_renderer.rs`, `geometry.rs` |
+| `ui/rendering/` | GPU textures and drawing geometry | `image_renderer.rs`, `icon_cache.rs`, `geometry.rs` |
 | `services/` | Filesystem access, codecs, desktop integration, and background workers | `folder_scan.rs`, `image_decode.rs`, `image_workers.rs`, `file_actions.rs` |
 | `settings/` | Configuration values and persistence | `model.rs`, `store.rs` |
 | `utils/` | General helpers with no application, viewer, or UI dependencies | `format.rs`, `filename.rs` |
@@ -39,6 +39,14 @@ Toolbar, status, context-menu, and inspector rendering remain functions with exp
 Components collect commands in a local vector; `Flowa` applies them after each panel releases its borrows, before drawing dependent panels. Navigation, sorting, view commands, file operations, and window toggles use the same handlers regardless of their input source. Continuous canvas dragging and pointer zoom update the canvas's own view directly.
 
 Rename/trash confirmations carry the path captured when the dialog opened. The command handler dispatches native work through the `services::file_actions::Task` channel. UI commands are synchronous and do not use a separate message bus.
+
+## Control icons
+
+`ui/icons.rs` maps semantic control names to bundled [Lucide SVGs](assets/icons/lucide/README.md), retaining the button, tooltip, and accessibility helpers. The Flowa flower logo remains its own vector artwork. `ui/rendering/icon_cache.rs` rasterizes SVGs with the existing resvg dependency and stores the resulting textures in egui's context-owned cache.
+
+Icon textures are keyed by glyph and physical pixel size. Monochrome SVGs become white premultiplied-alpha masks; the painter applies the current text, accent, or disabled color without rerasterizing. Bitmap rectangles align to device pixels. Cache lookup/insertion happens under egui's memory lock, while rasterization and texture upload happen after that lock is released.
+
+The cache holds at most 64 entries and releases icons unused for 120 frames. Failed rasterizations are cached too. Assets are embedded at compile time and require no runtime file or network access. The pinned upstream revision and full ISC/MIT notices are stored under `assets/icons/lucide`; the license text is also available in Preferences → About → Icon licenses.
 
 ## Readability conventions
 

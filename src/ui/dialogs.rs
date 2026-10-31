@@ -218,7 +218,9 @@ fn notice_frame(ui: &mut egui::Ui, notice: &Notice, colors: Colors) -> bool {
 fn notice_row(ui: &mut egui::Ui, notice: &Notice) -> bool {
     ui.horizontal(|ui| {
         if notice.error {
-            ui.label(RichText::new("!").color(error_color()));
+            let (rect, _) =
+                ui.allocate_exact_size(vec2(16., 18.), egui::Sense::hover());
+            icons::paint(ui.painter(), Icon::Alert, rect.center(), 16., error_color());
         }
 
         ui.add(egui::Label::new(&notice.message).wrap().selectable(true))
