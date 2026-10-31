@@ -1,6 +1,24 @@
 //! Bounded background workers for decoding, tiles, and thumbnails
 
-use super::*;
+use std::{
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+        mpsc,
+    },
+    thread,
+};
+
+use anyhow::{Context, Result};
+use egui::ColorImage;
+use image::RgbaImage;
+
+use crate::viewer::image_session::DecodedImage;
+
+use super::image_decode::{color_image, decode, thumbnail};
+
+pub const TILE_SIZE: u32 = 1024;
 
 pub struct LoadRequest {
     pub generation: u64,
@@ -24,14 +42,15 @@ impl Loader {
         let (sender, requests_rx) = mpsc::channel::<LoadRequest>();
         let (results_tx, results) = mpsc::sync_channel(1);
         let generation = Arc::new(AtomicU64::new(0));
-        let active_generation = generation.clone();
+        let active_generation = Arc::clone(&generation);
 
         thread::spawn(move || {
             while let Ok(mut request) = requests_rx.recv() {
                 // Skip intermediate selections when the user holds an arrow key
-                while let Ok(new) = requests_rx.try_recv() {
-                    request = new;
+                while let Ok(new_request) = requests_rx.try_recv() {
+                    request = new_request;
                 }
+
                 if active_generation.load(Ordering::Relaxed) != request.generation {
                     continue;
                 }
@@ -39,6 +58,7 @@ impl Loader {
                 let result = decode(&request.path, request.budget).with_context(|| {
                     format!("Could not open {}", request.path.display())
                 });
+
                 if active_generation.load(Ordering::Relaxed) != request.generation {
                     continue;
                 }
@@ -52,6 +72,7 @@ impl Loader {
                 {
                     break;
                 }
+
                 ctx.request_repaint();
             }
         });
@@ -104,14 +125,16 @@ impl TileWorker {
         let (requests, requests_rx) = mpsc::sync_channel::<TileRequest>(24);
         let (results_tx, results) = mpsc::sync_channel(4);
         let generation = Arc::new(AtomicU64::new(0));
-        let active_generation = generation.clone();
+        let active_generation = Arc::clone(&generation);
 
         thread::spawn(move || {
             while let Ok(request) = requests_rx.recv() {
                 if request.key.generation != active_generation.load(Ordering::Relaxed) {
                     continue;
                 }
+
                 let size = request.pixels.dimensions();
+
                 // Each level halves the resolution while covering more source pixels
                 let stride = 1_u32 << request.key.level;
                 let span = TILE_SIZE * stride;
@@ -121,6 +144,7 @@ impl TileWorker {
                 let y0 = (request.key.y * span).saturating_sub(stride);
                 let x1 = ((request.key.x + 1) * span + stride).min(size.0);
                 let y1 = ((request.key.y + 1) * span + stride).min(size.1);
+
                 if x0 >= x1 || y0 >= y1 {
                     continue;
                 }
@@ -151,6 +175,7 @@ impl TileWorker {
                         egui::pos2(x1 as f32, y1 as f32),
                     ),
                 };
+
                 // Drop work for an image that was closed while the tile was built
                 if request.key.generation != active_generation.load(Ordering::Relaxed) {
                     continue;
@@ -159,6 +184,7 @@ impl TileWorker {
                 if results_tx.send(result).is_err() {
                     break;
                 }
+
                 ctx.request_repaint();
             }
         });
@@ -193,28 +219,32 @@ impl ThumbnailWorker {
         let (requests, requests_rx) = mpsc::sync_channel::<ThumbnailRequest>(24);
         let (results_tx, results) = mpsc::sync_channel(4);
         let generation = Arc::new(AtomicU64::new(0));
-        let active_generation = generation.clone();
+        let active_generation = Arc::clone(&generation);
 
         thread::spawn(move || {
             while let Ok(request) = requests_rx.recv() {
                 if active_generation.load(Ordering::Relaxed) != request.generation {
                     continue;
                 }
+
                 let result = ThumbnailResult {
                     path: request.path,
                     generation: request.generation,
                     image: None,
                 };
                 let image = thumbnail(&result.path).ok();
+
                 if active_generation.load(Ordering::Relaxed) != request.generation {
                     continue;
                 }
+
                 if results_tx
                     .send(ThumbnailResult { image, ..result })
                     .is_err()
                 {
                     break;
                 }
+
                 ctx.request_repaint();
             }
         });

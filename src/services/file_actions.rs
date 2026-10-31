@@ -8,7 +8,12 @@ use std::{
 use anyhow::{Context, Result, ensure};
 use image::{DynamicImage, RgbaImage};
 
-use crate::{catalog, loader, view::View};
+use crate::{
+    utils::filename,
+    viewer::{catalog, transform::View},
+};
+
+use super::image_decode;
 
 pub enum Task {
     Pick {
@@ -57,12 +62,15 @@ impl Actions {
 
             while let Ok(task) = rx.recv() {
                 let result = perform(task, &mut clipboard);
+
                 if tx.send(result).is_err() {
                     break;
                 }
+
                 ctx.request_repaint();
             }
         });
+
         Self { sender, results }
     }
 
@@ -82,16 +90,19 @@ fn perform(task: Task, clipboard: &mut Option<arboard::Clipboard>) -> Result<Out
             if let Some(start) = start {
                 dialog = dialog.set_directory(start);
             }
+
             if folder {
                 Ok(Outcome::Picked(dialog.pick_folder()))
             } else {
                 let mut extensions = catalog::EXTENSIONS.to_vec();
+
                 if cfg!(feature = "avif") {
                     extensions.push("avif");
                 }
                 if cfg!(feature = "heif") {
                     extensions.extend(["heic", "heif"]);
                 }
+
                 Ok(Outcome::Picked(
                     dialog
                         .add_filter("Images", &extensions)
@@ -127,11 +138,13 @@ fn perform(task: Task, clipboard: &mut Option<arboard::Clipboard>) -> Result<Out
                         .ok()
                         .zip(source.canonicalize().ok())
                         .is_some_and(|(a, b)| a == b);
+
                 ensure!(
                     !same,
                     "Choose a different file. Export creates a copy and preserves your original."
                 );
-                loader::export(
+
+                image_decode::export(
                     &pixels,
                     &path,
                     view.rotation,
@@ -145,12 +158,15 @@ fn perform(task: Task, clipboard: &mut Option<arboard::Clipboard>) -> Result<Out
         }
         Task::Copy { pixels, view } => {
             let mut image = DynamicImage::ImageRgba8(pixels.as_ref().clone());
+
             if view.flip_x {
                 image = image.fliph();
             }
+
             if view.flip_y {
                 image = image.flipv();
             }
+
             image = match view.rotation % 4 {
                 1 => image.rotate90(),
                 2 => image.rotate180(),
@@ -176,25 +192,30 @@ fn perform(task: Task, clipboard: &mut Option<arboard::Clipboard>) -> Result<Out
                     })
                     .context("Could not copy image")?;
             }
+
             Ok(Outcome::Copied)
         }
         Task::Rename { source, name } => {
             ensure!(
-                catalog::valid_filename(&name),
+                filename::is_valid(&name),
                 "Choose a valid filename without path separators or reserved characters."
             );
+
             let new = source
                 .parent()
                 .context("The image has no parent folder")?
                 .join(name);
+
             if new == source {
                 return Ok(Outcome::Renamed { old: source, new });
             }
+
             ensure!(
                 !new.try_exists()
                     .context("Could not check the new filename")?,
                 "A file with that name already exists."
             );
+
             std::fs::rename(&source, &new).context("Could not rename image")?;
             Ok(Outcome::Renamed { old: source, new })
         }

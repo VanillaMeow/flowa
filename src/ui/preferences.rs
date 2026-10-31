@@ -1,9 +1,12 @@
+//! Preferences window, tabs, and shortcut reference
+
 use egui::{Color32, RichText, vec2};
 
-use crate::{
+use crate::settings::{Accent, Canvas, Settings, Theme};
+
+use super::{
     icons,
-    settings::{Canvas, Settings},
-    theme::{self, Accent, Colors, Theme},
+    theme::{self, Colors},
 };
 
 pub const SHORTCUTS: &[(&str, &str)] = &[
@@ -33,52 +36,80 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("Ctrl+Q", "Quit"),
 ];
 
-pub fn show(
-    ctx: &egui::Context,
-    open: &mut bool,
-    settings: &mut Settings,
-    tab: &mut usize,
-    colors: Colors,
-    gpu: &str,
-) -> bool {
-    let before = serde_json::to_string(settings).unwrap_or_default();
-    let default_position =
-        (ctx.viewport_rect().center() - vec2(330., 310.)).max(egui::pos2(12., 12.));
+#[derive(Default)]
+pub struct PreferencesWindow {
+    pub open: bool,
+    tab: usize,
+}
 
-    egui::Window::new("Preferences")
-        .id(egui::Id::unique("preferences"))
-        .open(open)
-        .collapsible(false)
-        .resizable(true)
-        .default_size(vec2(660., 620.))
-        .default_pos(default_position)
-        .min_size(vec2(460., 360.))
-        .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                let tabs =
-                    ["Appearance", "Viewing", "Performance", "Shortcuts", "About"];
+impl PreferencesWindow {
+    pub fn new(open: bool) -> Self {
+        Self { open, tab: 0 }
+    }
 
-                for (index, label) in tabs.iter().enumerate() {
-                    ui.selectable_value(tab, index, *label);
-                }
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        settings: &mut Settings,
+        colors: Colors,
+        gpu: &str,
+    ) -> bool {
+        if !self.open {
+            return false;
+        }
+
+        let before = serde_json::to_string(settings).unwrap_or_default();
+        let default_position =
+            (ctx.viewport_rect().center() - vec2(330., 310.)).max(egui::pos2(12., 12.));
+
+        egui::Window::new("Preferences")
+            .id(egui::Id::unique("preferences"))
+            .open(&mut self.open)
+            .collapsible(false)
+            .resizable(true)
+            .default_size(vec2(660., 620.))
+            .default_pos(default_position)
+            .min_size(vec2(460., 360.))
+            .show(ctx, |ui| {
+                preference_tabs(ui, &mut self.tab);
+
+                ui.add_space(12.);
+                ui.separator();
+                ui.add_space(8.);
+
+                egui::ScrollArea::vertical()
+                    .max_height(540.)
+                    .show(ui, |ui| preference_tab(ui, self.tab, settings, colors, gpu));
             });
 
-            ui.add_space(12.);
-            ui.separator();
-            ui.add_space(8.);
+        before != serde_json::to_string(settings).unwrap_or_default()
+    }
+}
 
-            egui::ScrollArea::vertical()
-                .max_height(540.)
-                .show(ui, |ui| match *tab {
-                    0 => appearance(ui, settings, colors),
-                    1 => viewing(ui, settings),
-                    2 => performance(ui, settings, colors, gpu),
-                    3 => shortcuts(ui),
-                    _ => about(ui, colors),
-                });
-        });
+fn preference_tabs(ui: &mut egui::Ui, tab: &mut usize) {
+    let tabs = ["Appearance", "Viewing", "Performance", "Shortcuts", "About"];
 
-    before != serde_json::to_string(settings).unwrap_or_default()
+    ui.horizontal(|ui| {
+        for (index, label) in tabs.iter().enumerate() {
+            ui.selectable_value(tab, index, *label);
+        }
+    });
+}
+
+fn preference_tab(
+    ui: &mut egui::Ui,
+    tab: usize,
+    settings: &mut Settings,
+    colors: Colors,
+    gpu: &str,
+) {
+    match tab {
+        0 => appearance(ui, settings, colors),
+        1 => viewing(ui, settings),
+        2 => performance(ui, settings, colors, gpu),
+        3 => shortcuts(ui),
+        _ => about(ui, colors),
+    }
 }
 
 fn viewing(ui: &mut egui::Ui, settings: &mut Settings) {
@@ -215,9 +246,42 @@ fn about(ui: &mut egui::Ui, colors: Colors) {
 fn appearance(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors) {
     ui.heading("A space that feels like yours");
     ui.add_space(8.);
-    ui.label(RichText::new("System / Qt follows KDE’s color palette on Linux. Other desktops use the system light or dark preference.").color(colors.muted));
+    ui.label(
+        RichText::new(concat!(
+            "System / Qt follows KDE’s color palette on Linux. ",
+            "Other desktops use the system light or dark preference.",
+        ))
+        .color(colors.muted),
+    );
     ui.add_space(14.);
 
+    theme_picker(ui, settings, colors);
+
+    ui.add_space(18.);
+    ui.label("Accent palette");
+    ui.horizontal_wrapped(|ui| accent_picker(ui, settings, colors));
+
+    ui.add_space(18.);
+    ui.label("Canvas background");
+    ui.horizontal_wrapped(|ui| canvas_picker(ui, settings));
+
+    if settings.canvas == Canvas::Custom {
+        custom_canvas_color(ui, settings);
+    }
+
+    ui.add_space(14.);
+    checkerboard_controls(ui, settings);
+
+    ui.add_space(16.);
+    ui.label("Interface size");
+    ui.add(
+        egui::Slider::new(&mut settings.ui_scale, 0.8..=1.75)
+            .step_by(0.05)
+            .suffix("×"),
+    );
+}
+
+fn theme_picker(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors) {
     let columns = ((ui.available_width() + 9.) / 170.).floor().clamp(1., 3.) as usize;
     let card_width =
         (ui.available_width() - (columns - 1) as f32 * 9.) / columns as f32;
@@ -227,96 +291,93 @@ fn appearance(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors) {
         .spacing(vec2(9., 9.))
         .show(ui, |ui| {
             for (index, theme) in Theme::ALL.into_iter().enumerate() {
-                let preview_colors = theme::colors(theme, Accent::Theme, colors.dark);
-                let button = egui::Button::new(
-                    RichText::new(theme.name()).color(preview_colors.text),
-                )
-                .fill(preview_colors.panel)
-                .stroke(egui::Stroke::new(
-                    if settings.theme == theme { 2. } else { 1. },
-                    if settings.theme == theme {
-                        colors.accent
-                    } else {
-                        colors.border
-                    },
-                ))
-                .min_size(vec2(card_width, 54.));
+                let selected = settings.theme == theme;
+                let button = theme_card(theme, selected, card_width, colors);
+
                 if ui.add(button).clicked() {
                     settings.theme = theme;
                 }
+
                 if index % columns == columns - 1 {
                     ui.end_row();
                 }
             }
         });
+}
 
-    ui.add_space(18.);
-    ui.label("Accent palette");
-    ui.horizontal_wrapped(|ui| {
-        for accent in Accent::ALL {
-            if icons::swatch(
-                ui,
-                accent.color(
-                    theme::colors(settings.theme, Accent::Theme, colors.dark).accent,
-                ),
-                settings.accent == accent,
-                accent.name(),
-            )
-            .clicked()
-            {
-                settings.accent = accent;
-            }
-        }
-    });
+fn theme_card(
+    theme: Theme,
+    selected: bool,
+    width: f32,
+    colors: Colors,
+) -> egui::Button<'static> {
+    let preview = theme::colors(theme, Accent::Theme, colors.dark);
+    let border_width = if selected { 2. } else { 1. };
+    let border_color = if selected {
+        colors.accent
+    } else {
+        colors.border
+    };
+    let title = RichText::new(theme.name()).color(preview.text);
 
-    ui.add_space(18.);
-    ui.label("Canvas background");
-    ui.horizontal_wrapped(|ui| {
-        for (v, label) in [
-            (Canvas::Theme, "Theme"),
-            (Canvas::Dark, "Neutral dark"),
-            (Canvas::Black, "Black"),
-            (Canvas::White, "White"),
-            (Canvas::Custom, "Custom"),
-        ] {
-            ui.selectable_value(&mut settings.canvas, v, label);
-        }
-    });
+    egui::Button::new(title)
+        .fill(preview.panel)
+        .stroke(egui::Stroke::new(border_width, border_color))
+        .min_size(vec2(width, 54.))
+}
 
-    if settings.canvas == Canvas::Custom {
-        let mut color = Color32::from_rgb(
-            settings.canvas_color[0],
-            settings.canvas_color[1],
-            settings.canvas_color[2],
-        );
-        if ui.color_edit_button_srgba(&mut color).changed() {
-            settings.canvas_color = [color.r(), color.g(), color.b()];
+fn accent_picker(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors) {
+    for accent in Accent::ALL {
+        let theme_accent =
+            theme::colors(settings.theme, Accent::Theme, colors.dark).accent;
+        let color = theme::accent_color(accent, theme_accent);
+        let selected = settings.accent == accent;
+
+        if icons::swatch(ui, color, selected, accent.name()).clicked() {
+            settings.accent = accent;
         }
     }
+}
 
-    ui.add_space(14.);
+fn canvas_picker(ui: &mut egui::Ui, settings: &mut Settings) {
+    for (canvas, label) in [
+        (Canvas::Theme, "Theme"),
+        (Canvas::Dark, "Neutral dark"),
+        (Canvas::Black, "Black"),
+        (Canvas::White, "White"),
+        (Canvas::Custom, "Custom"),
+    ] {
+        ui.selectable_value(&mut settings.canvas, canvas, label);
+    }
+}
+
+fn custom_canvas_color(ui: &mut egui::Ui, settings: &mut Settings) {
+    let [red, green, blue] = settings.canvas_color;
+    let mut color = Color32::from_rgb(red, green, blue);
+
+    if ui.color_edit_button_srgba(&mut color).changed() {
+        settings.canvas_color = [color.r(), color.g(), color.b()];
+    }
+}
+
+fn checkerboard_controls(ui: &mut egui::Ui, settings: &mut Settings) {
     ui.checkbox(
         &mut settings.checkerboard,
         "Show checkerboard behind transparent pixels",
     );
 
-    if settings.checkerboard {
-        ui.horizontal(|ui| {
-            ui.add(
-                egui::Slider::new(&mut settings.checker_size, 4.0..=40.0)
-                    .text("Square size"),
-            );
-            ui.add(
-                egui::Slider::new(&mut settings.checker_contrast, 0.02..=0.3)
-                    .text("Contrast"),
-            );
-        });
+    if !settings.checkerboard {
+        return;
     }
-    ui.add_space(16.);
-    ui.label("Interface size");
-    ui.add(
-        egui::Slider::new(&mut settings.ui_scale, 0.8..=1.75)
-            .step_by(0.05)
-            .suffix("×"),
-    );
+
+    ui.horizontal(|ui| {
+        ui.add(
+            egui::Slider::new(&mut settings.checker_size, 4.0..=40.0)
+                .text("Square size"),
+        );
+        ui.add(
+            egui::Slider::new(&mut settings.checker_contrast, 0.02..=0.3)
+                .text("Contrast"),
+        );
+    });
 }

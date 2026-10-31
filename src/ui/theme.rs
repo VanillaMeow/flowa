@@ -1,125 +1,26 @@
+//! Theme palettes, color mapping, and egui styling
+
 use std::{collections::HashMap, path::PathBuf};
 
 use egui::{Color32, CornerRadius, FontId, Stroke, TextStyle, Visuals};
-use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Theme {
-    #[default]
-    System,
-    Charcoal,
-    Midnight,
-    Nord,
-    Catppuccin,
-    Dracula,
-    Forest,
-    Oled,
-    Paper,
-    Sand,
-    Latte,
-    HighContrast,
-}
+use crate::settings::{Accent, Theme};
 
-impl Theme {
-    pub const ALL: [Self; 12] = [
-        Self::System,
-        Self::Charcoal,
-        Self::Midnight,
-        Self::Nord,
-        Self::Catppuccin,
-        Self::Dracula,
-        Self::Forest,
-        Self::Oled,
-        Self::Paper,
-        Self::Sand,
-        Self::Latte,
-        Self::HighContrast,
-    ];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::System => "System / Qt",
-            Self::Charcoal => "Charcoal",
-            Self::Midnight => "Midnight",
-            Self::Nord => "Nord",
-            Self::Catppuccin => "Catppuccin",
-            Self::Dracula => "Dracula",
-            Self::Forest => "Forest",
-            Self::Oled => "OLED",
-            Self::Paper => "Paper",
-            Self::Sand => "Sand",
-            Self::Latte => "Latte",
-            Self::HighContrast => "High contrast",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Accent {
-    #[default]
-    Theme,
-    Violet,
-    Iris,
-    Blue,
-    Sky,
-    Teal,
-    Mint,
-    Green,
-    Amber,
-    Peach,
-    Rose,
-    Coral,
-}
-
-impl Accent {
-    pub const ALL: [Self; 12] = [
-        Self::Theme,
-        Self::Violet,
-        Self::Iris,
-        Self::Blue,
-        Self::Sky,
-        Self::Teal,
-        Self::Mint,
-        Self::Green,
-        Self::Amber,
-        Self::Peach,
-        Self::Rose,
-        Self::Coral,
-    ];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Theme => "Theme",
-            Self::Violet => "Violet",
-            Self::Iris => "Iris",
-            Self::Blue => "Blue",
-            Self::Sky => "Sky",
-            Self::Teal => "Teal",
-            Self::Mint => "Mint",
-            Self::Green => "Green",
-            Self::Amber => "Amber",
-            Self::Peach => "Peach",
-            Self::Rose => "Rose",
-            Self::Coral => "Coral",
-        }
-    }
-
-    pub fn color(self, fallback: Color32) -> Color32 {
-        rgb(match self {
-            Self::Theme => return fallback,
-            Self::Violet => [177, 146, 245],
-            Self::Iris => [144, 151, 255],
-            Self::Blue => [108, 164, 245],
-            Self::Sky => [105, 195, 233],
-            Self::Teal => [74, 191, 181],
-            Self::Mint => [139, 213, 182],
-            Self::Green => [151, 200, 113],
-            Self::Amber => [233, 183, 87],
-            Self::Peach => [239, 172, 133],
-            Self::Rose => [224, 148, 185],
-            Self::Coral => [239, 137, 137],
-        })
-    }
+pub fn accent_color(accent: Accent, fallback: Color32) -> Color32 {
+    rgb(match accent {
+        Accent::Theme => return fallback,
+        Accent::Violet => [177, 146, 245],
+        Accent::Iris => [144, 151, 255],
+        Accent::Blue => [108, 164, 245],
+        Accent::Sky => [105, 195, 233],
+        Accent::Teal => [74, 191, 181],
+        Accent::Mint => [139, 213, 182],
+        Accent::Green => [151, 200, 113],
+        Accent::Amber => [233, 183, 87],
+        Accent::Peach => [239, 172, 133],
+        Accent::Rose => [224, 148, 185],
+        Accent::Coral => [239, 137, 137],
+    })
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -145,9 +46,10 @@ fn mix(a: Color32, b: Color32, amount: f32) -> Color32 {
 pub fn colors(theme: Theme, accent: Accent, system_dark: bool) -> Colors {
     if theme == Theme::System {
         if let Some(mut system_colors) = kde_colors() {
-            system_colors.accent = accent.color(system_colors.accent);
+            system_colors.accent = accent_color(accent, system_colors.accent);
             return system_colors;
         }
+
         return colors(
             if system_dark {
                 Theme::Charcoal
@@ -158,6 +60,7 @@ pub fn colors(theme: Theme, accent: Accent, system_dark: bool) -> Colors {
             system_dark,
         );
     }
+
     let (canvas, panel, text, highlight) = match theme {
         Theme::Charcoal | Theme::System => {
             ([24, 25, 28], [31, 32, 36], [232, 232, 235], [163, 190, 164])
@@ -196,13 +99,15 @@ pub fn colors(theme: Theme, accent: Accent, system_dark: bool) -> Colors {
             ([0, 0, 0], [10, 10, 10], [255, 255, 255], [255, 221, 82])
         }
     };
+
     let panel = rgb(panel);
     let text = rgb(text);
+
     Colors {
         canvas: rgb(canvas),
         panel,
         text,
-        accent: accent.color(rgb(highlight)),
+        accent: accent_color(accent, rgb(highlight)),
         raised: mix(panel, text, 0.065),
         muted: mix(panel, text, 0.63),
         border: mix(
@@ -227,6 +132,7 @@ pub fn apply(ctx: &egui::Context, colors: Colors, ui_scale: f32) {
         },
         ..Default::default()
     };
+
     style.text_styles = [
         (TextStyle::Small, FontId::proportional(13.0)),
         (TextStyle::Body, FontId::proportional(16.0)),
@@ -266,6 +172,7 @@ pub fn apply(ctx: &egui::Context, colors: Colors, ui_scale: f32) {
         widget.bg_fill = colors.raised;
         widget.weak_bg_fill = colors.raised;
     }
+
     style.visuals.widgets.hovered.bg_fill = mix(colors.panel, colors.text, 0.12);
     style.visuals.widgets.hovered.weak_bg_fill = mix(colors.panel, colors.text, 0.12);
     style.visuals.widgets.active.bg_fill = mix(colors.panel, colors.accent, 0.24);
@@ -282,6 +189,7 @@ pub fn kde_config_path() -> Option<PathBuf> {
         .or_else(|| {
             directories::BaseDirs::new().map(|d| d.config_dir().to_path_buf())
         })?;
+
     Some(base.join("kdeglobals"))
 }
 
@@ -293,6 +201,7 @@ fn parse_kde_colors(input: &str) -> Option<Colors> {
     // KDE stores palette roles by section rather than as a single theme color
     let mut group = "";
     let mut values = HashMap::new();
+
     for line in input.lines().map(str::trim) {
         if line.starts_with('[') && line.ends_with(']') {
             group = &line[1..line.len() - 1];
@@ -313,6 +222,7 @@ fn parse_kde_colors(input: &str) -> Option<Colors> {
 
     let panel = get("Colors:Window", "BackgroundNormal")?;
     let text = get("Colors:Window", "ForegroundNormal")?;
+
     Some(Colors {
         panel,
         text,

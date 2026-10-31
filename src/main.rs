@@ -1,14 +1,11 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-mod actions;
 mod app;
-mod catalog;
-mod icons;
-mod loader;
-mod preferences;
+mod services;
 mod settings;
-mod theme;
-mod view;
+mod ui;
+mod utils;
+mod viewer;
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -77,7 +74,7 @@ fn main() -> anyhow::Result<()> {
                     .ok_or_else(|| anyhow::anyhow!("--theme requires a theme name"))?;
                 let value = value.to_string_lossy().to_ascii_lowercase();
                 theme_override = Some(
-                    theme::Theme::ALL
+                    settings::Theme::ALL
                         .into_iter()
                         .find(|t| {
                             t.name().to_ascii_lowercase().replace(' ', "")
@@ -104,11 +101,11 @@ fn main() -> anyhow::Result<()> {
     let config_path = if launch.smoke_test {
         None
     } else {
-        settings::Settings::config_path()
+        settings::SettingsStore::config_path()
     };
 
     let mut settings = if let Some(path) = config_path.as_ref().filter(|p| p.exists()) {
-        settings::Settings::load(path).unwrap_or_else(|error| {
+        settings::SettingsStore::load(path).unwrap_or_else(|error| {
             eprintln!("Could not load preferences: {error:#}");
             settings::Settings::default()
         })

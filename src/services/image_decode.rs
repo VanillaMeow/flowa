@@ -1,53 +1,15 @@
 //! Image decoding, color conversion, previews, and export
-mod workers;
 
-pub use workers::{
-    LoadRequest, Loader, ThumbnailRequest, ThumbnailWorker, TileKey, TileRequest,
-    TileWorker,
-};
-
-use std::{
-    fs::File,
-    io::BufReader,
-    path::{Path, PathBuf},
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-        mpsc,
-    },
-    thread,
-    time::Duration,
-};
+use std::{fs::File, io::BufReader, path::Path, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail, ensure};
 use egui::ColorImage;
 use image::{AnimationDecoder, DynamicImage, ImageDecoder, ImageReader, RgbaImage};
 
-pub const TILE_SIZE: u32 = 1024;
+use crate::viewer::image_session::{DecodedFrame, DecodedImage};
+
 const PREVIEW_EDGE: u32 = 2048;
 const MAX_FRAMES: usize = 2000;
-
-pub struct DecodedFrame {
-    pub pixels: Arc<RgbaImage>,
-    pub preview: ColorImage,
-    pub delay: Duration,
-}
-
-pub struct DecodedImage {
-    pub frames: Vec<DecodedFrame>,
-    pub thumbnail: ColorImage,
-    pub size: [u32; 2],
-    pub format: String,
-    pub file_size: u64,
-    pub color: String,
-    pub metadata: Vec<(String, String)>,
-}
-
-impl DecodedImage {
-    pub fn duration(&self) -> Duration {
-        self.frames.iter().map(|f| f.delay).sum()
-    }
-}
 
 fn limits(budget: u64) -> image::Limits {
     let mut limits = image::Limits::default();
@@ -59,12 +21,14 @@ fn limits(budget: u64) -> image::Limits {
 
 fn check_size(width: u32, height: u32, budget: u64) -> Result<()> {
     ensure!(width > 0 && height > 0, "The image has no pixels");
+
     let bytes = u64::from(width) * u64::from(height) * 4;
     ensure!(
         bytes <= budget,
         "This image needs at least {} MB of decoded memory. Increase the image memory limit in Settings.",
         (bytes / 1048576) + 1
     );
+
     Ok(())
 }
 
@@ -80,6 +44,7 @@ fn preview(pixels: &RgbaImage, edge: u32) -> ColorImage {
     let height = (u64::from(pixels.height()) * u64::from(edge) / u64::from(longest))
         .max(1) as u32;
     let resized = image::imageops::thumbnail(pixels, width, height);
+
     color_image(&resized)
 }
 
@@ -99,6 +64,7 @@ pub fn decode(path: &Path, budget: u64) -> Result<DecodedImage> {
     let file_size = path.metadata()?.len();
     let mut color = "sRGB / untagged".to_owned();
     let mut metadata = Vec::new();
+
     let frames = if matches!(ext.as_str(), "svg" | "svgz") {
         let rgba = render_svg(path, 16384, budget)?;
         color = "sRGB · rasterized SVG".to_owned();
@@ -107,13 +73,16 @@ pub fn decode(path: &Path, budget: u64) -> Result<DecodedImage> {
         let mut reader = ImageReader::open(path)?.with_guessed_format()?;
         let format = reader.format();
         reader.limits(limits(budget));
+
         match format {
             Some(image::ImageFormat::Gif) => {
                 let mut decoder = image::codecs::gif::GifDecoder::new(BufReader::new(
                     File::open(path)?,
                 ))?;
                 decoder.set_limits(limits(budget))?;
+
                 check_size(decoder.dimensions().0, decoder.dimensions().1, budget)?;
+
                 animated_frames(decoder.into_frames(), budget)?
             }
             Some(image::ImageFormat::WebP) => {
@@ -121,6 +90,7 @@ pub fn decode(path: &Path, budget: u64) -> Result<DecodedImage> {
                     BufReader::new(File::open(path)?),
                 )?;
                 decoder.set_limits(limits(budget))?;
+
                 if decoder.has_animation() {
                     let icc = decoder.icc_profile()?;
                     let mut frames = animated_frames(decoder.into_frames(), budget)?;
@@ -383,6 +353,7 @@ pub fn export(
 ) -> Result<()> {
     let format = image::ImageFormat::from_path(path)
         .context("Choose a .png, .jpg, .webp, .bmp, or .tiff extension")?;
+
     ensure!(
         matches!(
             format,
@@ -394,29 +365,37 @@ pub fn export(
         ),
         "Export supports PNG, JPEG, WebP, BMP, and TIFF"
     );
+
     let mut image = DynamicImage::ImageRgba8(pixels.clone());
+
     if flip_x {
         image = image.fliph();
     }
+
     if flip_y {
         image = image.flipv();
     }
+
     image = match rotation % 4 {
         1 => image.rotate90(),
         2 => image.rotate180(),
         3 => image.rotate270(),
         _ => image,
     };
+
     if format == image::ImageFormat::Jpeg {
         image = DynamicImage::ImageRgb8(image.into_rgb8());
     }
+
     // Encode to a temporary sibling and replace only once encoding succeeds
     let parent = path.parent().context("Export path has no parent")?;
     let temp = parent.join(format!(".flowa-export-{}.tmp", std::process::id()));
+
     if let Err(err) = image.save_with_format(&temp, format) {
         let _ = std::fs::remove_file(&temp);
         bail!(err);
     }
+
     std::fs::rename(&temp, path)
         .inspect_err(|_| {
             let _ = std::fs::remove_file(&temp);

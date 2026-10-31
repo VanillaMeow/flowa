@@ -2,7 +2,33 @@
 
 Recorded on 2026-10-31 on Arch Linux with Rust 1.99.1. Native rendering used an NVIDIA GeForce GTX 1050 Ti through Vulkan.
 
-## Automated checks
+## Readability and UI nesting
+
+The readability pass on 2026-10-31 split deeply nested filmstrip, canvas, dialog, inspector, toolbar, and preferences code into focused helpers. Layout scopes and widget order were retained. Application updates, UI composition, and maintenance now have named phases. Semantic blank lines separate setup, guards, calculations, worker requests, and results throughout application, service, and viewer code. `AGENTS.md` records these conventions for future edits.
+
+`cargo fmt --check`, `cargo clippy -j 3 --all-targets -- -D warnings`, `cargo test -j 3`, and `cargo check -j 3 --no-default-features` passed. All 27 existing tests passed, including rename submission with Enter, modal shortcut suppression, selection resets, and stale worker-result rejection.
+
+The debug build passed. Native viewer, Preferences, and full-resolution transparent-tile screenshots matched their pre-cleanup captures pixel for pixel. X11 checks passed for wheel zoom, drag panning, keyboard and toolbar navigation, filmstrip selection, rotation, rename with Enter, trash cancellation/confirmation, clearing the last image, preferences, fullscreen, and context menus. Animation playback/pause/resume and settings persistence also passed. File operations used copied fixtures and an isolated trash/configuration directory under `/tmp/flowa-readability-1mkgxflp`.
+
+## Source layout and shared utilities
+
+The source layout reorganization on 2026-10-31 passed `cargo fmt --check`, `cargo clippy -j 3 --all-targets -- -D warnings`, `cargo test -j 3`, `cargo check -j 3 --no-default-features`, and `cargo build -j 3`. All 27 existing tests passed after moving alongside their owning modules. Filename validation is now tested under `utils::filename`, folder scanning under `services::folder_scan`, and settings round trips under `settings::store`.
+
+Native Vulkan rendering checks passed after the moves. Preferences matched the baseline pixel for pixel. Viewer differences were confined to asynchronously completed thumbnails; the canvas, controls, inspector, and status matched the baseline. X11 checks passed for navigation, toolbar and filmstrip clicks, rotation, rename with Enter, trash cancellation and confirmation, clearing the last image, preferences, fullscreen, the context menu, and clean exit.
+
+A separate native check verified GIF playback, pause, and resume by comparing image-region captures. Settings persistence on exit passed with an isolated configuration directory. All file-operation checks used copied fixtures and an isolated trash directory under `/tmp/flowa-layout-jzn70kfp`. No personal files or saved preferences were changed. This pass rebuilt the debug executable; release measurements below remain historical.
+
+## UI architecture refactor
+
+The UI ownership refactor on 2026-10-31 passed `cargo fmt --check`, `cargo clippy -j 3 --all-targets -- -D warnings`, `cargo test -j 3`, `cargo check -j 3 --no-default-features`, and a debug build. All 27 tests pass, including ten new tests for stale folder/decode results, clearing an image, selection/view reset, selection-preserving sorting, rename during loading, modal/preference shortcut suppression, and rename submission with Enter.
+
+Native Vulkan windows were checked under Wayland for rendering and under X11 for interactions. Preferences matched the pre-refactor screenshot pixel for pixel. The viewer matched a repeated pre-refactor capture pixel for pixel; the initial comparison differed only in the inspector's animated scrollbar visibility. A separate 4096 by 3072 RGBA fixture at 100% zoom loaded two detailed tiles and also matched the pre-refactor capture pixel for pixel.
+
+X11 interaction checks passed for keyboard navigation, thumbnail/details toggles, rotation, rename with Enter, trash cancellation, preferences, fullscreen/Escape, the canvas context menu, toolbar navigation, filmstrip selection, confirmed trash, clearing the final image, and clean exit. File operations used copied fixtures under `/tmp/flowa-ui-refactor`, with an isolated configuration and trash directory. A separate native run verified that a thumbnail-strip toggle persisted on exit using an isolated settings directory. No personal images or saved preferences were changed.
+
+This pass rebuilt the debug executable. The release measurements below are historical and do not describe a newly rebuilt release executable.
+
+## Earlier automated checks
 
 - `cargo fmt --check`: passed.
 - `cargo clippy --all-targets -- -D warnings`: passed.
@@ -12,7 +38,7 @@ Recorded on 2026-10-31 on Arch Linux with Rust 1.99.1. Native rendering used an 
 - `desktop-file-validate packaging/linux/flowa.desktop`: passed.
 - `sh -n packaging/linux/install-local.sh packaging/linux/uninstall-local.sh`: passed.
 
-## Native desktop checks
+## Earlier native desktop checks
 
 Actual wgpu windows rendered under Wayland and X11. Screenshots were captured from the application's renderer or its own X11 window, not from an HTML mockup.
 
