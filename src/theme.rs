@@ -1,6 +1,7 @@
+use std::{collections::HashMap, path::PathBuf};
+
 use egui::{Color32, CornerRadius, FontId, Stroke, TextStyle, Visuals};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::PathBuf};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Theme {
@@ -34,6 +35,7 @@ impl Theme {
         Self::Latte,
         Self::HighContrast,
     ];
+
     pub fn name(self) -> &'static str {
         match self {
             Self::System => "System / Qt",
@@ -68,6 +70,7 @@ pub enum Accent {
     Rose,
     Coral,
 }
+
 impl Accent {
     pub const ALL: [Self; 12] = [
         Self::Theme,
@@ -83,6 +86,7 @@ impl Accent {
         Self::Rose,
         Self::Coral,
     ];
+
     pub fn name(self) -> &'static str {
         match self {
             Self::Theme => "Theme",
@@ -99,6 +103,7 @@ impl Accent {
             Self::Coral => "Coral",
         }
     }
+
     pub fn color(self, fallback: Color32) -> Color32 {
         rgb(match self {
             Self::Theme => return fallback,
@@ -128,18 +133,20 @@ pub struct Colors {
     pub accent: Color32,
     pub dark: bool,
 }
+
 fn rgb(c: [u8; 3]) -> Color32 {
     Color32::from_rgb(c[0], c[1], c[2])
 }
+
 fn mix(a: Color32, b: Color32, amount: f32) -> Color32 {
     egui::lerp(egui::Rgba::from(a)..=egui::Rgba::from(b), amount).into()
 }
 
 pub fn colors(theme: Theme, accent: Accent, system_dark: bool) -> Colors {
     if theme == Theme::System {
-        if let Some(mut c) = kde_colors() {
-            c.accent = accent.color(c.accent);
-            return c;
+        if let Some(mut system_colors) = kde_colors() {
+            system_colors.accent = accent.color(system_colors.accent);
+            return system_colors;
         }
         return colors(
             if system_dark {
@@ -155,10 +162,16 @@ pub fn colors(theme: Theme, accent: Accent, system_dark: bool) -> Colors {
         Theme::Charcoal | Theme::System => {
             ([24, 25, 28], [31, 32, 36], [232, 232, 235], [163, 190, 164])
         }
-        Theme::Midnight => ([15, 20, 31], [22, 28, 42], [224, 231, 244], [136, 166, 243]),
+        Theme::Midnight => {
+            ([15, 20, 31], [22, 28, 42], [224, 231, 244], [136, 166, 243])
+        }
         Theme::Nord => ([36, 42, 53], [46, 52, 64], [236, 239, 244], [136, 192, 208]),
-        Theme::Catppuccin => ([24, 24, 37], [30, 30, 46], [205, 214, 244], [203, 166, 247]),
-        Theme::Dracula => ([30, 31, 42], [40, 42, 54], [248, 248, 242], [189, 147, 249]),
+        Theme::Catppuccin => {
+            ([24, 24, 37], [30, 30, 46], [205, 214, 244], [203, 166, 247])
+        }
+        Theme::Dracula => {
+            ([30, 31, 42], [40, 42, 54], [248, 248, 242], [189, 147, 249])
+        }
         Theme::Forest => ([20, 29, 27], [27, 38, 34], [224, 235, 222], [163, 190, 140]),
         Theme::Oled => ([0, 0, 0], [12, 12, 15], [236, 236, 240], [185, 174, 235]),
         Theme::Paper => (
@@ -179,7 +192,9 @@ pub fn colors(theme: Theme, accent: Accent, system_dark: bool) -> Colors {
             [76, 79, 105],
             [136, 57, 239],
         ),
-        Theme::HighContrast => ([0, 0, 0], [10, 10, 10], [255, 255, 255], [255, 221, 82]),
+        Theme::HighContrast => {
+            ([0, 0, 0], [10, 10, 10], [255, 255, 255], [255, 221, 82])
+        }
     };
     let panel = rgb(panel);
     let text = rgb(text);
@@ -203,9 +218,9 @@ pub fn colors(theme: Theme, accent: Accent, system_dark: bool) -> Colors {
     }
 }
 
-pub fn apply(ctx: &egui::Context, c: Colors, ui_scale: f32) {
+pub fn apply(ctx: &egui::Context, colors: Colors, ui_scale: f32) {
     let mut style = egui::Style {
-        visuals: if c.dark {
+        visuals: if colors.dark {
             Visuals::dark()
         } else {
             Visuals::light()
@@ -220,37 +235,42 @@ pub fn apply(ctx: &egui::Context, c: Colors, ui_scale: f32) {
         (TextStyle::Monospace, FontId::monospace(13.0)),
     ]
     .into();
+
     style.spacing.item_spacing = egui::vec2(8.0, 8.0);
     style.spacing.button_padding = egui::vec2(12.0, 8.0);
     style.spacing.interact_size.y = 34.0;
-    style.visuals.panel_fill = c.panel;
-    style.visuals.window_fill = c.panel;
-    style.visuals.extreme_bg_color = c.canvas;
-    style.visuals.faint_bg_color = c.raised;
-    style.visuals.override_text_color = Some(c.text);
-    style.visuals.window_stroke = Stroke::new(1.0, c.border);
+
+    style.visuals.panel_fill = colors.panel;
+    style.visuals.window_fill = colors.panel;
+    style.visuals.extreme_bg_color = colors.canvas;
+    style.visuals.faint_bg_color = colors.raised;
+    style.visuals.override_text_color = Some(colors.text);
+    style.visuals.window_stroke = Stroke::new(1.0, colors.border);
     style.visuals.window_corner_radius = CornerRadius::same(12);
-    style.visuals.selection.bg_fill = mix(c.panel, c.accent, 0.28);
-    style.visuals.selection.stroke = Stroke::new(1.0, c.accent);
-    style.visuals.hyperlink_color = c.accent;
-    style.visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, c.border);
-    style.visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, c.text);
-    for w in [
+
+    style.visuals.selection.bg_fill = mix(colors.panel, colors.accent, 0.28);
+    style.visuals.selection.stroke = Stroke::new(1.0, colors.accent);
+    style.visuals.hyperlink_color = colors.accent;
+    style.visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, colors.border);
+    style.visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, colors.text);
+
+    for widget in [
         &mut style.visuals.widgets.inactive,
         &mut style.visuals.widgets.active,
         &mut style.visuals.widgets.hovered,
         &mut style.visuals.widgets.open,
     ] {
-        w.corner_radius = CornerRadius::same(7);
-        w.fg_stroke = Stroke::new(1.5, c.text);
-        w.bg_stroke = Stroke::NONE;
-        w.bg_fill = c.raised;
-        w.weak_bg_fill = c.raised;
+        widget.corner_radius = CornerRadius::same(7);
+        widget.fg_stroke = Stroke::new(1.5, colors.text);
+        widget.bg_stroke = Stroke::NONE;
+        widget.bg_fill = colors.raised;
+        widget.weak_bg_fill = colors.raised;
     }
-    style.visuals.widgets.hovered.bg_fill = mix(c.panel, c.text, 0.12);
-    style.visuals.widgets.hovered.weak_bg_fill = mix(c.panel, c.text, 0.12);
-    style.visuals.widgets.active.bg_fill = mix(c.panel, c.accent, 0.24);
-    style.visuals.widgets.active.bg_stroke = Stroke::new(1.0, c.accent);
+    style.visuals.widgets.hovered.bg_fill = mix(colors.panel, colors.text, 0.12);
+    style.visuals.widgets.hovered.weak_bg_fill = mix(colors.panel, colors.text, 0.12);
+    style.visuals.widgets.active.bg_fill = mix(colors.panel, colors.accent, 0.24);
+    style.visuals.widgets.active.bg_stroke = Stroke::new(1.0, colors.accent);
+
     ctx.set_global_style(style);
     ctx.set_zoom_factor(ui_scale);
 }
@@ -259,13 +279,18 @@ pub fn kde_config_path() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
-        .or_else(|| directories::BaseDirs::new().map(|d| d.config_dir().to_path_buf()))?;
+        .or_else(|| {
+            directories::BaseDirs::new().map(|d| d.config_dir().to_path_buf())
+        })?;
     Some(base.join("kdeglobals"))
 }
+
 fn kde_colors() -> Option<Colors> {
     parse_kde_colors(&std::fs::read_to_string(kde_config_path()?).ok()?)
 }
+
 fn parse_kde_colors(input: &str) -> Option<Colors> {
+    // KDE stores palette roles by section rather than as a single theme color
     let mut group = "";
     let mut values = HashMap::new();
     for line in input.lines().map(str::trim) {
@@ -275,22 +300,25 @@ fn parse_kde_colors(input: &str) -> Option<Colors> {
             values.insert(format!("{group}/{}", key.trim()), value.trim());
         }
     }
+
     let get = |group: &str, key: &str| -> Option<Color32> {
-        let s = values.get(&format!("{group}/{key}"))?;
-        let mut parts = s.split(',').map(str::trim).map(str::parse::<u8>);
+        let value = values.get(&format!("{group}/{key}"))?;
+        let mut parts = value.split(',').map(str::trim).map(str::parse::<u8>);
         Some(Color32::from_rgb(
             parts.next()?.ok()?,
             parts.next()?.ok()?,
             parts.next()?.ok()?,
         ))
     };
+
     let panel = get("Colors:Window", "BackgroundNormal")?;
     let text = get("Colors:Window", "ForegroundNormal")?;
     Some(Colors {
         panel,
         text,
         canvas: get("Colors:View", "BackgroundNormal").unwrap_or(panel),
-        raised: get("Colors:Button", "BackgroundNormal").unwrap_or_else(|| mix(panel, text, 0.08)),
+        raised: get("Colors:Button", "BackgroundNormal")
+            .unwrap_or_else(|| mix(panel, text, 0.08)),
         muted: mix(panel, text, 0.65),
         border: mix(panel, text, 0.16),
         accent: get("Colors:Selection", "BackgroundNormal")
@@ -302,12 +330,14 @@ fn parse_kde_colors(input: &str) -> Option<Colors> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn kde_theme_reads_colors_without_requiring_qt() {
         let c = parse_kde_colors("[Colors:Window]\nBackgroundNormal=24,27,40\nForegroundNormal=211,218,227\n[Colors:Selection]\nBackgroundNormal=197,14,210").expect("valid palette");
         assert_eq!(c.accent, Color32::from_rgb(197, 14, 210));
         assert!(c.dark);
     }
+
     #[test]
     fn incomplete_kde_theme_falls_back() {
         assert!(parse_kde_colors("[General]\nColorScheme=Sweet").is_none());

@@ -9,6 +9,7 @@ pub struct View {
     pub flip_x: bool,
     pub flip_y: bool,
 }
+
 impl Default for View {
     fn default() -> Self {
         Self {
@@ -21,6 +22,7 @@ impl Default for View {
         }
     }
 }
+
 impl View {
     pub fn displayed_size(&self, size: Vec2) -> Vec2 {
         if self.rotation % 2 == 1 {
@@ -29,54 +31,69 @@ impl View {
             size
         }
     }
+
     pub fn fit_zoom(&self, canvas: Vec2, size: Vec2, enlarge: bool) -> f32 {
-        let s = self.displayed_size(size);
-        let z = ((canvas.x - 48.0).max(1.0) / s.x).min((canvas.y - 48.0).max(1.0) / s.y);
-        if enlarge { z } else { z.min(1.0) }.clamp(0.001, 128.0)
+        let displayed_size = self.displayed_size(size);
+        let fit_zoom = ((canvas.x - 48.0).max(1.0) / displayed_size.x)
+            .min((canvas.y - 48.0).max(1.0) / displayed_size.y);
+        if enlarge { fit_zoom } else { fit_zoom.min(1.0) }.clamp(0.001, 128.0)
     }
+
     pub fn reset(&mut self) {
         self.fit = true;
         self.pan = Vec2::ZERO;
     }
+
     pub fn zoom_at(&mut self, factor: f32, pointer: Pos2, center: Pos2) {
-        let old = self.zoom;
-        self.zoom = (old * factor).clamp(0.001, 128.0);
-        let relative = pointer - center - self.pan;
-        self.pan += relative * (1.0 - self.zoom / old);
+        let previous_zoom = self.zoom;
+        self.zoom = (previous_zoom * factor).clamp(0.001, 128.0);
+
+        // Keep the same image point under the cursor as the scale changes
+        let pointer_offset = pointer - center - self.pan;
+        self.pan += pointer_offset * (1.0 - self.zoom / previous_zoom);
         self.fit = false;
     }
+
     pub fn image_to_screen(&self, point: Vec2, size: Vec2, canvas: Rect) -> Pos2 {
-        let mut p = point - size / 2.0;
+        let mut offset = point - size / 2.0;
+
         if self.flip_x {
-            p.x = -p.x;
+            offset.x = -offset.x;
         }
         if self.flip_y {
-            p.y = -p.y;
+            offset.y = -offset.y;
         }
-        p = match self.rotation % 4 {
-            1 => vec2(-p.y, p.x),
-            2 => -p,
-            3 => vec2(p.y, -p.x),
-            _ => p,
+
+        offset = match self.rotation % 4 {
+            1 => vec2(-offset.y, offset.x),
+            2 => -offset,
+            3 => vec2(offset.y, -offset.x),
+            _ => offset,
         };
-        canvas.center() + self.pan + p * self.zoom
+
+        canvas.center() + self.pan + offset * self.zoom
     }
+
     pub fn screen_to_image(&self, point: Pos2, size: Vec2, canvas: Rect) -> Vec2 {
-        let p = (point - canvas.center() - self.pan) / self.zoom;
-        let mut p = match self.rotation % 4 {
-            1 => vec2(p.y, -p.x),
-            2 => -p,
-            3 => vec2(-p.y, p.x),
-            _ => p,
+        // Reverse the transform order used by image_to_screen
+        let offset = (point - canvas.center() - self.pan) / self.zoom;
+        let mut offset = match self.rotation % 4 {
+            1 => vec2(offset.y, -offset.x),
+            2 => -offset,
+            3 => vec2(-offset.y, offset.x),
+            _ => offset,
         };
+
         if self.flip_x {
-            p.x = -p.x;
+            offset.x = -offset.x;
         }
         if self.flip_y {
-            p.y = -p.y;
+            offset.y = -offset.y;
         }
-        p + size / 2.0
+
+        offset + size / 2.0
     }
+
     pub fn visible_source(&self, size: Vec2, canvas: Rect) -> Rect {
         let points = [
             canvas.left_top(),
@@ -87,6 +104,7 @@ impl View {
         .map(|p| self.screen_to_image(p, size, canvas).to_pos2());
         Rect::from_points(&points).intersect(Rect::from_min_size(Pos2::ZERO, size))
     }
+
     pub fn image_rect(&self, size: Vec2, canvas: Rect) -> Rect {
         Rect::from_center_size(
             canvas.center() + self.pan,
@@ -98,6 +116,7 @@ impl View {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn zoom_keeps_the_image_point_under_the_cursor() {
         let mut v = View::default();
@@ -109,6 +128,7 @@ mod tests {
         let after = v.screen_to_image(cursor, size, rect);
         assert!((before - after).length() < 0.001);
     }
+
     #[test]
     fn transforms_round_trip_after_rotation_and_flips() {
         let rect = Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0));
@@ -124,8 +144,12 @@ mod tests {
                         ..Default::default()
                     };
                     assert!(
-                        (p - v.screen_to_image(v.image_to_screen(p, size, rect), size, rect))
-                            .length()
+                        (p - v.screen_to_image(
+                            v.image_to_screen(p, size, rect),
+                            size,
+                            rect
+                        ))
+                        .length()
                             < 0.001
                     );
                 }

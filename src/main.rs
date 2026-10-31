@@ -13,13 +13,17 @@ mod view;
 use std::{path::PathBuf, sync::Arc};
 
 fn main() -> anyhow::Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
+        .init();
+
     jxl_oxide::integration::register_image_decoding_hook();
+
     #[cfg(feature = "heif")]
     {
         libheif_rs::integration::image::register_heif_decoding_hook();
         libheif_rs::integration::image::register_heic_decoding_hook();
     }
+
     let mut launch = app::Launch {
         path: None,
         screenshot: None,
@@ -30,7 +34,9 @@ fn main() -> anyhow::Result<()> {
         zoom: None,
     };
     let mut theme_override = None;
+
     let mut args = std::env::args_os().skip(1);
+
     while let Some(arg) = args.next() {
         match arg.to_str() {
             Some("--help" | "-h") => {
@@ -74,7 +80,8 @@ fn main() -> anyhow::Result<()> {
                     theme::Theme::ALL
                         .into_iter()
                         .find(|t| {
-                            t.name().to_ascii_lowercase().replace(' ', "") == value.replace(' ', "")
+                            t.name().to_ascii_lowercase().replace(' ', "")
+                                == value.replace(' ', "")
                         })
                         .ok_or_else(|| anyhow::anyhow!("Unknown theme: {value}"))?,
                 );
@@ -85,16 +92,21 @@ fn main() -> anyhow::Result<()> {
             }
             Some(s) if s.starts_with('-') => anyhow::bail!("Unknown option: {s}"),
             _ => {
-                anyhow::ensure!(launch.path.is_none(), "Open one image or folder at a time");
+                anyhow::ensure!(
+                    launch.path.is_none(),
+                    "Open one image or folder at a time"
+                );
                 launch.path = Some(PathBuf::from(arg));
             }
         }
     }
+
     let config_path = if launch.smoke_test {
         None
     } else {
         settings::Settings::config_path()
     };
+
     let mut settings = if let Some(path) = config_path.as_ref().filter(|p| p.exists()) {
         settings::Settings::load(path).unwrap_or_else(|error| {
             eprintln!("Could not load preferences: {error:#}");
@@ -103,14 +115,18 @@ fn main() -> anyhow::Result<()> {
     } else {
         settings::Settings::default()
     };
+
     if let Some(theme) = theme_override {
         settings.theme = theme;
     }
+
+    // Session theme overrides must not replace the user's saved appearance
     let persistence = if theme_override.is_some() {
         None
     } else {
         config_path
     };
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("flowa")
@@ -122,19 +138,25 @@ fn main() -> anyhow::Result<()> {
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };
+
     eframe::run_native(
         "flowa",
         options,
-        Box::new(move |cc| Ok(Box::new(app::Flowa::new(cc, settings, persistence, launch)))),
+        Box::new(move |cc| {
+            Ok(Box::new(app::Flowa::new(cc, settings, persistence, launch)))
+        }),
     )
     .map_err(|error| anyhow::anyhow!("Could not start Flowa: {error}"))
 }
+
 fn app_icon() -> egui::IconData {
     let tree = resvg::usvg::Tree::from_data(
         include_bytes!("../assets/flowa.svg"),
         &resvg::usvg::Options::default(),
     );
-    if let (Ok(tree), Some(mut pixmap)) = (tree, resvg::tiny_skia::Pixmap::new(128, 128)) {
+    if let (Ok(tree), Some(mut pixmap)) =
+        (tree, resvg::tiny_skia::Pixmap::new(128, 128))
+    {
         resvg::render(
             &tree,
             resvg::tiny_skia::Transform::identity(),

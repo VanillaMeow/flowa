@@ -1,14 +1,18 @@
-use crate::settings::SortOrder;
-use anyhow::{Context, Result, ensure};
 use std::{
     path::{Path, PathBuf},
     time::SystemTime,
 };
 
+use anyhow::{Context, Result, ensure};
+
+use crate::settings::SortOrder;
+
 pub const EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "jpe", "jfif", "png", "apng", "gif", "webp", "bmp", "ico", "tif", "tiff", "tga",
-    "dds", "exr", "hdr", "ff", "qoi", "pnm", "pbm", "pgm", "ppm", "pam", "svg", "svgz", "jxl",
+    "jpg", "jpeg", "jpe", "jfif", "png", "apng", "gif", "webp", "bmp", "ico", "tif",
+    "tiff", "tga", "dds", "exr", "hdr", "ff", "qoi", "pnm", "pbm", "pgm", "ppm", "pam",
+    "svg", "svgz", "jxl",
 ];
+
 pub fn supported(path: &Path) -> bool {
     let ext = path
         .extension()
@@ -19,6 +23,7 @@ pub fn supported(path: &Path) -> bool {
         || (cfg!(feature = "avif") && ext == "avif")
         || (cfg!(feature = "heif") && matches!(ext.as_str(), "heic" | "heif"))
 }
+
 #[derive(Clone, Debug)]
 pub struct Entry {
     pub path: PathBuf,
@@ -26,6 +31,7 @@ pub struct Entry {
     pub size: u64,
     pub modified: SystemTime,
 }
+
 impl Entry {
     pub fn from_path(path: PathBuf) -> Result<Self> {
         let metadata = path
@@ -44,10 +50,11 @@ impl Entry {
         })
     }
 }
+
 pub fn scan(folder: &Path) -> Result<Vec<Entry>> {
     let mut files = Vec::new();
-    for item in
-        std::fs::read_dir(folder).with_context(|| format!("Cannot open {}", folder.display()))?
+    for item in std::fs::read_dir(folder)
+        .with_context(|| format!("Cannot open {}", folder.display()))?
     {
         let item = item.context("Cannot read folder entry")?;
         let path = item.path();
@@ -59,10 +66,13 @@ pub fn scan(folder: &Path) -> Result<Vec<Entry>> {
     }
     Ok(files)
 }
+
 pub fn sort(files: &mut [Entry], order: SortOrder, reverse: bool) {
     files.sort_by(|a, b| {
-        let name =
-            || natord::compare_ignore_case(&a.name, &b.name).then_with(|| a.path.cmp(&b.path));
+        let name = || {
+            natord::compare_ignore_case(&a.name, &b.name)
+                .then_with(|| a.path.cmp(&b.path))
+        };
         let cmp = match order {
             SortOrder::Name => name(),
             SortOrder::Modified => b.modified.cmp(&a.modified).then_with(name),
@@ -71,7 +81,13 @@ pub fn sort(files: &mut [Entry], order: SortOrder, reverse: bool) {
         if reverse { cmp.reverse() } else { cmp }
     });
 }
-pub fn next_index(current: usize, len: usize, delta: isize, wrap: bool) -> Option<usize> {
+
+pub fn next_index(
+    current: usize,
+    len: usize,
+    delta: isize,
+    wrap: bool,
+) -> Option<usize> {
     if len == 0 {
         return None;
     }
@@ -82,6 +98,7 @@ pub fn next_index(current: usize, len: usize, delta: isize, wrap: bool) -> Optio
         next.clamp(0, len as isize - 1) as usize
     })
 }
+
 pub fn valid_filename(name: &str) -> bool {
     !name.trim().is_empty()
         && !matches!(name, "." | "..")
@@ -118,6 +135,7 @@ pub fn valid_filename(name: &str) -> bool {
             )
         }
 }
+
 pub fn human_size(bytes: u64) -> String {
     if bytes < 1024 {
         format!("{bytes} B")
@@ -133,12 +151,14 @@ pub fn human_size(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn navigation_handles_edges_and_empty_folders() {
         assert_eq!(next_index(0, 0, 1, true), None);
         assert_eq!(next_index(0, 3, -1, true), Some(2));
         assert_eq!(next_index(2, 3, 1, false), Some(2));
     }
+
     #[test]
     fn filename_validation_prevents_traversal_and_windows_reserved_names() {
         for s in [
@@ -148,6 +168,7 @@ mod tests {
         }
         assert!(valid_filename("summer photo 01.png"));
     }
+
     #[test]
     fn folder_scan_is_natural_and_ignores_unrelated_files() -> Result<()> {
         let dir = tempfile::tempdir()?;

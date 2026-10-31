@@ -1,12 +1,14 @@
-use crate::{catalog, loader, view::View};
-use anyhow::{Context, Result, ensure};
-use image::{DynamicImage, RgbaImage};
 use std::{
     borrow::Cow,
     path::PathBuf,
     sync::{Arc, mpsc},
     thread,
 };
+
+use anyhow::{Context, Result, ensure};
+use image::{DynamicImage, RgbaImage};
+
+use crate::{catalog, loader, view::View};
 
 pub enum Task {
     Pick {
@@ -29,6 +31,7 @@ pub enum Task {
     Trash(PathBuf),
     Reveal(PathBuf),
 }
+
 pub enum Outcome {
     Picked(Option<PathBuf>),
     Exported,
@@ -37,17 +40,21 @@ pub enum Outcome {
     Trashed(PathBuf),
     Revealed,
 }
+
 pub struct Actions {
     sender: mpsc::Sender<Task>,
     pub results: mpsc::Receiver<Result<Outcome>>,
 }
+
 impl Actions {
     pub fn new(ctx: egui::Context) -> Self {
         let (sender, rx) = mpsc::channel();
         let (tx, results) = mpsc::channel();
+
         thread::spawn(move || {
-            // Keep clipboard ownership alive between copy requests, including on X11.
+            // Keep clipboard ownership alive between copy requests, including on X11
             let mut clipboard = None;
+
             while let Ok(task) = rx.recv() {
                 let result = perform(task, &mut clipboard);
                 if tx.send(result).is_err() {
@@ -58,10 +65,12 @@ impl Actions {
         });
         Self { sender, results }
     }
+
     pub fn request(&self, task: Task) {
         let _ = self.sender.send(task);
     }
 }
+
 fn perform(task: Task, clipboard: &mut Option<arboard::Clipboard>) -> Result<Outcome> {
     match task {
         Task::Pick { folder, start } => {
@@ -109,7 +118,9 @@ fn perform(task: Task, clipboard: &mut Option<arboard::Clipboard>) -> Result<Out
             } else {
                 dialog
             };
+
             if let Some(path) = dialog.save_file() {
+                // Canonical paths also catch aliases and symlinks to the original
                 let same = path == source
                     || path
                         .canonicalize()
@@ -120,31 +131,42 @@ fn perform(task: Task, clipboard: &mut Option<arboard::Clipboard>) -> Result<Out
                     !same,
                     "Choose a different file. Export creates a copy and preserves your original."
                 );
-                loader::export(&pixels, &path, view.rotation, view.flip_x, view.flip_y)?;
+                loader::export(
+                    &pixels,
+                    &path,
+                    view.rotation,
+                    view.flip_x,
+                    view.flip_y,
+                )?;
                 Ok(Outcome::Exported)
             } else {
                 Ok(Outcome::Picked(None))
             }
         }
         Task::Copy { pixels, view } => {
-            let mut img = DynamicImage::ImageRgba8(pixels.as_ref().clone());
+            let mut image = DynamicImage::ImageRgba8(pixels.as_ref().clone());
             if view.flip_x {
-                img = img.fliph();
+                image = image.fliph();
             }
             if view.flip_y {
-                img = img.flipv();
+                image = image.flipv();
             }
-            img = match view.rotation % 4 {
-                1 => img.rotate90(),
-                2 => img.rotate180(),
-                3 => img.rotate270(),
-                _ => img,
+            image = match view.rotation % 4 {
+                1 => image.rotate90(),
+                2 => image.rotate180(),
+                3 => image.rotate270(),
+                _ => image,
             };
-            let rgba = img.into_rgba8();
+
+            let rgba = image.into_rgba8();
+
             if clipboard.is_none() {
-                *clipboard =
-                    Some(arboard::Clipboard::new().context("Could not connect to the clipboard")?);
+                *clipboard = Some(
+                    arboard::Clipboard::new()
+                        .context("Could not connect to the clipboard")?,
+                );
             }
+
             if let Some(clipboard) = clipboard {
                 clipboard
                     .set_image(arboard::ImageData {
@@ -191,6 +213,7 @@ fn perform(task: Task, clipboard: &mut Option<arboard::Clipboard>) -> Result<Out
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn rename_refuses_to_replace_an_existing_image() -> Result<()> {
         let dir = tempfile::tempdir()?;
@@ -212,6 +235,7 @@ mod tests {
         assert_eq!(std::fs::read(destination)?, b"keep me");
         Ok(())
     }
+
     #[test]
     fn rename_moves_only_the_selected_file() -> Result<()> {
         let dir = tempfile::tempdir()?;

@@ -1,7 +1,9 @@
-use crate::theme::{Accent, Theme};
+use std::path::{Path, PathBuf};
+
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+
+use crate::theme::{Accent, Theme};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Canvas {
@@ -12,6 +14,7 @@ pub enum Canvas {
     White,
     Custom,
 }
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SortOrder {
     #[default]
@@ -19,6 +22,7 @@ pub enum SortOrder {
     Modified,
     Size,
 }
+
 impl SortOrder {
     pub fn name(self) -> &'static str {
         match self {
@@ -36,24 +40,29 @@ pub struct Settings {
     pub accent: Accent,
     pub canvas: Canvas,
     pub canvas_color: [u8; 3],
+
     pub checkerboard: bool,
     pub checker_size: f32,
     pub checker_contrast: f32,
+
     pub filmstrip: bool,
     pub info: bool,
     pub ui_scale: f32,
     pub fit_small: bool,
     pub remember_view: bool,
+
     pub sort: SortOrder,
     pub reverse_sort: bool,
     pub wrap_navigation: bool,
     pub slideshow_seconds: f32,
     pub nearest: bool,
     pub memory_mb: u64,
+
     pub recent: Vec<PathBuf>,
     pub reopen_last: bool,
     pub window_size: [f32; 2],
 }
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -81,33 +90,44 @@ impl Default for Settings {
         }
     }
 }
+
 impl Settings {
     pub fn config_path() -> Option<PathBuf> {
         directories::ProjectDirs::from("", "", "flowa")
             .map(|p| p.config_dir().join("settings.json"))
     }
+
     pub fn load(path: &Path) -> Result<Self> {
-        let mut s: Self =
-            serde_json::from_slice(&std::fs::read(path).context("Could not read preferences")?)
-                .context("Could not parse preferences")?;
-        s.ui_scale = s.ui_scale.clamp(0.75, 2.0);
-        s.memory_mb = s.memory_mb.clamp(128, 4096);
-        s.checker_size = s.checker_size.clamp(4.0, 64.0);
-        s.checker_contrast = s.checker_contrast.clamp(0.02, 0.4);
-        s.slideshow_seconds = s.slideshow_seconds.clamp(1.0, 120.0);
-        s.window_size[0] = s.window_size[0].clamp(640.0, 7680.0);
-        s.window_size[1] = s.window_size[1].clamp(400.0, 4320.0);
-        s.recent.truncate(12);
-        Ok(s)
+        let mut settings: Self = serde_json::from_slice(
+            &std::fs::read(path).context("Could not read preferences")?,
+        )
+        .context("Could not parse preferences")?;
+
+        // Hand-edited or older preferences must stay inside supported bounds
+        settings.ui_scale = settings.ui_scale.clamp(0.75, 2.0);
+        settings.memory_mb = settings.memory_mb.clamp(128, 4096);
+        settings.checker_size = settings.checker_size.clamp(4.0, 64.0);
+        settings.checker_contrast = settings.checker_contrast.clamp(0.02, 0.4);
+        settings.slideshow_seconds = settings.slideshow_seconds.clamp(1.0, 120.0);
+        settings.window_size[0] = settings.window_size[0].clamp(640.0, 7680.0);
+        settings.window_size[1] = settings.window_size[1].clamp(400.0, 4320.0);
+        settings.recent.truncate(12);
+
+        Ok(settings)
     }
+
     pub fn save(&self, path: &Path) -> Result<()> {
         let parent = path.parent().context("Preferences path has no parent")?;
-        std::fs::create_dir_all(parent).context("Could not create preferences directory")?;
+        std::fs::create_dir_all(parent)
+            .context("Could not create preferences directory")?;
+
+        // Keep the previous file intact if writing the new settings fails
         let temporary = path.with_extension("json.tmp");
         std::fs::write(&temporary, serde_json::to_vec_pretty(self)?)
             .context("Could not write preferences")?;
         std::fs::rename(temporary, path).context("Could not save preferences")
     }
+
     pub fn remember(&mut self, path: PathBuf) {
         self.recent.retain(|p| *p != path);
         self.recent.insert(0, path);
@@ -118,6 +138,7 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn settings_round_trip_and_preserve_user_preferences() -> Result<()> {
         let dir = tempfile::tempdir()?;
@@ -138,6 +159,7 @@ mod tests {
         assert_eq!(loaded.recent.len(), 1);
         Ok(())
     }
+
     #[test]
     fn old_preferences_get_new_defaults() -> Result<()> {
         let s: Settings = serde_json::from_str("{\"filmstrip\":true}")?;

@@ -1,10 +1,12 @@
-//! Generate deterministic fixtures without downloading or reading personal images.
-use image::{DynamicImage, ImageBuffer, Rgb, Rgba, RgbaImage};
+//! Generate deterministic fixtures without downloading or reading personal images
 use std::{fs::File, path::PathBuf};
+
+use image::{DynamicImage, ImageBuffer, Rgb, Rgba, RgbaImage};
 
 fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
-    let folder = PathBuf::from(args.next().unwrap_or_else(|| "artifacts/fixtures".into()));
+    let folder =
+        PathBuf::from(args.next().unwrap_or_else(|| "artifacts/fixtures".into()));
     let huge = args.any(|a| a == "--huge");
     std::fs::create_dir_all(&folder)?;
     let landscape = ImageBuffer::from_fn(1600, 1000, |x, y| {
@@ -37,7 +39,9 @@ fn main() -> anyhow::Result<()> {
         Rgba([185, 132, 220, if r < 180. { 170 } else { 0 }])
     })
     .save(folder.join("03-transparency.png"))?;
-    let mut gif = image::codecs::gif::GifEncoder::new(File::create(folder.join("04-motion.gif"))?);
+    let mut gif = image::codecs::gif::GifEncoder::new(File::create(
+        folder.join("04-motion.gif"),
+    )?);
     gif.set_repeat(image::codecs::gif::Repeat::Infinite)?;
     for n in 0..24 {
         let frame = RgbaImage::from_fn(240, 160, |x, y| {

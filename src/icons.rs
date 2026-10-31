@@ -27,7 +27,9 @@ pub fn button(ui: &mut Ui, icon: Icon, label: &str, selected: bool) -> Response 
             .min_size(vec2(34.0, 34.0))
             .selected(selected),
     );
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label)
+    });
     paint(
         ui.painter(),
         icon,
@@ -41,11 +43,13 @@ pub fn button(ui: &mut Ui, icon: Icon, label: &str, selected: bool) -> Response 
     );
     response.on_hover_text(label)
 }
+
 pub fn logo(ui: &mut Ui, size: f32, color: Color32) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
     flower(ui.painter(), rect.center(), size * 0.43, color);
     response
 }
+
 pub fn flower(painter: &egui::Painter, center: Pos2, radius: f32, color: Color32) {
     for n in 0..6 {
         let a = n as f32 * std::f32::consts::TAU / 6.0;
@@ -57,6 +61,7 @@ pub fn flower(painter: &egui::Painter, center: Pos2, radius: f32, color: Color32
     }
     painter.circle_filled(center, radius * 0.28, color);
 }
+
 pub fn paint(p: &egui::Painter, icon: Icon, center: Pos2, size: f32, color: Color32) {
     let s = size / 20.0;
     let point = |x: f32, y: f32| center + vec2(x - 10.0, y - 10.0) * s;
@@ -147,7 +152,10 @@ pub fn paint(p: &egui::Painter, icon: Icon, center: Pos2, size: f32, color: Colo
             for n in 0..8 {
                 let a = n as f32 * std::f32::consts::TAU / 8.;
                 let d = vec2(a.cos(), a.sin());
-                p.line_segment([center + d * size * 0.31, center + d * size * 0.45], stroke);
+                p.line_segment(
+                    [center + d * size * 0.31, center + d * size * 0.45],
+                    stroke,
+                );
             }
         }
         Icon::Fullscreen => {
@@ -188,7 +196,8 @@ pub fn swatch(ui: &mut Ui, color: Color32, selected: bool, label: &str) -> Respo
             .corner_radius(16.),
     );
     if selected {
-        let luminance = u32::from(color.r()) + u32::from(color.g()) + u32::from(color.b());
+        let luminance =
+            u32::from(color.r()) + u32::from(color.g()) + u32::from(color.b());
         paint(
             ui.painter(),
             Icon::Check,
@@ -205,13 +214,18 @@ pub fn swatch(ui: &mut Ui, color: Color32, selected: bool, label: &str) -> Respo
     response.on_hover_text(label)
 }
 
-pub fn uv_quad(painter: &egui::Painter, texture: egui::TextureId, positions: [Pos2; 4]) {
+pub fn uv_quad(
+    painter: &egui::Painter,
+    texture: egui::TextureId,
+    positions: [Pos2; 4],
+) {
     let mut mesh = egui::Mesh::with_texture(texture);
-    for (pos, uv) in
-        positions
-            .into_iter()
-            .zip([pos2(0., 0.), pos2(1., 0.), pos2(1., 1.), pos2(0., 1.)])
-    {
+    for (pos, uv) in positions.into_iter().zip([
+        pos2(0., 0.),
+        pos2(1., 0.),
+        pos2(1., 1.),
+        pos2(0., 1.),
+    ]) {
         mesh.vertices.push(egui::epaint::Vertex {
             pos,
             uv,

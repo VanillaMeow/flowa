@@ -1,6 +1,8 @@
 # Architecture
 
-`main.rs` handles the native entry point, codec registration, and command-line arguments. `app.rs` owns the application state and UI. `preferences.rs` defines the preferences interface and shortcut reference. `theme.rs` maps semantic UI colors to built-in or KDE palettes. `view.rs` contains reversible image-to-screen transforms.
+`main.rs` handles the native entry point, codec registration, and command-line arguments. `app.rs` owns application state and the window lifecycle. Its `app/` modules contain the canvas, toolbar, filmstrip, inspector, keyboard input, dialogs, screenshots, and background-result handling. `preferences.rs` defines one function per preferences tab and the shortcut reference. `theme.rs` maps semantic UI colors to built-in or KDE palettes. `view.rs` contains reversible image-to-screen transforms.
+
+`loader.rs` handles decoding, color conversion, previews, and export. `loader/workers.rs` owns the channels and scheduling for decoding, tiles, and thumbnails.
 
 ## Loading and ownership
 
