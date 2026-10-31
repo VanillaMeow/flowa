@@ -251,9 +251,9 @@ fn welcome(
 ) {
     let width = rect.width().min(480.);
     let height = if settings.recent.is_empty() {
-        285.
+        250.
     } else {
-        425.
+        390.
     };
     let center = rect.center() - vec2(0., 10.);
     let area = Rect::from_center_size(center, vec2(width, height));
@@ -275,12 +275,6 @@ fn welcome_contents(
     icons::logo(ui, 58., colors.accent);
     ui.add_space(18.);
     ui.label(RichText::new("flowa").size(34.));
-    ui.add_space(8.);
-    ui.label(
-        RichText::new("An open space for your images.")
-            .size(16.)
-            .color(colors.muted),
-    );
     ui.add_space(24.);
 
     open_buttons(ui, width, colors, commands);

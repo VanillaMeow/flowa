@@ -66,16 +66,6 @@ fn details(
     if let Some(entry) = entry {
         file_actions(ui, entry, commands);
     }
-
-    ui.add_space(20.);
-    ui.label(
-        RichText::new(concat!(
-            "Rotation and flips are temporary. ",
-            "Export a copy to save what you see.",
-        ))
-        .size(13.)
-        .color(colors.muted),
-    );
 }
 
 fn file_details(ui: &mut egui::Ui, entry: &Entry, colors: Colors) {

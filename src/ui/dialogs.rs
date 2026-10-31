@@ -72,9 +72,7 @@ impl Dialogs {
                     Dialog::Rename { path, name } => {
                         rename_form(ui, path, name, colors, commands)
                     }
-                    Dialog::Trash(path) => {
-                        trash_confirmation(ui, path, colors, commands)
-                    }
+                    Dialog::Trash(path) => trash_confirmation(ui, path, commands),
                 }
             });
 
@@ -169,17 +167,11 @@ fn rename_form(
 fn trash_confirmation(
     ui: &mut egui::Ui,
     path: &std::path::Path,
-    colors: Colors,
     commands: &mut Vec<Command>,
 ) -> bool {
     ui.heading("Move this image to trash?");
     ui.add_space(12.);
     ui.label(path.file_name().unwrap_or_default().to_string_lossy());
-    ui.add_space(8.);
-    ui.label(
-        RichText::new("You can restore it from your system’s trash.")
-            .color(colors.muted),
-    );
 
     ui.add_space(18.);
     ui.horizontal(|ui| {

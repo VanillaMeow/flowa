@@ -2,6 +2,10 @@
 
 Recorded on 2026-10-31 on Arch Linux with Rust 1.99.1. Native rendering used an NVIDIA GeForce GTX 1050 Ti through Vulkan.
 
+## UI copy cleanup
+
+Removed decorative slogans, duplicate instructions, and implementation commentary from the viewer and preferences. The status bar is hidden until an image has decoded. `cargo fmt --check`, `cargo clippy -j 3 --all-targets -- -D warnings`, `cargo test -j 3`, and the debug build passed; all 30 tests passed. Native Vulkan captures verified the empty screen, failed-image screen, loaded-image status bar, inspector, preferences, and trash cancellation. Checks used fixtures and isolated settings under `/tmp/flowa-copy-ivx3av8v`.
+
 ## Lucide control icons
 
 The Lucide replacement on 2026-10-31 passed `cargo fmt --check`, `cargo clippy -j 3 --all-targets -- -D warnings`, `cargo test -j 3`, `cargo check -j 3 --no-default-features`, and `cargo build -j 3`. All 30 tests passed. The three new tests cover rasterization of all 18 embedded SVGs at multiple sizes, premultiplied-alpha masks suitable for tinting, texture reuse across frames, separate entries for different display sizes, the 64-entry cache bound, and eviction after disuse.

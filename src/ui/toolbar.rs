@@ -99,13 +99,14 @@ fn navigation_buttons(ui: &mut egui::Ui, commands: &mut Vec<Command>) {
 fn image_title(ui: &mut egui::Ui, state: &ToolbarState<'_>) {
     let entry = state.browser.current();
     let title = entry.map(|entry| entry.name.as_str()).unwrap_or("flowa");
-    let tooltip = entry
-        .map(|entry| entry.path.display().to_string())
-        .unwrap_or_else(|| "An open space for your images".into());
     let width = (ui.available_width() - 480.).clamp(40., 260.);
     let label = egui::Label::new(RichText::new(title).size(15.)).truncate();
 
-    ui.add_sized([width, 34.], label).on_hover_text(tooltip);
+    let response = ui.add_sized([width, 34.], label);
+
+    if let Some(entry) = entry {
+        response.on_hover_text(entry.path.display().to_string());
+    }
 }
 
 fn file_menu(ui: &mut egui::Ui, state: &ToolbarState<'_>, commands: &mut Vec<Command>) {
@@ -308,6 +309,10 @@ fn view_buttons(
 }
 
 pub(crate) fn status(root: &mut egui::Ui, state: &ToolbarState<'_>) {
+    if state.image.decoded.is_none() {
+        return;
+    }
+
     let frame = egui::Frame::new()
         .fill(state.colors.panel)
         .inner_margin(egui::Margin::symmetric(18, 4));
@@ -337,8 +342,6 @@ fn status_contents(ui: &mut egui::Ui, state: &ToolbarState<'_>) {
             ui.separator();
             status_label(ui, &format!("{} frames", image.frames.len()), state.colors);
         }
-    } else {
-        status_label(ui, "Drop an image or folder to begin", state.colors);
     }
 
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

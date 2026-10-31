@@ -113,9 +113,6 @@ fn preference_tab(
 }
 
 fn viewing(ui: &mut egui::Ui, settings: &mut Settings) {
-    ui.heading("Make yourself at home");
-    ui.add_space(12.);
-
     ui.checkbox(&mut settings.filmstrip, "Show thumbnail strip");
     ui.checkbox(&mut settings.info, "Show image details");
     ui.checkbox(&mut settings.fit_small, "Enlarge small images when fitting");
@@ -145,55 +142,23 @@ fn viewing(ui: &mut egui::Ui, settings: &mut Settings) {
     if ui.button("Clear recent images").clicked() {
         settings.recent.clear();
     }
-
-    ui.small("Rotation and flips affect the view. Export creates a new file.");
 }
 
 fn performance(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors, gpu: &str) {
-    ui.heading("Room for bigger images");
-    ui.add_space(12.);
-
     ui.label("Decoded image memory limit");
     ui.add(
         egui::Slider::new(&mut settings.memory_mb, 128..=4096)
             .logarithmic(true)
             .suffix(" MB"),
-    );
-    ui.label(
-        RichText::new(concat!(
-            "Applies when opening the next image. A 100-megapixel RGBA image uses ",
-            "about 400 MB before decoder overhead.",
-        ))
-        .color(colors.muted),
-    );
-
-    ui.add_space(16.);
-    ui.label(concat!(
-        "Full-resolution images use 1024-pixel tiles. Only visible tiles upload ",
-        "to the GPU, with a bounded cache and a preview underneath.",
-    ));
-
-    ui.add_space(12.);
-    ui.label(concat!(
-        "GPU tile cache: up to 192 MB. Thumbnail cache: up to 128 images. ",
-        "Animation frames share the decoded image limit.",
-    ));
+    )
+    .on_hover_text("Applies to the next image opened");
 
     ui.add_space(20.);
     ui.label(RichText::new("Renderer").color(colors.muted));
     ui.label(gpu);
-
-    ui.add_space(16.);
-    ui.small(concat!(
-        "The current display pipeline converts to 8-bit sRGB. HDR output, ",
-        "camera RAW, and layered PSD are not supported in this version.",
-    ));
 }
 
 fn shortcuts(ui: &mut egui::Ui) {
-    ui.heading("Keep your hands on the keys");
-    ui.add_space(12.);
-
     egui::Grid::new("shortcuts")
         .num_columns(2)
         .spacing(vec2(36., 10.))
@@ -209,38 +174,24 @@ fn shortcuts(ui: &mut egui::Ui) {
 fn about(ui: &mut egui::Ui, colors: Colors) {
     icons::logo(ui, 52., colors.accent);
     ui.heading("flowa");
-    ui.label("An open space for your images.");
 
     ui.add_space(12.);
     ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
-    ui.label("Built with Rust, egui, and wgpu.");
 
     ui.add_space(16.);
+    ui.label("Supported formats");
     ui.label(concat!(
         "JPEG · PNG / APNG · GIF · WebP · SVG · TIFF · BMP · ICO · JPEG XL · ",
         "OpenEXR · HDR · TGA · DDS · QOI · PNM · farbfeld",
     ));
 
     if cfg!(feature = "avif") {
-        ui.label("AVIF decoding enabled through dav1d.");
+        ui.label("AVIF");
     }
 
     if cfg!(feature = "heif") {
-        ui.label("HEIC / HEIF decoding enabled through libheif.");
+        ui.label("HEIC / HEIF");
     }
-
-    ui.add_space(12.);
-    ui.small(concat!(
-        "GIF, APNG, and WebP animation are supported. SVG is rendered at its ",
-        "intrinsic size, capped at 16384 pixels. JPEG XL currently displays ",
-        "the first frame.",
-    ));
-
-    ui.add_space(12.);
-    ui.label(concat!(
-        "Embedded RGB ICC profiles are converted to sRGB. Monitor-specific ",
-        "profiling and full HDR output are not implemented.",
-    ));
 
     ui.add_space(12.);
     ui.collapsing("Icon licenses", |ui| {
@@ -250,17 +201,7 @@ fn about(ui: &mut egui::Ui, colors: Colors) {
 }
 
 fn appearance(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors) {
-    ui.heading("A space that feels like yours");
-    ui.add_space(8.);
-    ui.label(
-        RichText::new(concat!(
-            "System / Qt follows KDE’s color palette on Linux. ",
-            "Other desktops use the system light or dark preference.",
-        ))
-        .color(colors.muted),
-    );
-    ui.add_space(14.);
-
+    ui.label("Theme");
     theme_picker(ui, settings, colors);
 
     ui.add_space(18.);
@@ -300,8 +241,17 @@ fn theme_picker(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors) {
                 let selected = settings.theme == theme;
                 let button = theme_card(theme, selected, card_width, colors);
 
-                if ui.add(button).clicked() {
+                let response = ui.add(button);
+
+                if response.clicked() {
                     settings.theme = theme;
+                }
+
+                if theme == Theme::System {
+                    response.on_hover_text(concat!(
+                        "Uses KDE colors on Linux, or the system light/dark theme ",
+                        "on other desktops",
+                    ));
                 }
 
                 if index % columns == columns - 1 {
