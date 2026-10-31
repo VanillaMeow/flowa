@@ -62,6 +62,15 @@ impl PreferencesWindow {
         let default_position =
             (ctx.viewport_rect().center() - vec2(330., 310.)).max(egui::pos2(12., 12.));
 
+        let style = ctx.global_style();
+        let title_frame = egui::Frame::window(&style);
+        let mut content_frame = title_frame;
+
+        // Keep the resize grip outside the content viewport
+        let resize_space =
+            style.visuals.resize_corner_size + style.spacing.item_spacing.y;
+        content_frame.inner_margin.bottom += resize_space.ceil() as i8;
+
         egui::Window::new("Preferences")
             .id(egui::Id::unique("preferences"))
             .open(&mut self.open)
@@ -70,7 +79,11 @@ impl PreferencesWindow {
             .default_size(vec2(660., 620.))
             .default_pos(default_position)
             .min_size(vec2(460., 360.))
+            .frame(content_frame)
+            .title_frame(title_frame)
             .show(ctx, |ui| {
+                ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
+
                 preference_tabs(ui, &mut self.tab);
 
                 ui.add_space(12.);
@@ -78,6 +91,7 @@ impl PreferencesWindow {
                 ui.add_space(8.);
 
                 egui::ScrollArea::vertical()
+                    .auto_shrink([false, true])
                     .max_height(540.)
                     .show(ui, |ui| preference_tab(ui, self.tab, settings, colors, gpu));
             });

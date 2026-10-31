@@ -2,6 +2,12 @@
 
 Recorded on 2026-10-31 on Arch Linux with Rust 1.99.1. Native rendering used an NVIDIA GeForce GTX 1050 Ti through Vulkan.
 
+## Preferences scrollbar
+
+Preferences now use a solid scrollbar with reserved space, and the scroll area fills the window width even on narrow-content tabs. `cargo fmt --check`, `cargo clippy -j 3 --all-targets -- -D warnings`, and the debug build passed. Native X11/Vulkan checks verified scrollbar placement and scrolling on Appearance and Shortcuts, including a narrower preferences window and 150% UI scale. Captures and isolated settings are under `/tmp/flowa-scrollbar-9vzin2p5`.
+
+The bottom window margin now reserves space for the resize grip outside the scroll viewport. Native follow-up checks verified the gap at the bottom of the shortcut list, corner dragging to resize, and 150% scaling under `/tmp/flowa-resize-frame-67pp4z54`. Formatting, Clippy, and the debug build passed again.
+
 ## UI copy cleanup
 
 Removed decorative slogans, duplicate instructions, and implementation commentary from the viewer and preferences. The status bar is hidden until an image has decoded. `cargo fmt --check`, `cargo clippy -j 3 --all-targets -- -D warnings`, `cargo test -j 3`, and the debug build passed; all 30 tests passed. Native Vulkan captures verified the empty screen, failed-image screen, loaded-image status bar, inspector, preferences, and trash cancellation. Checks used fixtures and isolated settings under `/tmp/flowa-copy-ivx3av8v`.
