@@ -98,7 +98,7 @@ fn navigation_buttons(ui: &mut egui::Ui, commands: &mut Vec<Command>) {
 
 fn image_title(ui: &mut egui::Ui, state: &ToolbarState<'_>) {
     let entry = state.browser.current();
-    let title = entry.map(|entry| entry.name.as_str()).unwrap_or("flowa");
+    let title = entry.map(|entry| entry.name.as_str()).unwrap_or("");
     let width = (ui.available_width() - 480.).clamp(40., 260.);
     let label = egui::Label::new(RichText::new(title).size(15.)).truncate();
 
