@@ -1,0 +1,44 @@
+[package]
+name = "flowa"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+description = "A quiet, GPU-powered image viewer for everyday use"
+
+[features]
+default = ["avif", "heif"]
+avif = ["image/avif-native"]
+heif = ["dep:libheif-rs"]
+
+[dependencies]
+anyhow = "1"
+arboard = { version = "3", default-features = false, features = ["image-data", "wayland-data-control"] }
+directories = "6"
+eframe = { version = "0.37", default-features = false, features = ["accesskit", "default_fonts", "wgpu", "x11", "wayland"] }
+egui = { version = "0.37", features = ["serde"] }
+image = { version = "0.25.10", default-features = false, features = ["bmp", "dds", "exr", "ff", "gif", "hdr", "ico", "jpeg", "png", "pnm", "qoi", "tga", "tiff", "webp"] }
+jxl-oxide = { version = "0.12.6", features = ["image", "moxcms"] }
+kamadak-exif = "0.6"
+lcms2 = { version = "6", features = ["static"] }
+libheif-rs = { version = "3", optional = true, default-features = false, features = ["v1_17", "image"] }
+natord = "1"
+open = "5"
+resvg = "0.49"
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+env_logger = "0.11"
+trash = "5"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+
+[lints.clippy]
+unwrap_used = "warn"

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=flowa
+GenericName=Image Viewer
+Comment=An open space for your images
+Exec=flowa %f
+Icon=flowa
+Terminal=false
+Categories=Graphics;Viewer;
+MimeType=image/jpeg;image/png;image/apng;image/gif;image/webp;image/bmp;image/x-icon;image/tiff;image/svg+xml;image/svg+xml-compressed;image/jxl;image/avif;image/heic;image/heif;image/x-tga;image/x-exr;image/vnd.radiance;
+StartupNotify=true
+StartupWMClass=flowa
