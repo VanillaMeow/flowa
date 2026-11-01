@@ -229,6 +229,10 @@ fn shortcuts(ui: &mut egui::Ui) {
 }
 
 fn about(ui: &mut egui::Ui, colors: Colors) {
+    ui.vertical_centered(|ui| about_contents(ui, colors));
+}
+
+fn about_contents(ui: &mut egui::Ui, colors: Colors) {
     icons::logo(ui, 52., colors.accent);
     ui.heading("flowa");
 
@@ -251,10 +255,28 @@ fn about(ui: &mut egui::Ui, colors: Colors) {
     }
 
     ui.add_space(12.);
-    ui.collapsing("Icon licenses", |ui| {
-        ui.label("Lucide icons");
-        ui.add(egui::Label::new(icons::LICENSE).wrap().selectable(true));
-    });
+    icon_licenses(ui);
+}
+
+fn icon_licenses(ui: &mut egui::Ui) {
+    let id = ui.make_persistent_id("icon_licenses");
+    let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
+        ui.ctx(),
+        id,
+        false,
+    );
+    let button = egui::Button::new("Icon licenses").selected(state.is_open());
+
+    if ui.add(button).clicked() {
+        state.toggle(ui);
+    }
+
+    state.show_body_unindented(ui, icon_license_text);
+}
+
+fn icon_license_text(ui: &mut egui::Ui) {
+    ui.label("Lucide icons");
+    ui.add(egui::Label::new(icons::LICENSE).wrap().selectable(true));
 }
 
 fn appearance(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors) {
