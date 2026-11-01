@@ -1,4 +1,4 @@
-//! Bounded background workers for decoding, tiles, and thumbnails
+//! Bounded background workers for image tiles and thumbnails
 
 use std::{
     path::PathBuf,
@@ -10,89 +10,12 @@ use std::{
     thread,
 };
 
-use anyhow::{Context, Result};
 use egui::ColorImage;
 use image::RgbaImage;
 
-use crate::viewer::image_session::DecodedImage;
-
-use super::image_decode::{color_image, decode, thumbnail};
+use super::image_decode::{color_image, thumbnail};
 
 pub const TILE_SIZE: u32 = 1024;
-
-pub struct LoadRequest {
-    pub generation: u64,
-    pub path: PathBuf,
-    pub budget: u64,
-}
-
-pub struct LoadResult {
-    pub generation: u64,
-    pub result: Result<DecodedImage>,
-}
-
-pub struct Loader {
-    sender: mpsc::Sender<LoadRequest>,
-    pub results: mpsc::Receiver<LoadResult>,
-    generation: Arc<AtomicU64>,
-}
-
-impl Loader {
-    pub fn new(ctx: egui::Context) -> Self {
-        let (sender, requests_rx) = mpsc::channel::<LoadRequest>();
-        let (results_tx, results) = mpsc::sync_channel(1);
-        let generation = Arc::new(AtomicU64::new(0));
-        let active_generation = Arc::clone(&generation);
-
-        thread::spawn(move || {
-            while let Ok(mut request) = requests_rx.recv() {
-                // Skip intermediate selections when the user holds an arrow key
-                while let Ok(new_request) = requests_rx.try_recv() {
-                    request = new_request;
-                }
-
-                if active_generation.load(Ordering::Relaxed) != request.generation {
-                    continue;
-                }
-
-                let result = decode(&request.path, request.budget).with_context(|| {
-                    format!("Could not open {}", request.path.display())
-                });
-
-                if active_generation.load(Ordering::Relaxed) != request.generation {
-                    continue;
-                }
-
-                if results_tx
-                    .send(LoadResult {
-                        generation: request.generation,
-                        result,
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-
-                ctx.request_repaint();
-            }
-        });
-
-        Self {
-            sender,
-            results,
-            generation,
-        }
-    }
-
-    pub fn request(&self, request: LoadRequest) {
-        self.generation.store(request.generation, Ordering::Relaxed);
-        let _ = self.sender.send(request);
-    }
-
-    pub fn cancel(&self, generation: u64) {
-        self.generation.store(generation, Ordering::Relaxed);
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TileKey {

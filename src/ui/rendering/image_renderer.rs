@@ -27,6 +27,40 @@ struct TileTexture {
     touched: u64,
 }
 
+pub(crate) struct FrozenPreview {
+    texture: TextureHandle,
+    size: Vec2,
+    view: View,
+}
+
+impl FrozenPreview {
+    pub fn paint(
+        &self,
+        painter: &egui::Painter,
+        canvas: Rect,
+        settings: &Settings,
+        colors: Colors,
+    ) {
+        let image_rect = self.view.image_rect(self.size, canvas);
+        let source = Rect::from_min_size(Pos2::ZERO, self.size);
+
+        paint_backdrop(
+            painter,
+            image_rect,
+            canvas_color(settings, colors),
+            settings,
+        );
+        paint_source(
+            painter,
+            self.texture.id(),
+            source,
+            self.size,
+            canvas,
+            &self.view,
+        );
+    }
+}
+
 pub(crate) struct RenderFrame<'a> {
     pub image: &'a ImageSession,
     pub view: &'a View,
@@ -64,6 +98,14 @@ impl ImageRenderer {
         self.preview_frame = usize::MAX;
         self.tiles.clear();
         self.pending_tiles.clear();
+    }
+
+    pub fn freeze(&mut self, size: Vec2, view: &View) -> Option<FrozenPreview> {
+        Some(FrozenPreview {
+            texture: self.preview.take()?,
+            size,
+            view: view.clone(),
+        })
     }
 
     pub fn tile_count(&self) -> usize {

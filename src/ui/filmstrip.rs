@@ -169,8 +169,12 @@ impl Filmstrip {
             let selected = index == browser.index();
             let rect = item_rect(origin, index);
 
-            if self.show_item(ui, entry, index, rect, selected, colors) {
+            let response = self.show_item(ui, entry, index, rect, selected, colors);
+
+            if response.clicked() {
                 clicked = Some(index);
+            } else if response.hovered() && !selected {
+                commands.push(Command::PreloadImage(index));
             }
         }
 
@@ -188,7 +192,7 @@ impl Filmstrip {
         rect: Rect,
         selected: bool,
         colors: Colors,
-    ) -> bool {
+    ) -> egui::Response {
         let response = ui.interact(rect, ui.scope_id().with(index), Sense::click());
         response.widget_info(|| {
             egui::WidgetInfo::labeled(egui::Role::Button, true, &entry.name)
@@ -205,9 +209,7 @@ impl Filmstrip {
         paint_caption(ui, &entry.name, rect, selected, colors);
         paint_outline(ui.painter(), &response, selected, colors);
 
-        let clicked = response.clicked();
-        response.on_hover_text(&entry.name);
-        clicked
+        response.on_hover_text(&entry.name)
     }
 
     fn paint_thumbnail(

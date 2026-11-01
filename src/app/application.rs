@@ -9,7 +9,7 @@ use crate::{
     services::{
         file_actions::Actions,
         folder_scan::FolderScanner,
-        image_workers::{LoadRequest, Loader},
+        image_loader::{LoadRequest, Loader},
     },
     settings::{Settings, SettingsStore, Theme},
     ui::{
@@ -113,7 +113,12 @@ impl Flowa {
     }
 
     pub(super) fn open_path(&mut self, path: PathBuf, ctx: &egui::Context) {
-        self.image.begin_scan();
+        self.image.begin_load();
+        self.loader.cancel(self.image.generation());
+        self.ui
+            .canvas
+            .reset(self.image.generation(), self.settings.values.remember_view);
+
         let generation = self.browser.begin_scan();
         self.scanner.request(path, generation, ctx);
     }
@@ -121,7 +126,7 @@ impl Flowa {
     pub(super) fn clear_image(&mut self) {
         self.image.clear();
         self.loader.cancel(self.image.generation());
-        self.ui.canvas.renderer.reset(self.image.generation());
+        self.ui.canvas.clear(self.image.generation());
         self.slideshow.active = false;
     }
 
@@ -158,6 +163,34 @@ impl Flowa {
 
         self.slideshow
             .restart(self.settings.values.slideshow_seconds);
+    }
+
+    pub(super) fn preload_image(&self, index: usize) {
+        if index == self.browser.index() {
+            return;
+        }
+
+        if let Some(entry) = self.browser.entries().get(index) {
+            self.loader.preload(entry.path.clone());
+        }
+    }
+
+    pub(super) fn preload_neighbors(&self) {
+        if self.image.loading {
+            return;
+        }
+
+        let paths = [1, -1]
+            .into_iter()
+            .filter_map(|delta| {
+                self.browser
+                    .next(delta, self.settings.values.wrap_navigation)
+            })
+            .filter_map(|index| self.browser.entries().get(index))
+            .map(|entry| entry.path.clone())
+            .collect();
+
+        self.loader.preload_neighbors(paths);
     }
 
     pub(super) fn update_title(&self, ctx: &egui::Context) {
@@ -320,6 +353,7 @@ impl Flowa {
 
     fn show_overlays(&mut self, ctx: &egui::Context) {
         let old_nearest = self.settings.values.nearest;
+        let old_memory = self.settings.values.memory_mb;
         let changed = self.ui.preferences.show(
             ctx,
             &mut self.settings.values,
@@ -329,6 +363,13 @@ impl Flowa {
 
         if changed {
             self.refresh_theme(ctx);
+
+            if old_memory != self.settings.values.memory_mb {
+                self.loader
+                    .set_budget(self.settings.values.memory_mb * 1024 * 1024);
+            }
+
+            self.preload_neighbors();
 
             if old_nearest != self.settings.values.nearest {
                 self.ui.canvas.renderer.set_sampling(

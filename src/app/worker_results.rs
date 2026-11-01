@@ -76,6 +76,7 @@ impl Flowa {
 
                 self.slideshow
                     .restart(self.settings.values.slideshow_seconds);
+                self.preload_neighbors();
             }
         }
     }
@@ -87,6 +88,7 @@ impl Flowa {
             Outcome::Copied => self.ui.dialogs.notify("Image copied", false),
             Outcome::Exported => self.ui.dialogs.notify("Copy exported", false),
             Outcome::Renamed { old, new } => {
+                self.loader.invalidate();
                 self.settings.values.recent.retain(|path| *path != old);
 
                 let entry = match folder_scan::entry_from_path(new.clone()) {
@@ -114,6 +116,7 @@ impl Flowa {
                 }
             }
             Outcome::Trashed(path) => {
+                self.loader.invalidate();
                 self.settings.values.recent.retain(|recent| *recent != path);
                 self.ui.filmstrip.remove(&path);
 

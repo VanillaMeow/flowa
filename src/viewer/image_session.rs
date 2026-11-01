@@ -28,6 +28,16 @@ pub struct DecodedImage {
 }
 
 impl DecodedImage {
+    pub fn memory_bytes(&self) -> u64 {
+        let frames: usize = self
+            .frames
+            .iter()
+            .map(|frame| frame.pixels.as_raw().len() + frame.preview.pixels.len() * 4)
+            .sum();
+
+        frames as u64 + self.thumbnail.pixels.len() as u64 * 4
+    }
+
     pub fn duration(&self) -> Duration {
         self.frames.iter().map(|f| f.delay).sum()
     }
@@ -37,6 +47,7 @@ pub(crate) struct ImageSession {
     generation: u64,
     pub decoded: Option<DecodedImage>,
     pub loading: bool,
+    loading_started: Option<Instant>,
     pub error: Option<String>,
     pub playback: Animation,
 }
@@ -47,6 +58,7 @@ impl ImageSession {
             generation: 0,
             decoded: None,
             loading: false,
+            loading_started: None,
             error: None,
             playback: Animation::new(),
         }
@@ -56,14 +68,10 @@ impl ImageSession {
         self.generation
     }
 
-    pub fn begin_scan(&mut self) {
-        self.loading = true;
-        self.error = None;
-    }
-
     pub fn begin_load(&mut self) -> u64 {
         self.clear();
         self.loading = true;
+        self.loading_started = Some(Instant::now());
 
         self.generation
     }
@@ -73,6 +81,7 @@ impl ImageSession {
         self.generation += 1;
         self.decoded = None;
         self.loading = false;
+        self.loading_started = None;
         self.error = None;
         self.playback.frame_index = 0;
     }
@@ -83,6 +92,7 @@ impl ImageSession {
         }
 
         self.loading = false;
+        self.loading_started = None;
 
         match result {
             Ok(decoded) => {
@@ -97,6 +107,12 @@ impl ImageSession {
         }
 
         true
+    }
+
+    pub fn loading_age(&self) -> Duration {
+        self.loading_started
+            .map(|started| started.elapsed())
+            .unwrap_or_default()
     }
 
     pub fn current_pixels(&self) -> Option<Arc<image::RgbaImage>> {

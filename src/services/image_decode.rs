@@ -55,6 +55,63 @@ pub fn color_image(pixels: &RgbaImage) -> ColorImage {
     )
 }
 
+pub fn preload_bytes(path: &Path, budget: u64) -> Result<Option<u64>> {
+    let mut reader = ImageReader::open(path)?.with_guessed_format()?;
+    reader.limits(limits(budget));
+
+    let (width, height, source_bytes) = match reader.format() {
+        Some(image::ImageFormat::Png) => {
+            let decoder = image::codecs::png::PngDecoder::with_limits(
+                BufReader::new(File::open(path)?),
+                limits(budget),
+            )?;
+
+            if decoder.is_apng()? {
+                return Ok(None);
+            }
+
+            let (width, height) = decoder.dimensions();
+            (width, height, decoder.total_bytes())
+        }
+        Some(image::ImageFormat::WebP) => {
+            let mut decoder = image::codecs::webp::WebPDecoder::new(BufReader::new(
+                File::open(path)?,
+            ))?;
+            decoder.set_limits(limits(budget))?;
+
+            if decoder.has_animation() {
+                return Ok(None);
+            }
+
+            let (width, height) = decoder.dimensions();
+            (width, height, decoder.total_bytes())
+        }
+        Some(
+            image::ImageFormat::Jpeg
+            | image::ImageFormat::Bmp
+            | image::ImageFormat::Qoi,
+        ) => {
+            let decoder = reader.into_decoder()?;
+            let (width, height) = decoder.dimensions();
+            (width, height, decoder.total_bytes())
+        }
+        _ => return Ok(None),
+    };
+
+    // Leave room for conversion buffers as well as the retained pixels and previews
+    let pixels = u64::from(width) * u64::from(height) * 4;
+    let preview =
+        u64::from(width.min(PREVIEW_EDGE)) * u64::from(height.min(PREVIEW_EDGE)) * 4;
+    let thumbnail = u64::from(width.min(192)) * u64::from(height.min(192)) * 4;
+    let reserved = source_bytes
+        .max(pixels)
+        .saturating_mul(3)
+        .saturating_add(preview)
+        .saturating_add(thumbnail);
+
+    Ok((width > 0 && height > 0 && reserved <= budget).then_some(reserved))
+}
+
 pub fn decode(path: &Path, budget: u64) -> Result<DecodedImage> {
     let ext = path
         .extension()
@@ -328,8 +385,10 @@ pub fn thumbnail(path: &Path) -> Result<ColorImage> {
     }) {
         return Ok(color_image(&render_svg(path, 256, 64 * 1024 * 1024)?));
     }
+
     let mut reader = ImageReader::open(path)?.with_guessed_format()?;
     reader.limits(limits(256 * 1024 * 1024));
+
     let mut decoder = reader.into_decoder()?;
     let (w, h) = decoder.dimensions();
     check_size(w, h, 256 * 1024 * 1024)?;
@@ -337,9 +396,11 @@ pub fn thumbnail(path: &Path) -> Result<ColorImage> {
         .orientation()
         .unwrap_or(image::metadata::Orientation::NoTransforms);
     let icc = decoder.icc_profile().ok().flatten();
+
     let mut image = DynamicImage::from_decoder(decoder)?;
     image.apply_orientation(orientation);
     let mut small = image.thumbnail(192, 128).into_rgba8();
+
     apply_icc(&mut small, icc.as_deref());
     Ok(color_image(&small))
 }
@@ -455,6 +516,7 @@ mod tests {
             r##"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><rect width="20" height="10" fill="#ff0000" opacity="0.5"/></svg>"##,
         )?;
         let decoded = decode(&path, 32 * 1024 * 1024)?;
+        assert!(preload_bytes(&path, 32 * 1024 * 1024)?.is_none());
         let px = decoded.frames[0].pixels.get_pixel(5, 5);
         assert_eq!(px[0], 255);
         assert!((126..=129).contains(&px[3]));
@@ -476,6 +538,7 @@ mod tests {
         }
         drop(encoder);
         let decoded = decode(&path, 1024 * 1024)?;
+        assert!(preload_bytes(&path, 1024 * 1024)?.is_none());
         assert_eq!(decoded.frames.len(), 2);
         assert_eq!(decoded.frames[0].delay, Duration::from_millis(100));
         Ok(())

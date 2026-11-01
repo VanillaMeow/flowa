@@ -1,5 +1,7 @@
 //! Image interaction and the canvas's loading, error, and welcome states
 
+use std::time::Duration;
+
 use egui::{Rect, RichText, Sense, Stroke, Vec2, vec2};
 
 use crate::{
@@ -13,9 +15,14 @@ use crate::{
 
 use super::{
     icons,
-    rendering::image_renderer::{self as renderer, ImageRenderer, RenderFrame},
+    rendering::image_renderer::{
+        self as renderer, FrozenPreview, ImageRenderer, RenderFrame,
+    },
     theme::Colors,
 };
+
+const LOADING_DELAY: Duration = Duration::from_millis(150);
+const LOADING_FADE: Duration = Duration::from_millis(100);
 
 pub(crate) struct CanvasContent<'a> {
     pub image: &'a ImageSession,
@@ -28,6 +35,8 @@ pub(crate) struct ImageCanvas {
     pub view: View,
     pub rect: Rect,
     pub renderer: ImageRenderer,
+    previous: Option<FrozenPreview>,
+    displayed_size: Option<Vec2>,
 }
 
 impl ImageCanvas {
@@ -36,10 +45,18 @@ impl ImageCanvas {
             view: View::default(),
             rect: Rect::NOTHING,
             renderer: ImageRenderer::new(ctx, nearest),
+            previous: None,
+            displayed_size: None,
         }
     }
 
     pub fn reset(&mut self, generation: u64, remember_view: bool) {
+        if let Some(size) = self.displayed_size.take()
+            && let Some(preview) = self.renderer.freeze(size, &self.view)
+        {
+            self.previous = Some(preview);
+        }
+
         self.renderer.reset(generation);
 
         if !remember_view {
@@ -49,6 +66,12 @@ impl ImageCanvas {
                 ..Default::default()
             };
         }
+    }
+
+    pub fn clear(&mut self, generation: u64) {
+        self.previous = None;
+        self.displayed_size = None;
+        self.renderer.reset(generation);
     }
 
     pub fn actual_pixels(&mut self, ctx: &egui::Context) {
@@ -88,9 +111,14 @@ impl ImageCanvas {
         self.rect = rect;
 
         let context_menu = if let Some(decoded) = &content.image.decoded {
+            self.previous = None;
             self.show_image(ui, &response, content, decoded);
             Some(response)
+        } else if content.image.loading {
+            self.show_loading(ui, content);
+            None
         } else {
+            self.previous = None;
             show_empty_state(ui, rect, content, commands);
             None
         };
@@ -111,6 +139,7 @@ impl ImageCanvas {
     ) {
         let ctx = ui.ctx();
         let size = vec2(decoded.size[0] as f32, decoded.size[1] as f32);
+        self.displayed_size = Some(size);
 
         self.handle_pointer(response, ctx);
         self.fit_image(size, content.settings, ctx.pixels_per_point());
@@ -125,6 +154,30 @@ impl ImageCanvas {
         };
 
         self.renderer.paint(&painter, ctx, frame);
+    }
+
+    fn show_loading(&self, ui: &mut egui::Ui, content: &CanvasContent<'_>) {
+        if let Some(preview) = &self.previous {
+            let painter = ui.painter().with_clip_rect(self.rect);
+            preview.paint(&painter, self.rect, content.settings, content.colors);
+        }
+
+        let elapsed = content.image.loading_age();
+
+        if elapsed < LOADING_DELAY {
+            ui.ctx().request_repaint_after(LOADING_DELAY - elapsed);
+            return;
+        }
+
+        let opacity = ((elapsed - LOADING_DELAY).as_secs_f32()
+            / LOADING_FADE.as_secs_f32())
+        .min(1.);
+
+        if opacity < 1. {
+            ui.ctx().request_repaint();
+        }
+
+        show_loading(ui, self.rect, content.colors, opacity);
     }
 
     fn handle_pointer(&mut self, response: &egui::Response, ctx: &egui::Context) {
@@ -186,25 +239,26 @@ fn show_empty_state(
     content: &CanvasContent<'_>,
     commands: &mut Vec<Command>,
 ) {
-    if content.image.loading {
-        show_loading(ui, rect, content.colors);
-    } else if let Some(error) = &content.image.error {
+    if let Some(error) = &content.image.error {
         show_error(ui, rect, error, content, commands);
     } else {
         welcome(ui, rect, content.settings, content.colors, commands);
     }
 }
 
-fn show_loading(ui: &mut egui::Ui, rect: Rect, colors: Colors) {
+fn show_loading(ui: &mut egui::Ui, rect: Rect, colors: Colors, opacity: f32) {
     let area = Rect::from_center_size(rect.center(), vec2(250., 90.));
 
     ui.scope_builder(egui::UiBuilder::new().max_rect(area), |ui| {
-        ui.vertical_centered(|ui| {
-            ui.spinner();
-            ui.add_space(12.);
-            ui.label(RichText::new("Opening image…").color(colors.muted));
-        });
+        ui.set_opacity(opacity);
+        ui.vertical_centered(|ui| loading_contents(ui, colors));
     });
+}
+
+fn loading_contents(ui: &mut egui::Ui, colors: Colors) {
+    ui.spinner();
+    ui.add_space(12.);
+    ui.label(RichText::new("Opening image…").color(colors.muted));
 }
 
 fn show_error(

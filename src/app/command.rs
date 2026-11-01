@@ -12,6 +12,7 @@ pub(crate) enum Command {
     Refresh,
     Navigate(isize),
     SelectImage(usize),
+    PreloadImage(usize),
     SelectFirst,
     SelectLast,
     Sort { order: SortOrder, reverse: bool },

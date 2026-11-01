@@ -29,6 +29,7 @@ impl Flowa {
 
             Command::Navigate(delta) => self.navigate(delta, ctx),
             Command::SelectImage(index) => self.select(index, ctx),
+            Command::PreloadImage(index) => self.preload_image(index),
             Command::SelectFirst => self.select(0, ctx),
             Command::SelectLast => {
                 if let Some(index) = self.browser.entries().len().checked_sub(1) {
@@ -40,6 +41,7 @@ impl Flowa {
                 self.settings.values.reverse_sort = reverse;
                 self.browser.sort(order, reverse);
                 self.ui.filmstrip.reveal_selection();
+                self.preload_neighbors();
             }
 
             Command::CopyImage => self.copy_image(),

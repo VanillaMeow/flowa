@@ -67,7 +67,7 @@ fn toolbar_contents(
 
     ui.separator();
     ui.add_enabled_ui(state.browser.entries().len() > 1, |ui| {
-        navigation_buttons(ui, commands);
+        navigation_buttons(ui, state, commands);
     });
 
     let narrow = ui.available_width() < 760.;
@@ -86,13 +86,25 @@ fn toolbar_contents(
     });
 }
 
-fn navigation_buttons(ui: &mut egui::Ui, commands: &mut Vec<Command>) {
-    if icons::button(ui, Icon::Left, "Previous image · Left arrow", false).clicked() {
-        commands.push(Command::Navigate(-1));
-    }
+fn navigation_buttons(
+    ui: &mut egui::Ui,
+    state: &ToolbarState<'_>,
+    commands: &mut Vec<Command>,
+) {
+    for (icon, label, delta) in [
+        (Icon::Left, "Previous image · Left arrow", -1),
+        (Icon::Right, "Next image · Right arrow", 1),
+    ] {
+        let response = icons::button(ui, icon, label, false);
 
-    if icons::button(ui, Icon::Right, "Next image · Right arrow", false).clicked() {
-        commands.push(Command::Navigate(1));
+        if response.clicked() {
+            commands.push(Command::Navigate(delta));
+        } else if response.hovered()
+            && let Some(index) =
+                state.browser.next(delta, state.settings.wrap_navigation)
+        {
+            commands.push(Command::PreloadImage(index));
+        }
     }
 }
 

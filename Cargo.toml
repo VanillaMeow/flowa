@@ -13,6 +13,7 @@ heif = ["dep:libheif-rs"]
 [dependencies]
 anyhow = "1"
 arboard = { version = "3", default-features = false, features = ["image-data", "wayland-data-control"] }
+clap = { version = "4", features = ["derive"] }
 directories = "6"
 eframe = { version = "0.37", default-features = false, features = ["accesskit", "default_fonts", "wgpu", "x11", "wayland"] }
 egui = { version = "0.37", features = ["serde"] }

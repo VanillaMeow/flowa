@@ -1,6 +1,6 @@
 # Architecture
 
-Flowa is one Rust crate. `src/main.rs` handles the native entry point, codec registration, and command-line arguments. The source folders distinguish application control, viewer state, GUI code, external work, settings, and general helpers. Each folder has a small `mod.rs` declaring its modules and exposing its entry types.
+Flowa is one Rust crate. `src/main.rs` handles the native entry point, codec registration, settings, and window setup. `src/cli.rs` defines command-line options with clap, validates theme and zoom values, and converts them into application launch options. The source folders distinguish application control, viewer state, GUI code, external work, settings, and general helpers. Each folder has a small `mod.rs` declaring its modules and exposing its entry types.
 
 ## Source layout
 
@@ -10,7 +10,7 @@ Flowa is one Rust crate. `src/main.rs` handles the native entry point, codec reg
 | `viewer/` | Viewing state and rules | `browser.rs`, `catalog.rs`, `image_session.rs`, `playback.rs`, `transform.rs` |
 | `ui/` | Egui components, styling, input, and drawing | `viewer_ui.rs`, `canvas.rs`, `filmstrip.rs`, `toolbar.rs`, `inspector.rs`, `dialogs.rs`, `preferences.rs`, `keyboard.rs`, `theme.rs`, `icons.rs` |
 | `ui/rendering/` | GPU textures and drawing geometry | `image_renderer.rs`, `icon_cache.rs`, `geometry.rs` |
-| `services/` | Filesystem access, codecs, desktop integration, and background workers | `folder_scan.rs`, `image_decode.rs`, `image_workers.rs`, `file_actions.rs` |
+| `services/` | Filesystem access, codecs, desktop integration, and background workers | `folder_scan.rs`, `image_decode.rs`, `image_loader/mod.rs`, `image_workers.rs`, `file_actions.rs` |
 | `settings/` | Configuration values and persistence | `model.rs`, `store.rs` |
 | `utils/` | General helpers with no application, viewer, or UI dependencies | `format.rs`, `filename.rs` |
 
@@ -57,6 +57,12 @@ The filmstrip separates viewport calculation, item interaction, thumbnail painti
 ## Loading and ownership
 
 Folder scanning runs outside the event loop and returns generation-tagged catalogs. The main decode worker serializes full-image decoding, drains queued requests to the latest requested image, and drops stale results. This avoids decoding every intermediate image during rapid navigation. The UI rejects any stale generation.
+
+`services/image_loader/mod.rs` also preloads the next and previous images after a selection finishes loading. Hovering a thumbnail or navigation button puts that image ahead of queued neighbors. Selected loads have priority, and a click on an image being preloaded adopts the running decode. A codec call already in progress finishes before the worker handles another image.
+
+The loader retains at most four decoded images in CPU memory, within 64 MiB or one-sixteenth of the configured image limit, whichever is smaller. Header checks restrict speculative decoding to static JPEG, PNG, WebP, BMP, and QOI images that fit a conservative working-memory estimate. The worker evicts cached images to reserve that estimate before decoding. Codec internals can use additional temporary memory, so this is not a process-wide RAM limit. Cached images include source pixels, previews, and thumbnails in their accounting. File size and modification time validate cache hits; refreshes, folder changes, renames, and deletions invalidate speculative work.
+
+During navigation, the canvas retains only the previous preview texture and its view transform. This frozen preview is separate from the selected image and cannot be copied or exported. The loading indicator waits 150 ms and fades in over 100 ms. The new image appears as soon as it is available, with no minimum indicator duration or image fade.
 
 Decoded RGBA frames are shared through `Arc`. They are not copied just to send them between workers. The tile worker crops and downsamples visible regions, and a separate thumbnail worker loads visible filmstrip entries. Both have bounded request and result queues. They check the active generation before and after expensive work.
 

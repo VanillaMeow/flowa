@@ -1,13 +1,16 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 mod app;
+mod cli;
 mod services;
 mod settings;
 mod ui;
 mod utils;
 mod viewer;
 
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
+
+use clap::Parser;
 
 fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
@@ -21,82 +24,9 @@ fn main() -> anyhow::Result<()> {
         libheif_rs::integration::image::register_heic_decoding_hook();
     }
 
-    let mut launch = app::Launch {
-        path: None,
-        screenshot: None,
-        smoke_test: false,
-        preferences: false,
-        filmstrip: false,
-        info: false,
-        zoom: None,
-    };
-    let mut theme_override = None;
-
-    let mut args = std::env::args_os().skip(1);
-
-    while let Some(arg) = args.next() {
-        match arg.to_str() {
-            Some("--help" | "-h") => {
-                println!(
-                    "flowa {}\n\nUsage: flowa [IMAGE OR FOLDER]\n\n  --preferences     Open preferences\n  --filmstrip       Show the thumbnail strip\n  --info            Show image details\n  --theme NAME      Choose an appearance for this session\n  --version         Print version\n  --help            Print this help",
-                    env!("CARGO_PKG_VERSION")
-                );
-                return Ok(());
-            }
-            Some("--version" | "-V") => {
-                println!("flowa {}", env!("CARGO_PKG_VERSION"));
-                return Ok(());
-            }
-            Some("--preferences") => launch.preferences = true,
-            Some("--filmstrip") => launch.filmstrip = true,
-            Some("--info") => launch.info = true,
-            Some("--smoke-test") => launch.smoke_test = true,
-            Some("--zoom") => {
-                let value = args
-                    .next()
-                    .ok_or_else(|| anyhow::anyhow!("--zoom requires a percentage"))?;
-                let percent = value.to_string_lossy().parse::<f32>()?;
-                anyhow::ensure!(
-                    percent.is_finite() && (0.1..=12800.0).contains(&percent),
-                    "Zoom must be between 0.1 and 12800 percent"
-                );
-                launch.zoom = Some(percent);
-            }
-            Some("--screenshot") => {
-                launch.screenshot =
-                    Some(PathBuf::from(args.next().ok_or_else(|| {
-                        anyhow::anyhow!("--screenshot requires a path")
-                    })?))
-            }
-            Some("--theme") => {
-                let value = args
-                    .next()
-                    .ok_or_else(|| anyhow::anyhow!("--theme requires a theme name"))?;
-                let value = value.to_string_lossy().to_ascii_lowercase();
-                theme_override = Some(
-                    settings::Theme::ALL
-                        .into_iter()
-                        .find(|t| {
-                            t.name().to_ascii_lowercase().replace(' ', "")
-                                == value.replace(' ', "")
-                        })
-                        .ok_or_else(|| anyhow::anyhow!("Unknown theme: {value}"))?,
-                );
-            }
-            Some("--") => {
-                launch.path = args.next().map(PathBuf::from);
-                break;
-            }
-            Some(s) if s.starts_with('-') => anyhow::bail!("Unknown option: {s}"),
-            _ => {
-                anyhow::ensure!(
-                    launch.path.is_none(),
-                    "Open one image or folder at a time"
-                );
-                launch.path = Some(PathBuf::from(arg));
-            }
-        }
-    }
+    let cli = cli::Cli::parse();
+    let theme_override = cli.theme;
+    let launch = cli.into_launch();
 
     let config_path = if launch.smoke_test {
         None
