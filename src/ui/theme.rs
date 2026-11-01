@@ -123,7 +123,7 @@ pub fn colors(theme: Theme, accent: Accent, system_dark: bool) -> Colors {
     }
 }
 
-pub fn apply(ctx: &egui::Context, colors: Colors, ui_scale: f32) {
+pub fn apply(ctx: &egui::Context, colors: Colors) {
     let mut style = egui::Style {
         visuals: if colors.dark {
             Visuals::dark()
@@ -179,7 +179,6 @@ pub fn apply(ctx: &egui::Context, colors: Colors, ui_scale: f32) {
     style.visuals.widgets.active.bg_stroke = Stroke::new(1.0, colors.accent);
 
     ctx.set_global_style(style);
-    ctx.set_zoom_factor(ui_scale);
 }
 
 pub fn kde_config_path() -> Option<PathBuf> {

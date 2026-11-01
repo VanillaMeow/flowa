@@ -234,12 +234,24 @@ fn appearance(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors) {
     checkerboard_controls(ui, settings);
 
     ui.add_space(16.);
+    interface_scale(ui, &mut settings.ui_scale);
+}
+
+fn interface_scale(ui: &mut egui::Ui, scale: &mut f32) {
     ui.label("Interface size");
-    ui.add(
-        egui::Slider::new(&mut settings.ui_scale, 0.8..=1.75)
+    let enter = ui.input(|input| input.key_pressed(egui::Key::Enter));
+    let response = ui.add(
+        egui::Slider::new(scale, 0.8..=1.75)
             .step_by(0.05)
-            .suffix("×"),
+            .suffix("×")
+            .update_while_editing(false),
     );
+
+    let finished = response.drag_stopped() || (response.lost_focus() && enter);
+
+    if finished {
+        ui.ctx().set_zoom_factor(*scale);
+    }
 }
 
 fn theme_picker(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors) {

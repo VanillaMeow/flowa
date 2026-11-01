@@ -77,7 +77,8 @@ impl Flowa {
             settings.accent,
             ctx.system_theme().unwrap_or(egui::Theme::Dark) == egui::Theme::Dark,
         );
-        theme::apply(&ctx, colors, settings.ui_scale);
+        theme::apply(&ctx, colors);
+        ctx.set_zoom_factor(settings.ui_scale);
 
         let path = launch.path.or_else(|| {
             if settings.reopen_last {
@@ -190,7 +191,7 @@ impl Flowa {
             ctx.system_theme().unwrap_or(egui::Theme::Dark) == egui::Theme::Dark,
         );
 
-        theme::apply(ctx, self.colors, self.settings.values.ui_scale);
+        theme::apply(ctx, self.colors);
         self.last_theme_check = Instant::now();
     }
 
