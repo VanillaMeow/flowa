@@ -43,7 +43,11 @@ impl ImageCanvas {
         self.renderer.reset(generation);
 
         if !remember_view {
-            self.view = View::default();
+            // Keep the last zoom until the next image's dimensions are available
+            self.view = View {
+                zoom: self.view.zoom,
+                ..Default::default()
+            };
         }
     }
 

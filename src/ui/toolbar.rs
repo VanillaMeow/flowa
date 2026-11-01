@@ -309,7 +309,7 @@ fn view_buttons(
 }
 
 pub(crate) fn status(root: &mut egui::Ui, state: &ToolbarState<'_>) {
-    if state.image.decoded.is_none() {
+    if state.browser.current().is_none() {
         return;
     }
 
