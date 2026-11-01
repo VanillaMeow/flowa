@@ -2,7 +2,7 @@
 
 use egui::{Color32, RichText, vec2};
 
-use crate::settings::{Accent, Canvas, Settings, Theme};
+use crate::settings::{Accent, Canvas, RendererPreference, Settings, Theme};
 
 use super::{
     icons,
@@ -168,8 +168,51 @@ fn performance(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors, gpu: 
     .on_hover_text("Applies to the next image opened");
 
     ui.add_space(20.);
-    ui.label(RichText::new("Renderer").color(colors.muted));
+    renderer_preference(ui, &mut settings.renderer, colors);
+
+    ui.add_space(16.);
+    ui.label(RichText::new("Active renderer").color(colors.muted));
     ui.label(gpu);
+}
+
+fn renderer_preference(
+    ui: &mut egui::Ui,
+    renderer: &mut RendererPreference,
+    colors: Colors,
+) {
+    ui.label("Renderer");
+
+    egui::ComboBox::from_id_salt("renderer_preference")
+        .selected_text(renderer.name())
+        .show_ui(ui, |ui| renderer_choices(ui, renderer));
+
+    ui.label(
+        RichText::new("Changes apply after restarting Flowa")
+            .small()
+            .color(colors.muted),
+    );
+
+    if cfg!(target_os = "linux") && *renderer == RendererPreference::Auto {
+        ui.label(
+            RichText::new("Auto tries Vulkan first, then OpenGL if needed")
+                .small()
+                .color(colors.muted),
+        );
+    }
+
+    if std::env::var_os("WGPU_BACKEND").is_some() {
+        ui.label(
+            RichText::new("WGPU_BACKEND is overriding this preference")
+                .small()
+                .color(colors.muted),
+        );
+    }
+}
+
+fn renderer_choices(ui: &mut egui::Ui, renderer: &mut RendererPreference) {
+    for &choice in RendererPreference::ALL {
+        ui.selectable_value(renderer, choice, choice.name());
+    }
 }
 
 fn shortcuts(ui: &mut egui::Ui) {

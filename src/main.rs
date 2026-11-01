@@ -8,8 +8,6 @@ mod ui;
 mod utils;
 mod viewer;
 
-use std::sync::Arc;
-
 use clap::Parser;
 
 fn main() -> anyhow::Result<()> {
@@ -54,47 +52,6 @@ fn main() -> anyhow::Result<()> {
         config_path
     };
 
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("flowa")
-            .with_app_id("flowa")
-            .with_inner_size(settings.window_size)
-            .with_min_inner_size([640., 400.])
-            .with_drag_and_drop(true)
-            .with_icon(Arc::new(app_icon())),
-        renderer: eframe::Renderer::Wgpu,
-        ..Default::default()
-    };
-
-    eframe::run_native(
-        "flowa",
-        options,
-        Box::new(move |cc| {
-            Ok(Box::new(app::Flowa::new(cc, settings, persistence, launch)))
-        }),
-    )
-    .map_err(|error| anyhow::anyhow!("Could not start Flowa: {error}"))
-}
-
-fn app_icon() -> egui::IconData {
-    let tree = resvg::usvg::Tree::from_data(
-        include_bytes!("../assets/flowa.svg"),
-        &resvg::usvg::Options::default(),
-    );
-    if let (Ok(tree), Some(mut pixmap)) =
-        (tree, resvg::tiny_skia::Pixmap::new(128, 128))
-    {
-        resvg::render(
-            &tree,
-            resvg::tiny_skia::Transform::identity(),
-            &mut pixmap.as_mut(),
-        );
-        egui::IconData {
-            rgba: pixmap.take(),
-            width: 128,
-            height: 128,
-        }
-    } else {
-        egui::IconData::default()
-    }
+    app::run(settings, persistence, launch)
+        .map_err(|error| anyhow::anyhow!("Could not start Flowa: {error}"))
 }

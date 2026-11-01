@@ -134,6 +134,40 @@ impl SortOrder {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RendererPreference {
+    #[default]
+    Auto,
+    Vulkan,
+    OpenGl,
+    Metal,
+    DirectX12,
+}
+
+impl RendererPreference {
+    pub const ALL: &[Self] = &[
+        Self::Auto,
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        Self::Vulkan,
+        #[cfg(target_os = "windows")]
+        Self::DirectX12,
+        #[cfg(target_os = "macos")]
+        Self::Metal,
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        Self::OpenGl,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto",
+            Self::Vulkan => "Vulkan",
+            Self::OpenGl => "OpenGL",
+            Self::Metal => "Metal",
+            Self::DirectX12 => "DirectX 12",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -157,6 +191,7 @@ pub struct Settings {
     pub wrap_navigation: bool,
     pub slideshow_seconds: f32,
     pub nearest: bool,
+    pub renderer: RendererPreference,
     pub memory_mb: u64,
 
     pub recent: Vec<PathBuf>,
@@ -184,6 +219,7 @@ impl Default for Settings {
             wrap_navigation: true,
             slideshow_seconds: 5.0,
             nearest: false,
+            renderer: RendererPreference::Auto,
             memory_mb: 1024,
             recent: Vec::new(),
             reopen_last: false,
@@ -203,6 +239,10 @@ impl Settings {
         self.window_size[0] = self.window_size[0].clamp(640.0, 7680.0);
         self.window_size[1] = self.window_size[1].clamp(400.0, 4320.0);
         self.recent.truncate(12);
+
+        if !RendererPreference::ALL.contains(&self.renderer) {
+            self.renderer = RendererPreference::Auto;
+        }
     }
 
     pub fn remember(&mut self, path: PathBuf) {
@@ -223,6 +263,7 @@ mod tests {
         let s: Settings = serde_json::from_str("{\"filmstrip\":true}")?;
         assert!(s.filmstrip);
         assert!(!s.checkerboard);
+        assert_eq!(s.renderer, RendererPreference::Auto);
         Ok(())
     }
 }

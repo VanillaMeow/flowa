@@ -74,7 +74,7 @@ impl SettingsStore {
 
 #[cfg(test)]
 mod tests {
-    use crate::settings::{Accent, Theme};
+    use crate::settings::{Accent, RendererPreference, Theme};
 
     use super::*;
 
@@ -85,6 +85,7 @@ mod tests {
         let mut s = Settings {
             theme: Theme::Sand,
             checkerboard: true,
+            renderer: RendererPreference::ALL.last().copied().unwrap_or_default(),
             ..Default::default()
         };
         s.remember(PathBuf::from("picture.png"));
@@ -94,6 +95,7 @@ mod tests {
         let loaded = SettingsStore::load(&path)?;
         assert_eq!(loaded.theme, Theme::Sand);
         assert_eq!(loaded.accent, Accent::Rose);
+        assert_eq!(loaded.renderer, s.renderer);
         assert!(loaded.checkerboard);
         assert_eq!(loaded.recent.len(), 1);
         Ok(())

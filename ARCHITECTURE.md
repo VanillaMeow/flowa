@@ -1,12 +1,12 @@
 # Architecture
 
-Flowa is one Rust crate. `src/main.rs` handles the native entry point, codec registration, settings, and window setup. `src/cli.rs` defines command-line options with clap, validates theme and zoom values, and converts them into application launch options. The source folders distinguish application control, viewer state, GUI code, external work, settings, and general helpers. Each folder has a small `mod.rs` declaring its modules and exposing its entry types.
+Flowa is one Rust crate. `src/main.rs` handles the native entry point, codec registration, and settings. `src/cli.rs` defines command-line options with clap, validates theme and zoom values, and converts them into application launch options. The source folders distinguish application control, viewer state, GUI code, external work, settings, and general helpers. Each folder has a small `mod.rs` declaring its modules and exposing its entry types.
 
 ## Source layout
 
 | Folder | Responsibility | Main files |
 | --- | --- | --- |
-| `app/` | Application construction and coordination | `application.rs`, `command.rs`, `command_handler.rs`, `worker_results.rs`, `launch.rs`, `capture.rs` |
+| `app/` | Application construction and coordination | `application.rs`, `native.rs`, `command.rs`, `command_handler.rs`, `worker_results.rs`, `launch.rs`, `capture.rs` |
 | `viewer/` | Viewing state and rules | `browser.rs`, `catalog.rs`, `image_session.rs`, `playback.rs`, `transform.rs` |
 | `ui/` | Egui components, styling, input, and drawing | `viewer_ui.rs`, `canvas.rs`, `filmstrip.rs`, `toolbar.rs`, `inspector.rs`, `dialogs.rs`, `preferences.rs`, `keyboard.rs`, `theme.rs`, `icons.rs` |
 | `ui/rendering/` | GPU textures and drawing geometry | `image_renderer.rs`, `icon_cache.rs`, `geometry.rs` |
@@ -15,6 +15,10 @@ Flowa is one Rust crate. `src/main.rs` handles the native entry point, codec reg
 | `utils/` | General helpers with no application, viewer, or UI dependencies | `format.rs`, `filename.rs` |
 
 `app/application.rs` defines `Flowa`, constructs its owned components, coordinates selection changes, and implements the eframe lifecycle. `app/command.rs` defines commands; `app/command_handler.rs` executes them. `app/worker_results.rs` coordinates background results that affect several owners. Development screenshot and smoke-run state lives in `app/capture.rs`.
+
+`app/native.rs` creates the native window and configures graphics. The saved renderer preference applies at startup. Auto initializes Vulkan alone on Linux and retries with OpenGL if graphics initialization fails before the app is created. Other platforms use eframe's default selection in Auto. A specific renderer uses only that backend, and an explicit `WGPU_BACKEND` overrides the saved preference. Preferences → Performance offers platform-appropriate choices and shows the active renderer separately. Changes take effect after restarting the app.
+
+Launch options remain owned by startup until the graphics context is ready, so a failed attempt cannot start image workers or consume those options. Errors after app creation do not trigger a restart.
 
 `viewer/browser.rs` owns catalog entries, selection, sorting, and scan generations. It receives catalog data from the application; filesystem inspection and background scans run in `services/folder_scan.rs`. `viewer/image_session.rs` defines decoded image data and owns load generations, loading/errors, and the current image. `viewer/playback.rs` owns animation and slideshow clocks. Playback returns repaint delays to the application and does not schedule UI work itself. `viewer/transform.rs` contains reversible image-to-screen transforms.
 
