@@ -12,9 +12,8 @@ finish-args:
   - --socket=fallback-x11
   - --device=dri
   - --talk-name=org.freedesktop.FileManager1
-  - --filesystem=host:rw
+  - --filesystem=home:rw
   - --filesystem=host-os:rw
-  - --filesystem=host-etc:rw
 
 build-options:
   prepend-path: /app/rust/bin
@@ -57,8 +56,8 @@ modules:
     sources:
       - type: git
         url: https://github.com/strukturag/libde265.git
-        tag: v1.0.16
-        commit: 7ba65889d3d6d8a0d99b5360b028243ba843be3a
+        tag: v1.1.3
+        commit: ba62bf4cfb3242f3bf0a45617ff09e35236e4d82
 
   - name: libheif
     buildsystem: cmake-ninja
@@ -79,8 +78,8 @@ modules:
     sources:
       - type: git
         url: https://github.com/strukturag/libheif.git
-        tag: v1.23.1
-        commit: 2c4bbb54c2738d4a5efbbe3e5fa1d5d76bb88eb0
+        tag: v1.23.7
+        commit: 12a259a5882dd99d45ec5fc77e296a3b620d1e2e
 
   - name: flowa
     buildsystem: simple
