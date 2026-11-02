@@ -80,6 +80,8 @@ The binary uses the host's glibc and dynamic loader. It also needs a working X11
 
 You can pass an image or folder path as the first argument.
 
+On Linux, file dialogs and trash operations use `xdg-desktop-portal` through the user D-Bus session. Install the portal service and a backend suitable for your desktop. Trash requests report an error if the service is unavailable.
+
 ## Install on Linux
 
 After building, install the app locally:

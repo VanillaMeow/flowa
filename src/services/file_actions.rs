@@ -13,7 +13,7 @@ use crate::{
     viewer::{catalog, transform::View},
 };
 
-use super::image_decode;
+use super::{image_decode, system_trash};
 
 pub enum Task {
     Pick {
@@ -220,7 +220,8 @@ fn perform(task: Task, clipboard: &mut Option<arboard::Clipboard>) -> Result<Out
             Ok(Outcome::Renamed { old: source, new })
         }
         Task::Trash(path) => {
-            trash::delete(&path).context("Could not move image to the system trash")?;
+            system_trash::delete(&path)
+                .context("Could not move image to the system trash")?;
             Ok(Outcome::Trashed(path))
         }
         Task::Reveal(path) => {

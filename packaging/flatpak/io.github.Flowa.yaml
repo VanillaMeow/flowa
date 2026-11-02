@@ -9,7 +9,7 @@ rename-icon: flowa
 finish-args:
   - --share=ipc
   - --socket=wayland
-  - --socket=fallback-x11
+  - --socket=x11
   - --device=dri
   - --talk-name=org.freedesktop.FileManager1
   - --filesystem=home:rw
