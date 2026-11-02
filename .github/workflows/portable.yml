@@ -14,13 +14,13 @@ jobs:
     env:
       CARGO_BUILD_JOBS: 2
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           key: portable-ubuntu-24.04
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: target/portable-deps/downloads
           key: portable-sources-ubuntu-24.04-${{ hashFiles('packaging/linux/build-portable.sh') }}
@@ -38,8 +38,8 @@ jobs:
       - name: Check the glibc baseline
         run: ./packaging/linux/check-portable.sh target/x86_64-unknown-linux-gnu/portable/flowa 2.39
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
-          name: flowa-linux-x86_64-portable
           path: target/x86_64-unknown-linux-gnu/portable/flowa
+          archive: false
           if-no-files-found: error

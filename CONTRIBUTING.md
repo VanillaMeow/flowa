@@ -54,7 +54,7 @@ sudo apt-get install -y --no-install-recommends \
 ./packaging/linux/check-portable.sh target/x86_64-unknown-linux-gnu/portable/flowa 2.39
 ```
 
-The Portable Linux workflow uploads the executable as a workflow artifact. It rejects unexpected shared dependencies and glibc requirements above 2.39. The build script also checks that the executable starts with `--version`. Building on a newer distribution can raise its glibc requirement.
+The Portable Linux workflow uploads the `flowa` executable directly as a workflow artifact without a ZIP archive. It rejects unexpected shared dependencies and glibc requirements above 2.39. The build script also checks that the executable starts with `--version`. Building on a newer distribution can raise its glibc requirement.
 
 For a local build on another distribution, install Podman and podman-compose, then run from the repository root:
 
@@ -68,7 +68,7 @@ The container uses the [official Ubuntu image's minimal root filesystem](https:/
 
 The [Podman user namespace](https://docs.podman.io/en/latest/markdown/podman-run.1.html#userns-mode) keeps generated files owned by your host user. The `:Z` mount option supplies the container's SELinux label on hosts that use SELinux.
 
-After extracting a downloaded workflow artifact, run `chmod +x flowa` to restore its executable permission.
+After downloading the `flowa` workflow artifact, run `chmod +x flowa` to restore its executable permission.
 
 The binary uses the host's glibc and dynamic loader. It also needs a working X11 or Wayland desktop and compatible GPU drivers, which it loads at runtime. File dialogs use the desktop's XDG portal, and SVG text uses system fonts. These desktop services and drivers are not bundled. The supported release baseline is x86_64 Linux with glibc 2.39 or newer. A musl build would still need to load the host's graphics stack, so it is not used for this release path.
 
