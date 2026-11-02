@@ -218,9 +218,11 @@ mod tests {
     #[test]
     fn trashing_the_last_image_invalidates_pending_loads() -> Result<()> {
         let (directory, ctx, mut app) = app_with_images(1)?;
+        // File actions receive canonical paths from the scanned catalog
+        let path = directory.path().join("0.png").canonicalize()?;
         let generation = app.image.generation();
         app.slideshow.active = true;
-        app.apply_outcome(Outcome::Trashed(directory.path().join("0.png")), &ctx);
+        app.apply_outcome(Outcome::Trashed(path), &ctx);
 
         assert!(app.browser.current().is_none());
         assert!(app.image.generation() > generation);
@@ -235,8 +237,8 @@ mod tests {
     #[test]
     fn renaming_during_loading_restarts_decode_with_the_new_path() -> Result<()> {
         let (directory, ctx, mut app) = app_with_images(1)?;
-        let old = directory.path().join("0.png");
-        let new = directory.path().join("renamed.png");
+        let old = directory.path().join("0.png").canonicalize()?;
+        let new = old.with_file_name("renamed.png");
         let generation = app.image.generation();
         std::fs::rename(&old, &new)?;
         app.apply_outcome(
