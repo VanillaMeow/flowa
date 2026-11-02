@@ -94,10 +94,12 @@ fn set_backends(options: &mut NativeOptions, backends: Backends) {
 }
 
 fn native_options(window_size: [f32; 2]) -> NativeOptions {
+    let app_id = std::env::var("FLATPAK_ID").unwrap_or_else(|_| "flowa".into());
+
     NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("flowa")
-            .with_app_id("flowa")
+            .with_app_id(app_id)
             .with_inner_size(window_size)
             .with_min_inner_size([640., 400.])
             .with_drag_and_drop(true)

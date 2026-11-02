@@ -1,0 +1,104 @@
+app-id: io.github.Flowa
+runtime: org.freedesktop.Platform
+runtime-version: '26.08'
+sdk: org.freedesktop.Sdk
+command: flowa
+rename-desktop-file: flowa.desktop
+rename-icon: flowa
+
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=x11
+  - --device=dri
+  - --talk-name=org.freedesktop.FileManager1
+  - --filesystem=home:rw
+  - --filesystem=host-os:rw
+
+build-options:
+  prepend-path: /app/rust/bin
+
+cleanup:
+  - /rust
+  - /include
+  - /lib/cmake
+  - /lib/pkgconfig
+  - /share/doc
+  - /share/man
+  - '*.a'
+  - '*.la'
+
+modules:
+  - name: rust
+    buildsystem: simple
+    build-commands:
+      - ./install.sh --prefix=/app/rust --components=rustc,cargo,rust-std-$(uname -m)-unknown-linux-gnu --disable-ldconfig
+    sources:
+      - type: archive
+        url: https://static.rust-lang.org/dist/rust-1.99.1-x86_64-unknown-linux-gnu.tar.xz
+        sha256: 231fcae47ee950621374725b5fc3b5441d2fbda2955ac45dd7dc816d8876cfe7
+        only-arches:
+          - x86_64
+      - type: archive
+        url: https://static.rust-lang.org/dist/rust-1.99.1-aarch64-unknown-linux-gnu.tar.xz
+        sha256: a48fb1e853be56ce9b8e2751f5464dbd5e16440cd81e237920f3a5e7e806333e
+        only-arches:
+          - aarch64
+
+  - name: libde265
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DCMAKE_INSTALL_LIBDIR=lib
+      - -DENABLE_DECODER=OFF
+      - -DENABLE_ENCODER=OFF
+      - -DENABLE_SDL=OFF
+    sources:
+      - type: git
+        url: https://github.com/strukturag/libde265.git
+        tag: v1.1.3
+        commit: ba62bf4cfb3242f3bf0a45617ff09e35236e4d82
+
+  - name: libheif
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DCMAKE_INSTALL_LIBDIR=lib
+      - -DBUILD_TESTING=OFF
+      - -DWITH_EXAMPLES=OFF
+      - -DWITH_GDK_PIXBUF=OFF
+      - -DENABLE_PLUGIN_LOADING=OFF
+      - -DWITH_LIBDE265=ON
+      - -DWITH_DAV1D=ON
+      - -DWITH_X265=OFF
+      - -DWITH_X264=OFF
+      - -DWITH_OpenH264_DECODER=OFF
+      - -DWITH_AOM_DECODER=OFF
+      - -DWITH_AOM_ENCODER=OFF
+    sources:
+      - type: git
+        url: https://github.com/strukturag/libheif.git
+        tag: v1.23.7
+        commit: 12a259a5882dd99d45ec5fc77e296a3b620d1e2e
+
+  - name: flowa
+    buildsystem: simple
+    build-options:
+      # Cargo downloads the dependencies pinned in Cargo.lock during local builds
+      build-args:
+        - --share=network
+      env:
+        CARGO_HOME: /run/build/flowa/cargo-home
+    build-commands:
+      - cargo build --locked --release
+      - install -Dm755 target/release/flowa /app/bin/flowa
+      - install -Dm644 packaging/linux/flowa.desktop /app/share/applications/flowa.desktop
+      - install -Dm644 assets/flowa.svg /app/share/icons/hicolor/scalable/apps/flowa.svg
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - .git
+          - .flatpak-builder
+          - target
+          - artifacts
