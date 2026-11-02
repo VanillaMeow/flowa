@@ -1,0 +1,45 @@
+name: Build Linux Portable
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    env:
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: portable-ubuntu-24.04
+
+      - uses: actions/cache@v4
+        with:
+          path: target/portable-deps/downloads
+          key: portable-sources-ubuntu-24.04-${{ hashFiles('packaging/linux/build-portable.sh') }}
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ca-certificates curl pkg-config cmake meson ninja-build nasm \
+            xz-utils git binutils
+
+      - name: Build with bundled codecs
+        run: ./packaging/linux/build-portable.sh
+
+      - name: Check the glibc baseline
+        run: ./packaging/linux/check-portable.sh target/x86_64-unknown-linux-gnu/portable/flowa 2.39
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flowa-linux-x86_64-portable
+          path: target/x86_64-unknown-linux-gnu/portable/flowa
+          if-no-files-found: error

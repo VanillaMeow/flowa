@@ -1,0 +1,15 @@
+x-podman:
+  in_pod: false
+
+services:
+  portable:
+    build:
+      context: ./packaging/linux
+      dockerfile: portable.Containerfile
+    image: localhost/flowa-portable
+    userns_mode: keep-id
+    environment:
+      CARGO_HOME: /work/target/portable-cargo
+      CARGO_BUILD_JOBS: ${CARGO_BUILD_JOBS:-2}
+    volumes:
+      - .:/work:Z

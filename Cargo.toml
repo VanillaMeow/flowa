@@ -41,5 +41,9 @@ lto = "thin"
 codegen-units = 1
 strip = true
 
+# Build with packaging/linux/build-portable.sh to bundle native codecs
+[profile.portable]
+inherits = "release"
+
 [lints.clippy]
 unwrap_used = "warn"
