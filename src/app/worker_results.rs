@@ -143,12 +143,10 @@ mod tests {
     use egui::vec2;
 
     use crate::{
-        app::{Command, Launch},
-        settings::Settings,
-        settings::Theme,
+        app::{Command, Flowa, Launch},
+        services::{file_actions::Outcome, image_decode::decode},
+        settings::{Settings, Theme},
     };
-
-    use super::*;
 
     fn app_with_images(
         count: usize,
@@ -221,16 +219,20 @@ mod tests {
         // File actions receive canonical paths from the scanned catalog
         let path = directory.path().join("0.png").canonicalize()?;
         let generation = app.image.generation();
+        let pending = decode(&path, 1024 * 1024)?;
         app.slideshow.active = true;
+        assert!(app.image.loading);
+        assert!(app.settings.values.recent.contains(&path));
+
         app.apply_outcome(Outcome::Trashed(path), &ctx);
 
         assert!(app.browser.current().is_none());
         assert!(app.image.generation() > generation);
-        assert!(app.image.decoded.is_none());
         assert!(!app.image.loading);
         assert!(!app.slideshow.active);
         assert!(app.settings.values.recent.is_empty());
-        assert!(!app.ui.canvas.renderer.has_pending_tiles());
+        assert!(!app.image.accept(generation, Ok(pending)));
+        assert!(app.image.decoded.is_none());
         Ok(())
     }
 
@@ -260,25 +262,6 @@ mod tests {
                 break;
             }
         }
-        Ok(())
-    }
-
-    #[test]
-    fn sorting_keeps_the_selected_path() -> Result<()> {
-        let (_directory, ctx, mut app) = app_with_images(2)?;
-        let selected = app.browser.current().map(|entry| entry.path.clone());
-        app.handle(
-            Command::Sort {
-                order: crate::settings::SortOrder::Name,
-                reverse: true,
-            },
-            &ctx,
-        );
-        assert_eq!(
-            app.browser.current().map(|entry| entry.path.clone()),
-            selected
-        );
-        assert_eq!(app.browser.index(), 1);
         Ok(())
     }
 }

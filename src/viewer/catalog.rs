@@ -70,15 +70,3 @@ pub fn next_index(
         next.clamp(0, len as isize - 1) as usize
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn navigation_handles_edges_and_empty_folders() {
-        assert_eq!(next_index(0, 0, 1, true), None);
-        assert_eq!(next_index(0, 3, -1, true), Some(2));
-        assert_eq!(next_index(2, 3, 1, false), Some(2));
-    }
-}

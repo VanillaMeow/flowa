@@ -234,10 +234,12 @@ fn perform(task: Task, clipboard: &mut Option<arboard::Clipboard>) -> Result<Out
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use anyhow::Result;
+
+    use super::{Outcome, Task, perform};
 
     #[test]
-    fn rename_refuses_to_replace_an_existing_image() -> Result<()> {
+    fn rename_preserves_other_files_and_refuses_collisions() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let source = dir.path().join("a.png");
         let destination = dir.path().join("b.png");
@@ -253,16 +255,9 @@ mod tests {
             )
             .is_err()
         );
-        assert_eq!(std::fs::read(source)?, b"original");
-        assert_eq!(std::fs::read(destination)?, b"keep me");
-        Ok(())
-    }
+        assert_eq!(std::fs::read(&source)?, b"original");
+        assert_eq!(std::fs::read(&destination)?, b"keep me");
 
-    #[test]
-    fn rename_moves_only_the_selected_file() -> Result<()> {
-        let dir = tempfile::tempdir()?;
-        let source = dir.path().join("a.png");
-        std::fs::write(&source, b"original")?;
         let result = perform(
             Task::Rename {
                 source: source.clone(),
@@ -273,6 +268,8 @@ mod tests {
         assert!(matches!(result, Outcome::Renamed { .. }));
         assert!(!source.exists());
         assert_eq!(std::fs::read(dir.path().join("renamed.png"))?, b"original");
+        assert_eq!(std::fs::read(destination)?, b"keep me");
+
         Ok(())
     }
 }

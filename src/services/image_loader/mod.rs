@@ -1,8 +1,6 @@
 //! Selected loads take priority over a bounded queue of speculative decodes
 
 mod cache;
-#[cfg(test)]
-mod tests;
 
 use std::{
     collections::VecDeque,
@@ -321,5 +319,126 @@ fn run(
 
             ctx.request_repaint();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{path::Path, sync::Arc};
+
+    use anyhow::{Context, Result};
+
+    use super::{FileStamp, LoadRequest, Message, Queue};
+
+    const IMAGE_BUDGET: u64 = 1024 * 1024;
+
+    fn save_image(path: &Path) -> Result<()> {
+        image::RgbaImage::new(32, 16).save(path)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn queue_keeps_latest_selection_and_prioritizes_hover() -> Result<()> {
+        let mut queue = Queue::default();
+        queue.receive(Message::Neighbors(vec![
+            "next.png".into(),
+            "previous.png".into(),
+        ]));
+        queue.receive(Message::Hover("hover.png".into()));
+        assert_eq!(
+            queue.next().context("Missing hover")?.path,
+            Path::new("hover.png")
+        );
+
+        for generation in 1..=3 {
+            queue.receive(Message::Select(LoadRequest {
+                generation,
+                path: "selected.png".into(),
+                budget: IMAGE_BUDGET,
+            }));
+        }
+
+        let selected = queue.next().context("Missing selection")?;
+        assert_eq!(selected.generation, Some(3));
+
+        Ok(())
+    }
+
+    #[test]
+    fn click_during_preload_adopts_the_same_pixels() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("image.png");
+        save_image(&path)?;
+        let mut queue = Queue::default();
+        queue.receive(Message::Budget(IMAGE_BUDGET));
+        queue.receive(Message::Hover(path.clone()));
+        let job = queue.next().context("Missing preload")?;
+        let revision = queue.revision;
+        let stamp = FileStamp::read(&path);
+        let decoded = queue.load(&job, stamp).context("Preload skipped")??;
+        let pixels = Arc::clone(&decoded.frames[0].pixels);
+
+        queue.receive(Message::Select(LoadRequest {
+            generation: 2,
+            path: path.clone(),
+            budget: IMAGE_BUDGET,
+        }));
+        let completed = queue.finish(job, stamp, revision, Ok(decoded), 2);
+        let completed = completed.context("Preload was not promoted")?;
+        assert_eq!(completed.generation, 2);
+        let decoded = completed.result?;
+        assert_eq!(decoded.size, [32, 16]);
+        assert!(Arc::ptr_eq(&pixels, &decoded.frames[0].pixels));
+
+        Ok(())
+    }
+
+    #[test]
+    fn preloading_skips_images_that_exceed_the_budget() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("image.png");
+        save_image(&path)?;
+        let mut queue = Queue::default();
+        queue.receive(Message::Budget(IMAGE_BUDGET));
+        queue.receive(Message::Hover(path.clone()));
+        let job = queue.next().context("Missing preload")?;
+        queue
+            .load(&job, FileStamp::read(&path))
+            .context("Preload skipped")??;
+
+        queue.receive(Message::Budget(1024));
+        queue.receive(Message::Hover(path.clone()));
+        let job = queue.next().context("Missing preload")?;
+        assert!(queue.load(&job, FileStamp::read(&path)).is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn invalidation_discards_in_flight_preloads_and_preserves_the_click() -> Result<()>
+    {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("image.png");
+        save_image(&path)?;
+        let mut queue = Queue::default();
+        queue.receive(Message::Budget(IMAGE_BUDGET));
+        queue.receive(Message::Hover(path.clone()));
+        let job = queue.next().context("Missing preload")?;
+        let revision = queue.revision;
+        let stamp = FileStamp::read(&path);
+        let result = queue.load(&job, stamp).context("Preload skipped")?;
+
+        queue.receive(Message::Invalidate);
+        queue.receive(Message::Select(LoadRequest {
+            generation: 2,
+            path: path.clone(),
+            budget: IMAGE_BUDGET,
+        }));
+        assert!(queue.finish(job, stamp, revision, result, 2).is_none());
+        assert!(!queue.cache.contains(&path, stamp));
+        assert_eq!(queue.next().context("Click was lost")?.generation, Some(2));
+
+        Ok(())
     }
 }

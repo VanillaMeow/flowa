@@ -96,3 +96,47 @@ impl ImageCache {
             .sum()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{FileStamp, ImageCache};
+    use crate::services::image_decode::decode;
+    use anyhow::{Context, Result};
+    use std::{fs::File, sync::Arc, time::Duration};
+
+    const IMAGE_BUDGET: u64 = 1024 * 1024;
+
+    #[test]
+    fn cache_reuses_pixels_rejects_modified_files_and_reserves_working_memory()
+    -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("image.png");
+        image::RgbaImage::new(32, 16).save(&path)?;
+        let stamp = FileStamp::read(&path).context("Missing file timestamp")?;
+        let mut cache = ImageCache::default();
+        cache.set_budget(IMAGE_BUDGET);
+        let decoded = decode(&path, IMAGE_BUDGET)?;
+        let pixels = Arc::clone(&decoded.frames[0].pixels);
+        cache.insert(path.clone(), stamp, decoded);
+
+        let cached = cache
+            .take(&path, Some(stamp))
+            .context("Missing cached image")?;
+        assert!(Arc::ptr_eq(&pixels, &cached.frames[0].pixels));
+        cache.insert(path.clone(), stamp, cached);
+
+        let modified = path.metadata()?.modified()? + Duration::from_secs(2);
+        File::options()
+            .write(true)
+            .open(&path)?
+            .set_modified(modified)?;
+        assert!(cache.take(&path, FileStamp::read(&path)).is_none());
+
+        let stamp = FileStamp::read(&path).context("Missing updated timestamp")?;
+        cache.insert(path.clone(), stamp, decode(&path, IMAGE_BUDGET)?);
+        cache.make_room(cache.budget);
+        assert!(cache.take(&path, Some(stamp)).is_none());
+
+        Ok(())
+    }
+}

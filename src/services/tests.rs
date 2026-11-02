@@ -1,0 +1,151 @@
+//! Unit tests for the services area
+
+mod folder_scan {
+    use anyhow::Result;
+
+    use crate::{services::folder_scan::scan, settings::SortOrder, viewer::catalog};
+
+    #[test]
+    fn folder_scan_is_natural_and_ignores_unrelated_files() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        for name in ["image10.PNG", "image2.png", "image1.jpg", "notes.txt"] {
+            std::fs::write(dir.path().join(name), b"fixture")?;
+        }
+        let mut files = scan(dir.path())?;
+        catalog::sort(&mut files, SortOrder::Name, false);
+        assert_eq!(
+            files.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+            ["image1.jpg", "image2.png", "image10.PNG"]
+        );
+        Ok(())
+    }
+}
+
+mod image_decode {
+    use std::{fs::File, time::Duration};
+
+    use anyhow::Result;
+    use image::RgbaImage;
+
+    use crate::services::image_decode::{decode, export};
+
+    #[test]
+    fn static_decode_and_export_preserve_alpha_and_apply_rotation() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let input = dir.path().join("source.png");
+        let output = dir.path().join("export.png");
+        let pixels = RgbaImage::from_fn(3, 2, |x, y| {
+            image::Rgba([x as u8 * 50, y as u8 * 80, 90, 40 + (x + y * 3) as u8 * 30])
+        });
+        pixels.save(&input)?;
+        let original = std::fs::read(&input)?;
+        let loaded = decode(&input, 32 * 1024 * 1024)?;
+        assert_eq!(loaded.frames[0].pixels.as_ref(), &pixels);
+
+        // Source rows are ABC / DEF; a clockwise turn produces DA / EB / FC
+        for (flip_x, flip_y, expected) in [
+            (false, false, [3, 0, 4, 1, 5, 2]),
+            (true, false, [5, 2, 4, 1, 3, 0]),
+            (false, true, [0, 3, 1, 4, 2, 5]),
+        ] {
+            export(&loaded.frames[0].pixels, &output, 1, flip_x, flip_y)?;
+            let result = image::open(&output)?.into_rgba8();
+            assert_eq!(result.dimensions(), (2, 3));
+            let expected: Vec<_> = expected
+                .into_iter()
+                .map(|index| *pixels.get_pixel(index % 3, index / 3))
+                .collect();
+            assert_eq!(result.pixels().copied().collect::<Vec<_>>(), expected);
+        }
+
+        assert_eq!(std::fs::read(input)?, original);
+        assert_eq!(loaded.frames[0].pixels.as_ref(), &pixels);
+
+        Ok(())
+    }
+
+    #[test]
+    fn corrupt_images_fail_without_panicking() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("bad.png");
+        std::fs::write(&path, b"not an image")?;
+        assert!(decode(&path, 32 * 1024 * 1024).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn decode_respects_memory_budget_and_sizes_previews() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("wide.png");
+        RgbaImage::new(640, 320).save(&path)?;
+
+        let error = decode(&path, 1024)
+            .err()
+            .expect("Decode exceeded its budget");
+        assert!(format!("{error:#}").to_ascii_lowercase().contains("limit"));
+
+        let loaded = decode(&path, 32 * 1024 * 1024)?;
+        assert_eq!(loaded.frames[0].preview.size, [640, 320]);
+        assert_eq!(loaded.thumbnail.size, [192, 96]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn svg_alpha_is_unpremultiplied() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("transparent.svg");
+        std::fs::write(
+            &path,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><rect width="20" height="10" fill="#ff0000" opacity="0.5"/></svg>"##,
+        )?;
+        let decoded = decode(&path, 32 * 1024 * 1024)?;
+        let px = decoded.frames[0].pixels.get_pixel(5, 5);
+        assert_eq!(px[0], 255);
+        assert!((126..=129).contains(&px[3]));
+        Ok(())
+    }
+
+    #[test]
+    fn gif_animation_retains_frame_delays() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("animated.gif");
+        let mut encoder = image::codecs::gif::GifEncoder::new(File::create(&path)?);
+        for c in [40, 200] {
+            encoder.encode_frame(image::Frame::from_parts(
+                RgbaImage::from_pixel(8, 8, image::Rgba([c, 0, 0, 255])),
+                0,
+                0,
+                image::Delay::from_numer_denom_ms(100, 1),
+            ))?;
+        }
+        drop(encoder);
+        let decoded = decode(&path, 1024 * 1024)?;
+        assert_eq!(decoded.frames.len(), 2);
+        assert_eq!(decoded.frames[0].delay, Duration::from_millis(100));
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod system_trash {
+    use crate::services::system_trash::delete;
+    use anyhow::Result;
+
+    #[test]
+    fn trashing_a_symlink_does_not_trash_its_target() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let target = directory.path().join("original.png");
+        let link = directory.path().join("link.png");
+        std::fs::write(&target, b"Keep the original image")?;
+        std::os::unix::fs::symlink(&target, &link)?;
+
+        let error = delete(&link)
+            .expect_err("A symlink must be rejected before connecting to D-Bus");
+        assert!(error.to_string().contains("Could not open"));
+        assert!(link.is_symlink());
+        assert_eq!(std::fs::read(target)?, b"Keep the original image");
+
+        Ok(())
+    }
+}

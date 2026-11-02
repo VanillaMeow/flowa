@@ -238,17 +238,16 @@ fn parse_kde_colors(input: &str) -> Option<Colors> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use egui::Color32;
+
+    use super::parse_kde_colors;
 
     #[test]
-    fn kde_theme_reads_colors_without_requiring_qt() {
+    fn kde_palette_parser_reads_colors_and_rejects_incomplete_input() {
         let c = parse_kde_colors("[Colors:Window]\nBackgroundNormal=24,27,40\nForegroundNormal=211,218,227\n[Colors:Selection]\nBackgroundNormal=197,14,210").expect("valid palette");
         assert_eq!(c.accent, Color32::from_rgb(197, 14, 210));
         assert!(c.dark);
-    }
 
-    #[test]
-    fn incomplete_kde_theme_falls_back() {
         assert!(parse_kde_colors("[General]\nColorScheme=Sweet").is_none());
     }
 }

@@ -13,3 +13,6 @@ pub(crate) mod toolbar;
 mod viewer_ui;
 
 pub(crate) use viewer_ui::ViewerUi;
+
+#[cfg(test)]
+mod tests;

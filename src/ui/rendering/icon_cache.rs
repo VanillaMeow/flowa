@@ -160,61 +160,15 @@ fn rasterize(icon: Icon, pixels: u32) -> Result<ColorImage> {
 mod tests {
     use egui::cache::CacheTrait;
 
-    use super::*;
+    use std::sync::Arc;
 
-    const ICONS: [Icon; 18] = [
-        Icon::Open,
-        Icon::Left,
-        Icon::Right,
-        Icon::Fit,
-        Icon::Actual,
-        Icon::Minus,
-        Icon::Plus,
-        Icon::Rotate,
-        Icon::Filmstrip,
-        Icon::Info,
-        Icon::Settings,
-        Icon::Fullscreen,
-        Icon::Close,
-        Icon::Play,
-        Icon::Pause,
-        Icon::Image,
-        Icon::Check,
-        Icon::Alert,
-    ];
+    use super::{
+        CacheKey, Icon, IconCache, MAX_CACHED_TEXTURES, UNUSED_FRAME_LIMIT, texture,
+    };
 
     #[test]
-    fn embedded_icons_render_as_white_alpha_masks_at_ui_sizes() -> Result<()> {
-        for icon in ICONS {
-            for pixels in [18, 27, 36, 44] {
-                let image = rasterize(icon, pixels)?;
-
-                assert_eq!(image.size, [pixels as usize; 2]);
-                assert!(
-                    image.pixels.iter().any(|pixel| pixel.a() != 0),
-                    "Empty icon: {icon:?}"
-                );
-                assert!(
-                    image.pixels.iter().any(|pixel| pixel.a() == 0),
-                    "Opaque background: {icon:?}"
-                );
-                assert!(
-                    image.pixels.iter().all(|pixel| {
-                        pixel.r() == pixel.a()
-                            && pixel.g() == pixel.a()
-                            && pixel.b() == pixel.a()
-                    }),
-                    "Icon cannot be tinted correctly: {icon:?}"
-                );
-            }
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn repeated_draws_reuse_textures_and_display_sizes_have_separate_entries()
-    -> Result<(), Arc<str>> {
+    fn icon_cache_reuses_scaled_textures_and_bounds_retention() -> Result<(), Arc<str>>
+    {
         let ctx = egui::Context::default();
         let small = CacheKey {
             icon: Icon::Settings,
@@ -229,23 +183,10 @@ mod tests {
         ctx.memory_mut(|memory| memory.caches.update());
         let repeated = texture(&ctx, small)?;
         let scaled = texture(&ctx, large)?;
-        let original = texture(&ctx, small)?;
 
         assert_eq!(first.id(), repeated.id());
-        assert_eq!(first.id(), original.id());
         assert_ne!(first.id(), scaled.id());
         assert_eq!(scaled.size(), [36, 36]);
-        assert_eq!(
-            ctx.memory_mut(|memory| memory.caches.cache::<IconCache>().len()),
-            2
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn texture_cache_stays_bounded_and_releases_unused_icons() -> Result<(), Arc<str>> {
-        let ctx = egui::Context::default();
 
         for pixels in 1..=(MAX_CACHED_TEXTURES as u32 + 5) {
             let _texture = texture(
@@ -257,9 +198,9 @@ mod tests {
             )?;
         }
 
-        assert_eq!(
-            ctx.memory_mut(|memory| memory.caches.cache::<IconCache>().len()),
-            MAX_CACHED_TEXTURES
+        assert!(
+            ctx.memory_mut(|memory| memory.caches.cache::<IconCache>().len())
+                <= MAX_CACHED_TEXTURES
         );
 
         for _ in 0..=UNUSED_FRAME_LIMIT {

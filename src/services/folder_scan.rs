@@ -125,24 +125,10 @@ pub fn scan(folder: &Path) -> Result<Vec<Entry>> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{settings::SortOrder, viewer::catalog};
-
-    use super::*;
-
-    #[test]
-    fn folder_scan_is_natural_and_ignores_unrelated_files() -> Result<()> {
-        let dir = tempfile::tempdir()?;
-        for name in ["image10.PNG", "image2.png", "image1.jpg", "notes.txt"] {
-            std::fs::write(dir.path().join(name), b"fixture")?;
-        }
-        let mut files = scan(dir.path())?;
-        catalog::sort(&mut files, SortOrder::Name, false);
-        assert_eq!(
-            files.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
-            ["image1.jpg", "image2.png", "image10.PNG"]
-        );
-        Ok(())
-    }
+    use super::{FolderScanner, ScanResult};
+    use crate::viewer::catalog::ScannedFolder;
+    use anyhow::Result;
+    use std::path::PathBuf;
 
     #[test]
     fn stale_catalog_results_are_discarded() -> Result<()> {

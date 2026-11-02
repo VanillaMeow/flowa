@@ -2,3 +2,6 @@
 
 pub(crate) mod filename;
 pub(crate) mod format;
+
+#[cfg(test)]
+mod tests;

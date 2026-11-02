@@ -71,33 +71,3 @@ impl SettingsStore {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use crate::settings::{Accent, RendererPreference, Theme};
-
-    use super::*;
-
-    #[test]
-    fn settings_round_trip_and_preserve_user_preferences() -> Result<()> {
-        let dir = tempfile::tempdir()?;
-        let path = dir.path().join("settings.json");
-        let mut s = Settings {
-            theme: Theme::Sand,
-            checkerboard: true,
-            renderer: RendererPreference::ALL.last().copied().unwrap_or_default(),
-            ..Default::default()
-        };
-        s.remember(PathBuf::from("picture.png"));
-        SettingsStore::save(&s, &path)?;
-        s.accent = Accent::Rose;
-        SettingsStore::save(&s, &path)?;
-        let loaded = SettingsStore::load(&path)?;
-        assert_eq!(loaded.theme, Theme::Sand);
-        assert_eq!(loaded.accent, Accent::Rose);
-        assert_eq!(loaded.renderer, s.renderer);
-        assert!(loaded.checkerboard);
-        assert_eq!(loaded.recent.len(), 1);
-        Ok(())
-    }
-}

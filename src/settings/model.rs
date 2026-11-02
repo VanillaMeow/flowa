@@ -251,19 +251,3 @@ impl Settings {
         self.recent.truncate(12);
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use anyhow::Result;
-
-    use super::*;
-
-    #[test]
-    fn old_preferences_get_new_defaults() -> Result<()> {
-        let s: Settings = serde_json::from_str("{\"filmstrip\":true}")?;
-        assert!(s.filmstrip);
-        assert!(!s.checkerboard);
-        assert_eq!(s.renderer, RendererPreference::Auto);
-        Ok(())
-    }
-}

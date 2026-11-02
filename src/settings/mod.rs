@@ -7,3 +7,6 @@ pub(crate) use model::{
     Accent, Canvas, RendererPreference, Settings, SortOrder, Theme,
 };
 pub(crate) use store::SettingsStore;
+
+#[cfg(test)]
+mod tests;

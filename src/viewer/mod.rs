@@ -5,3 +5,6 @@ pub(crate) mod catalog;
 pub(crate) mod image_session;
 pub(crate) mod playback;
 pub(crate) mod transform;
+
+#[cfg(test)]
+mod tests;
