@@ -23,10 +23,16 @@ CARGO_TARGET_DIR=$(cd "$CARGO_TARGET_DIR" && pwd)
 export CARGO_TARGET_DIR
 
 jobs=${CARGO_BUILD_JOBS:-$(nproc)}
-native_dir="$CARGO_TARGET_DIR/portable-deps"
+native_dir="$project_dir/.cache/portable-deps"
 download_dir="$native_dir/downloads"
 # Include the build recipe and compiler versions so Cargo sees a new library path after changes
 build_key=$({ sha256sum "$project_dir/packaging/linux/build-portable.sh"; cc --version; c++ --version; ldd --version; } | sha256sum | cut -d ' ' -f 1)
+
+if [[ ${1:-} == --print-native-cache-key ]]; then
+    printf '%s\n' "$build_key"
+    exit 0
+fi
+
 build_dir="$native_dir/$build_key"
 prefix="$build_dir/prefix"
 mkdir -p "$download_dir" "$prefix/lib"
@@ -129,7 +135,10 @@ build_native() {
 }
 
 if [[ ! -f $build_dir/complete ]]; then
+    printf 'Building native libraries: %s\n' "$build_key"
     build_native
+else
+    printf 'Reusing native libraries: %s\n' "$build_key"
 fi
 
 export SYSTEM_DEPS_DAV1D_LINK=static

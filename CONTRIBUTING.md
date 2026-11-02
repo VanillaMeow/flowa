@@ -41,7 +41,7 @@ For a single executable with AVIF and HEIC support included, run:
 
 This uses the `portable` Cargo profile, downloads pinned source archives with SHA-256 verification, and statically links dav1d, libheif, libde265, and the C++ runtime. Little CMS is already built statically. Libheif's decoders are built in, so no codec plugins need to be installed. Other image formats continue to use the existing Rust dependencies.
 
-The script currently supports native x86_64 GNU/Linux builds. Install a C/C++ toolchain, Cargo, CMake, Meson, Ninja, NASM, pkg-config, curl, tar, xz, and binutils. It does not need system dav1d, libheif, Wayland, or xkbcommon development packages. Sources and native build outputs are cached under `target/portable-deps`. Set `CARGO_BUILD_JOBS` to limit build parallelism. Running `cargo build --profile portable` alone applies the release optimization settings but does not download or bundle native libraries.
+The script currently supports native x86_64 GNU/Linux builds. Install a C/C++ toolchain, Cargo, CMake, Meson, Ninja, NASM, pkg-config, curl, tar, xz, and binutils. It does not need system dav1d, libheif, Wayland, or xkbcommon development packages. Sources and native build outputs are cached under `.cache/portable-deps`, outside Cargo's target directory. CI caches these separately using the build recipe, C/C++ compiler versions, and glibc version. Set `CARGO_BUILD_JOBS` to limit build parallelism. Running `cargo build --profile portable` alone applies the release optimization settings but does not download or bundle native libraries.
 
 The executable is written to `target/x86_64-unknown-linux-gnu/portable/flowa`. CI builds natively on an Ubuntu 24.04 GitHub Actions runner. To build locally on Ubuntu 24.04, install the build tools and run:
 
@@ -62,7 +62,7 @@ For a local build on another distribution, install Podman and podman-compose, th
 podman-compose run --rm --build portable
 ```
 
-The [Compose service](compose.yaml) builds an Ubuntu 24.04 environment from `packaging/linux/portable.Containerfile`, builds the executable, checks the glibc 2.39 ceiling, and removes the container when finished. The executable and build caches stay under `target` on the host. Builds use two jobs by default; set `CARGO_BUILD_JOBS` to change that. Later runs reuse cached image layers and build outputs.
+The [Compose service](compose.yaml) builds an Ubuntu 24.04 environment from `packaging/linux/portable.Containerfile`, builds the executable, checks the glibc 2.39 ceiling, and removes the container when finished. The executable and Rust build caches stay under `target` on the host, while the native build cache stays under `.cache/portable-deps`. Builds use two jobs by default; set `CARGO_BUILD_JOBS` to change that. Later runs reuse cached image layers and build outputs.
 
 The container uses the [official Ubuntu image's minimal root filesystem](https://ubuntu.com/docs/oci-registries/oci-reference/oci-image-configuration/), installs build tools without recommended packages, removes APT package lists, and uses Rust's minimal toolchain profile. CI builds directly on its Ubuntu runner.
 

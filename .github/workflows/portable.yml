@@ -20,17 +20,23 @@ jobs:
         with:
           key: portable-ubuntu-24.04
 
-      - uses: actions/cache@v6
-        with:
-          path: target/portable-deps/downloads
-          key: portable-sources-ubuntu-24.04-${{ hashFiles('packaging/linux/build-portable.sh') }}
-
       - name: Install build tools
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential ca-certificates curl pkg-config cmake meson ninja-build nasm \
             xz-utils git binutils
+
+      - name: Compute native cache key
+        id: native-cache
+        run: |
+          native_key=$(./packaging/linux/build-portable.sh --print-native-cache-key)
+          echo "key=$native_key" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v6
+        with:
+          path: .cache/portable-deps
+          key: portable-native-ubuntu-24.04-${{ runner.arch }}-${{ steps.native-cache.outputs.key }}
 
       - name: Build with bundled codecs
         run: ./packaging/linux/build-portable.sh
