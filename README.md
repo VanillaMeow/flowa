@@ -4,7 +4,7 @@
 It supports animated images, JPEG XL, AVIF, and HEIC/HEIF alongside common image formats, with thumbnails, image details, and configurable themes.
 
 > [!IMPORTANT]
-> Flowa currently needs to be built from source. See [CONTRIBUTING.md](CONTRIBUTING.md)
+> Flowa currently needs to be built from source. See [BUILDING.md](BUILDING.md)
 
 ## Notes
 
