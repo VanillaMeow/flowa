@@ -16,9 +16,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: portable-ubuntu-24.04
 
       - name: Install build tools
         run: |
@@ -32,6 +29,10 @@ jobs:
         run: |
           native_key=$(./packaging/linux/build-portable.sh --print-native-cache-key)
           echo "key=$native_key" >> "$GITHUB_OUTPUT"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: portable-ubuntu-24.04-${{ steps.native-cache.outputs.key }}
 
       - uses: actions/cache@v6
         with:
