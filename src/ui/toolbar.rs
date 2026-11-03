@@ -373,7 +373,7 @@ fn navigation_status(ui: &mut egui::Ui, state: &ToolbarState<'_>) {
     }
 
     if let Some(busy) = state.busy {
-        ui.spinner();
+        ui.add(egui::Spinner::new().size(16.));
         status_label(ui, busy, state.colors);
     } else if state.slideshow {
         ui.label(
