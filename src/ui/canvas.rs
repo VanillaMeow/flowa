@@ -7,6 +7,7 @@ use egui::{Rect, RichText, Sense, Stroke, Vec2, vec2};
 use crate::{
     app::Command,
     settings::Settings,
+    video::VideoSession,
     viewer::{
         image_session::{DecodedImage, ImageSession},
         transform::View,
@@ -26,6 +27,7 @@ const LOADING_FADE: Duration = Duration::from_millis(100);
 
 pub(crate) struct CanvasContent<'a> {
     pub image: &'a ImageSession,
+    pub video: &'a VideoSession,
     pub settings: &'a Settings,
     pub colors: Colors,
     pub can_navigate: bool,
@@ -110,7 +112,11 @@ impl ImageCanvas {
             ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         self.rect = rect;
 
-        let context_menu = if let Some(decoded) = &content.image.decoded {
+        let context_menu = if content.video.state.active {
+            self.previous = None;
+            self.show_video(ui, &response, content, commands);
+            Some(response)
+        } else if let Some(decoded) = &content.image.decoded {
             self.previous = None;
             self.show_image(ui, &response, content, decoded);
             Some(response)
@@ -128,6 +134,40 @@ impl ImageCanvas {
         }
 
         context_menu
+    }
+
+    fn show_video(
+        &mut self,
+        ui: &mut egui::Ui,
+        response: &egui::Response,
+        content: &CanvasContent<'_>,
+        commands: &mut Vec<Command>,
+    ) {
+        let video = content.video;
+        if let Some(error) = &video.state.error {
+            show_error(ui, self.rect, error, content, commands);
+            return;
+        }
+
+        let Some(texture) = video.texture else {
+            show_loading(ui, self.rect, content.colors, 1.);
+            return;
+        };
+
+        let size = vec2(video.state.size[0] as f32, video.state.size[1] as f32);
+        self.displayed_size = Some(size);
+        self.handle_pointer(response, ui.ctx());
+        self.fit_image(size, content.settings, ui.ctx().pixels_per_point());
+
+        let painter = ui.painter().with_clip_rect(self.rect);
+        super::rendering::image_renderer::paint_source(
+            &painter,
+            texture,
+            Rect::from_min_size(egui::Pos2::ZERO, size),
+            size,
+            self.rect,
+            &self.view,
+        );
     }
 
     fn show_image(
@@ -258,7 +298,7 @@ fn show_loading(ui: &mut egui::Ui, rect: Rect, colors: Colors, opacity: f32) {
 fn loading_contents(ui: &mut egui::Ui, colors: Colors) {
     ui.spinner();
     ui.add_space(12.);
-    ui.label(RichText::new("Opening image…").color(colors.muted));
+    ui.label(RichText::new("Opening file…").color(colors.muted));
 }
 
 fn show_error(
@@ -284,17 +324,17 @@ fn error_contents(
 ) {
     icons::logo(ui, 40., content.colors.muted);
     ui.add_space(14.);
-    ui.heading("This image could not be opened");
+    ui.heading("This file could not be opened");
     ui.add_space(8.);
     ui.label(RichText::new(error).color(content.colors.muted));
     ui.add_space(16.);
 
     ui.horizontal(|ui| {
-        if ui.button("Open another image").clicked() {
+        if ui.button("Open another file").clicked() {
             commands.push(Command::OpenFile);
         }
 
-        if content.can_navigate && ui.button("Next image").clicked() {
+        if content.can_navigate && ui.button("Next file").clicked() {
             commands.push(Command::Navigate(1));
         }
     });
@@ -339,7 +379,7 @@ fn welcome_contents(
 
     ui.add_space(14.);
     ui.label(
-        RichText::new("or drop an image or folder anywhere")
+        RichText::new("or drop an image, video, or folder anywhere")
             .size(13.)
             .color(colors.muted),
     );
@@ -358,7 +398,7 @@ fn open_buttons(
     ui.horizontal(|ui| {
         ui.add_space((width - 308.).max(0.) / 2.);
 
-        let open_image = egui::Button::new("Open image").fill(colors.raised);
+        let open_image = egui::Button::new("Open file").fill(colors.raised);
 
         if ui.add_sized([146., 42.], open_image).clicked() {
             commands.push(Command::OpenFile);
@@ -381,7 +421,7 @@ fn recent_images(
     commands: &mut Vec<Command>,
 ) {
     ui.add_space(30.);
-    ui.label(RichText::new("RECENT IMAGES").size(11.).color(colors.muted));
+    ui.label(RichText::new("RECENT FILES").size(11.).color(colors.muted));
     ui.add_space(8.);
 
     let mut open = None;

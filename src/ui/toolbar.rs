@@ -6,6 +6,7 @@ use crate::{
     app::Command,
     settings::{Settings, SortOrder},
     utils::format,
+    video::VideoState,
     viewer::{browser::Browser, image_session::ImageSession},
 };
 
@@ -18,6 +19,7 @@ use super::{
 pub(crate) struct ToolbarState<'a> {
     pub browser: &'a Browser,
     pub image: &'a ImageSession,
+    pub video: &'a VideoState,
     pub canvas: &'a ImageCanvas,
     pub settings: &'a Settings,
     pub colors: Colors,
@@ -56,12 +58,13 @@ fn toolbar_contents(
     commands: &mut Vec<Command>,
 ) {
     let ctx = ui.ctx().clone();
+    let compact = ui.available_width() < 600.;
 
     icons::logo(ui, 26., state.colors.accent);
     ui.add_space(4.);
     ui.menu_button("File", |ui| file_menu(ui, state, commands));
 
-    if icons::button(ui, Icon::Open, "Open image · Ctrl+O", false).clicked() {
+    if icons::button(ui, Icon::Open, "Open file · Ctrl+O", false).clicked() {
         commands.push(Command::OpenFile);
     }
 
@@ -77,13 +80,71 @@ fn toolbar_contents(
     }
 
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        if compact {
+            ui.menu_button("View", |ui| compact_view_menu(ui, state, commands));
+            return;
+        }
+
         window_buttons(ui, state, commands);
         ui.separator();
 
-        ui.add_enabled_ui(state.image.decoded.is_some(), |ui| {
+        ui.add_enabled_ui(state.image.decoded.is_some() || state.video.ready(), |ui| {
             view_buttons(ui, state, commands, &ctx, narrow);
         });
     });
+}
+
+/// Keeps view controls reachable when enlarged UI text leaves little toolbar space
+fn compact_view_menu(
+    ui: &mut egui::Ui,
+    state: &ToolbarState<'_>,
+    commands: &mut Vec<Command>,
+) {
+    let ready = state.image.decoded.is_some() || state.video.ready();
+
+    ui.add_enabled_ui(ready, |ui| compact_zoom_menu(ui, commands));
+    ui.separator();
+
+    for (label, selected, command) in [
+        (
+            "Thumbnail strip",
+            state.settings.filmstrip,
+            Command::ToggleFilmstrip,
+        ),
+        (
+            "File details",
+            state.settings.info,
+            Command::ToggleInspector,
+        ),
+        ("Fullscreen", state.fullscreen, Command::ToggleFullscreen),
+    ] {
+        if ui.selectable_label(selected, label).clicked() {
+            commands.push(command);
+            ui.close();
+        }
+    }
+
+    ui.separator();
+
+    if ui.button("Preferences…").clicked() {
+        commands.push(Command::OpenPreferences);
+        ui.close();
+    }
+}
+
+fn compact_zoom_menu(ui: &mut egui::Ui, commands: &mut Vec<Command>) {
+    for (label, command) in [
+        ("Fit to window", Command::Fit),
+        ("Actual pixels", Command::ActualPixels),
+        ("Zoom in", Command::Zoom(1.25)),
+        ("Zoom out", Command::Zoom(0.8)),
+        ("Rotate clockwise", Command::RotateClockwise),
+    ] {
+        if ui.button(label).clicked() {
+            commands.push(command);
+            ui.close();
+        }
+    }
 }
 
 fn navigation_buttons(
@@ -92,8 +153,8 @@ fn navigation_buttons(
     commands: &mut Vec<Command>,
 ) {
     for (icon, label, delta) in [
-        (Icon::Left, "Previous image · Left arrow", -1),
-        (Icon::Right, "Next image · Right arrow", 1),
+        (Icon::Left, "Previous file · Left arrow", -1),
+        (Icon::Right, "Next file · Right arrow", 1),
     ] {
         let response = icons::button(ui, icon, label, false);
 
@@ -122,7 +183,7 @@ fn image_title(ui: &mut egui::Ui, state: &ToolbarState<'_>) {
 }
 
 fn file_menu(ui: &mut egui::Ui, state: &ToolbarState<'_>, commands: &mut Vec<Command>) {
-    if ui.button("Open image…                    Ctrl+O").clicked() {
+    if ui.button("Open file…                    Ctrl+O").clicked() {
         ui.close();
         commands.push(Command::OpenFile);
     }
@@ -227,7 +288,7 @@ fn window_buttons(
         commands.push(Command::TogglePreferences);
     }
 
-    if icons::button(ui, Icon::Info, "Image details · I", state.settings.info).clicked()
+    if icons::button(ui, Icon::Info, "File details · I", state.settings.info).clicked()
     {
         commands.push(Command::ToggleInspector);
     }
@@ -280,7 +341,9 @@ fn view_buttons(
         commands.push(Command::RotateClockwise);
     }
 
-    if icons::button(ui, Icon::Fit, "Fit image · 0", state.canvas.view.fit).clicked() {
+    if icons::button(ui, Icon::Fit, "Fit to window · 0", state.canvas.view.fit)
+        .clicked()
+    {
         commands.push(Command::Fit);
     }
 
@@ -340,6 +403,13 @@ fn status_row(ui: &mut egui::Ui, state: &ToolbarState<'_>) {
 }
 
 fn status_contents(ui: &mut egui::Ui, state: &ToolbarState<'_>) {
+    if state.video.ready() {
+        let dimensions = format!("{}  ×  {}", state.video.size[0], state.video.size[1]);
+        status_label(ui, &dimensions, state.colors);
+        ui.separator();
+        status_label(ui, "Video", state.colors);
+    }
+
     if let Some(image) = &state.image.decoded {
         let dimensions = format!("{}  ×  {}", image.size[0], image.size[1]);
         let file_size = format::file_size(image.file_size);
@@ -393,7 +463,7 @@ pub(crate) fn context_menu(
     state: &ToolbarState<'_>,
     commands: &mut Vec<Command>,
 ) {
-    if ui.button("Fit image                         0").clicked() {
+    if ui.button("Fit to window                     0").clicked() {
         commands.push(Command::Fit);
         ui.close();
     }
@@ -419,17 +489,7 @@ pub(crate) fn context_menu(
     }
 
     ui.separator();
-    if ui
-        .button(if state.slideshow {
-            "Stop slideshow"
-        } else {
-            "Start slideshow"
-        })
-        .clicked()
-    {
-        commands.push(Command::ToggleSlideshow);
-        ui.close();
-    }
+    playback_menu(ui, state, commands);
 
     if state.image.animated()
         && ui
@@ -445,12 +505,24 @@ pub(crate) fn context_menu(
     }
 
     ui.separator();
-    if ui.button("Copy image                  Ctrl+C").clicked() {
+    if ui
+        .add_enabled(
+            state.image.decoded.is_some(),
+            egui::Button::new("Copy image                  Ctrl+C"),
+        )
+        .clicked()
+    {
         commands.push(Command::CopyImage);
         ui.close();
     }
 
-    if ui.button("Export a copy…").clicked() {
+    if ui
+        .add_enabled(
+            state.image.decoded.is_some(),
+            egui::Button::new("Export a copy…"),
+        )
+        .clicked()
+    {
         commands.push(Command::Export);
         ui.close();
     }
@@ -478,4 +550,39 @@ pub(crate) fn context_menu(
             commands.push(Command::Sort { order, reverse });
         }
     });
+}
+
+fn playback_menu(
+    ui: &mut egui::Ui,
+    state: &ToolbarState<'_>,
+    commands: &mut Vec<Command>,
+) {
+    if state.video.active {
+        let label = if state.video.paused {
+            "Play video"
+        } else {
+            "Pause video"
+        };
+
+        if ui
+            .add_enabled(state.video.ready(), egui::Button::new(label))
+            .clicked()
+        {
+            commands.push(Command::TogglePlay);
+            ui.close();
+        }
+
+        return;
+    }
+
+    let label = if state.slideshow {
+        "Stop slideshow"
+    } else {
+        "Start slideshow"
+    };
+
+    if ui.button(label).clicked() {
+        commands.push(Command::ToggleSlideshow);
+        ui.close();
+    }
 }

@@ -100,11 +100,25 @@ impl Flowa {
             }
 
             Command::TogglePlay => {
-                if self.image.animated() {
+                if self.video.state.active {
+                    if let Err(error) = self.video.toggle_play() {
+                        self.ui.dialogs.notify(format!("{error:#}"), true);
+                    }
+                } else if self.image.animated() {
                     self.image.toggle_play();
                 } else {
                     self.slideshow
                         .toggle(self.settings.values.slideshow_seconds);
+                }
+            }
+            Command::SeekVideo(position) => {
+                if let Err(error) = self.video.seek(position) {
+                    self.ui.dialogs.notify(format!("{error:#}"), true);
+                }
+            }
+            Command::SetVideoVolume(volume) => {
+                if let Err(error) = self.video.set_volume(volume) {
+                    self.ui.dialogs.notify(format!("{error:#}"), true);
                 }
             }
             Command::ToggleSlideshow => self

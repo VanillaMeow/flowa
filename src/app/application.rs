@@ -19,6 +19,7 @@ use crate::{
         theme::{self, Colors},
         toolbar::{self, ToolbarState},
     },
+    video::VideoSession,
     viewer::{browser::Browser, image_session::ImageSession, playback::Slideshow},
 };
 
@@ -27,6 +28,7 @@ use super::{Command, Launch, capture::Capture};
 pub struct Flowa {
     pub(super) browser: Browser,
     pub(super) image: ImageSession,
+    pub(super) video: VideoSession,
     pub(super) ui: ViewerUi,
     pub(super) settings: SettingsStore,
     pub(super) scanner: FolderScanner,
@@ -48,6 +50,7 @@ impl Flowa {
         settings: Settings,
         config_path: Option<PathBuf>,
         launch: Launch,
+        video_device: bool,
     ) -> Self {
         let gpu = cc
             .wgpu_render_state
@@ -59,7 +62,13 @@ impl Flowa {
             .unwrap_or_else(|| "wgpu".into());
         log::info!("Renderer: {gpu}");
 
-        Self::create(cc.egui_ctx.clone(), settings, config_path, launch, gpu)
+        let mut app =
+            Self::create(cc.egui_ctx.clone(), settings, config_path, launch, gpu);
+        if video_device {
+            app.video = VideoSession::new(cc);
+        }
+
+        app
     }
 
     pub(super) fn create(
@@ -91,6 +100,7 @@ impl Flowa {
         let mut app = Self {
             browser: Browser::new(),
             image: ImageSession::new(),
+            video: VideoSession::default(),
             ui: ViewerUi::new(ctx.clone(), settings.nearest, launch.preferences),
             settings: SettingsStore::new(settings, config_path),
             scanner: FolderScanner::new(),
@@ -113,6 +123,8 @@ impl Flowa {
     }
 
     pub(super) fn open_path(&mut self, path: PathBuf, ctx: &egui::Context) {
+        self.video.close();
+        self.ui.video_controls.reset();
         self.image.begin_load();
         self.loader.cancel(self.image.generation());
         self.ui
@@ -124,6 +136,8 @@ impl Flowa {
     }
 
     pub(super) fn clear_image(&mut self) {
+        self.video.close();
+        self.ui.video_controls.reset();
         self.image.clear();
         self.loader.cancel(self.image.generation());
         self.ui.canvas.clear(self.image.generation());
@@ -136,12 +150,24 @@ impl Flowa {
         };
 
         let generation = self.image.begin_load();
+        self.video.close();
+        self.ui.video_controls.reset();
+        self.loader.cancel(generation);
         self.ui
             .canvas
             .reset(generation, self.settings.values.remember_view);
         self.ui.filmstrip.reveal_selection();
 
         self.settings.values.remember(path.clone());
+
+        if crate::viewer::catalog::is_video(&path) {
+            self.image.loading = false;
+            self.video.open(&path);
+            self.slideshow.active = false;
+            self.update_title(ctx);
+            ctx.request_repaint();
+            return;
+        }
 
         self.loader.request(LoadRequest {
             generation,
@@ -170,7 +196,11 @@ impl Flowa {
             return;
         }
 
-        if let Some(entry) = self.browser.entries().get(index) {
+        let Some(entry) = self.browser.entries().get(index) else {
+            return;
+        };
+
+        if !crate::viewer::catalog::is_video(&entry.path) {
             self.loader.preload(entry.path.clone());
         }
     }
@@ -187,6 +217,7 @@ impl Flowa {
                     .next(delta, self.settings.values.wrap_navigation)
             })
             .filter_map(|index| self.browser.entries().get(index))
+            .filter(|entry| !crate::viewer::catalog::is_video(&entry.path))
             .map(|entry| entry.path.clone())
             .collect();
 
@@ -207,6 +238,7 @@ impl Flowa {
         ToolbarState {
             browser: &self.browser,
             image: &self.image,
+            video: &self.video.state,
             canvas: &self.ui.canvas,
             settings: &self.settings.values,
             colors: self.colors,
@@ -264,6 +296,7 @@ impl Flowa {
     fn update_session(&mut self, ctx: &egui::Context) {
         self.ui.canvas.renderer.begin_pass();
         self.poll(ctx);
+        self.video.poll(ctx);
 
         let commands =
             keyboard::read(ctx, self.ui.dialogs.is_open(), self.ui.preferences.open);
@@ -302,7 +335,7 @@ impl Flowa {
     }
 
     fn show_viewer_controls(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        if !self.ui.controls_visible(ctx) {
+        if !self.ui.controls_visible(ctx, self.video.state.active) {
             return;
         }
 
@@ -320,11 +353,24 @@ impl Flowa {
             self.handle_commands(std::mem::take(&mut commands), ctx);
         }
 
+        // Bottom panels are allocated outside-in, so transport follows the filmstrip
+        if self.video.state.active {
+            self.ui.video_controls.show(
+                ui,
+                &self.video.state,
+                self.colors,
+                self.ui.fullscreen,
+                &mut commands,
+            );
+            self.handle_commands(std::mem::take(&mut commands), ctx);
+        }
+
         if self.settings.values.info {
             ui::inspector::show(
                 ui,
                 self.browser.current(),
                 self.image.decoded.as_ref(),
+                &self.video.state,
                 self.colors,
                 &mut commands,
             );
@@ -336,6 +382,7 @@ impl Flowa {
         let mut commands = Vec::new();
         let content = CanvasContent {
             image: &self.image,
+            video: &self.video,
             settings: &self.settings.values,
             colors: self.colors,
             can_navigate: self.browser.entries().len() > 1,
@@ -359,6 +406,7 @@ impl Flowa {
             &mut self.settings.values,
             self.colors,
             &self.gpu,
+            &self.video,
         );
 
         if changed {
@@ -404,7 +452,9 @@ impl Flowa {
         if normal_window
             && let Some(rect) = ctx.input(|input| input.viewport().inner_rect)
         {
-            self.settings.values.window_size = [rect.width(), rect.height()];
+            // Native window sizes exclude the application's UI zoom
+            let native_size = rect.size() * ctx.zoom_factor();
+            self.settings.values.window_size = [native_size.x, native_size.y];
         }
     }
 }

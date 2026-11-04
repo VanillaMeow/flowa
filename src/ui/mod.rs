@@ -10,6 +10,7 @@ pub(crate) mod preferences;
 pub(crate) mod rendering;
 pub(crate) mod theme;
 pub(crate) mod toolbar;
+pub(crate) mod video_controls;
 mod viewer_ui;
 
 pub(crate) use viewer_ui::ViewerUi;

@@ -3,6 +3,7 @@
 use egui::{Color32, RichText, vec2};
 
 use crate::settings::{Accent, Canvas, RendererPreference, Settings, Theme};
+use crate::video::VideoSession;
 
 use super::{
     icons,
@@ -10,11 +11,11 @@ use super::{
 };
 
 pub const SHORTCUTS: &[(&str, &str)] = &[
-    ("Ctrl+O", "Open image"),
+    ("Ctrl+O", "Open file"),
     ("Ctrl+Shift+O", "Open folder"),
-    ("Left / Right", "Previous / next image"),
-    ("Home / End", "First / last image"),
-    ("F5", "Refresh folder and reload image"),
+    ("Left / Right", "Previous / next file"),
+    ("Home / End", "First / last file"),
+    ("F5", "Refresh folder and reload file"),
     ("Wheel / pinch", "Zoom toward the cursor"),
     ("Drag", "Pan the image"),
     ("Double-click / 0", "Fit without enlarging"),
@@ -23,14 +24,14 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("R / Shift+R", "Rotate clockwise / counterclockwise"),
     ("H / V", "Flip horizontally / vertically"),
     ("T", "Toggle thumbnail strip"),
-    ("I", "Toggle image details"),
-    ("Space", "Pause animation / toggle slideshow"),
+    ("I", "Toggle file details"),
+    ("Space", "Play / pause video or animation; toggle slideshow"),
     ("F / F11", "Toggle fullscreen"),
     ("Esc", "Close dialog / leave fullscreen"),
     ("Ctrl+C", "Copy image"),
     ("Ctrl+Shift+C", "Copy file path"),
     ("Ctrl+Shift+S", "Export a copy"),
-    ("F2", "Rename image"),
+    ("F2", "Rename file"),
     ("Delete", "Move to trash, with confirmation"),
     ("Ctrl+,", "Preferences"),
     ("Ctrl+Q", "Quit"),
@@ -53,6 +54,7 @@ impl PreferencesWindow {
         settings: &mut Settings,
         colors: Colors,
         gpu: &str,
+        video: &VideoSession,
     ) -> bool {
         if !self.open {
             return false;
@@ -93,7 +95,9 @@ impl PreferencesWindow {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, true])
                     .max_height(540.)
-                    .show(ui, |ui| preference_tab(ui, self.tab, settings, colors, gpu));
+                    .show(ui, |ui| {
+                        preference_tab(ui, self.tab, settings, colors, gpu, video)
+                    });
             });
 
         before != serde_json::to_string(settings).unwrap_or_default()
@@ -116,13 +120,14 @@ fn preference_tab(
     settings: &mut Settings,
     colors: Colors,
     gpu: &str,
+    video: &VideoSession,
 ) {
     match tab {
         0 => appearance(ui, settings, colors),
         1 => viewing(ui, settings),
         2 => performance(ui, settings, colors, gpu),
         3 => shortcuts(ui),
-        _ => about(ui, colors),
+        _ => about(ui, colors, video),
     }
 }
 
@@ -228,19 +233,20 @@ fn shortcuts(ui: &mut egui::Ui) {
         });
 }
 
-fn about(ui: &mut egui::Ui, colors: Colors) {
-    ui.vertical_centered(|ui| about_contents(ui, colors));
+fn about(ui: &mut egui::Ui, colors: Colors, video: &VideoSession) {
+    ui.vertical_centered(|ui| about_contents(ui, colors, video));
 }
 
-fn about_contents(ui: &mut egui::Ui, colors: Colors) {
+fn about_contents(ui: &mut egui::Ui, colors: Colors, video: &VideoSession) {
     icons::logo(ui, 52., colors.accent);
     ui.heading("flowa");
 
     ui.add_space(12.);
     ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
+    ui.label("A native image and video viewer");
 
     ui.add_space(16.);
-    ui.label("Supported formats");
+    ui.label(RichText::new("Images").strong());
     ui.label(concat!(
         "JPEG · PNG / APNG · GIF · WebP · SVG · TIFF · BMP · ICO · JPEG XL · ",
         "OpenEXR · HDR · TGA · DDS · QOI · PNM · farbfeld",
@@ -254,8 +260,38 @@ fn about_contents(ui: &mut egui::Ui, colors: Colors) {
         ui.label("HEIC / HEIF");
     }
 
+    if cfg!(all(feature = "video", target_os = "linux")) {
+        about_video(ui, colors, video);
+    }
+
     ui.add_space(12.);
     icon_licenses(ui);
+}
+
+fn about_video(ui: &mut egui::Ui, colors: Colors, video: &VideoSession) {
+    ui.add_space(18.);
+    ui.label(RichText::new("Video").strong());
+    ui.label("MP4 · MKV · WebM · MOV · AVI · MPEG · M2TS / MTS · TS · OGV");
+    ui.label("Playback, seeking, volume, and subtitles through libmpv");
+    ui.add_space(8.);
+
+    let status = if video.available() {
+        "Video playback is available · Vulkan"
+    } else {
+        "Video playback is unavailable"
+    };
+    ui.label(RichText::new(status).color(colors.muted));
+
+    if !video.available() {
+        ui.add(egui::Label::new(video.unavailable_reason()).wrap());
+    }
+
+    ui.add_space(8.);
+    ui.horizontal_wrapped(|ui| {
+        ui.hyperlink_to("mpv", "https://mpv.io");
+        ui.hyperlink_to("libplacebo", "https://libplacebo.org");
+        ui.hyperlink_to("FFmpeg", "https://ffmpeg.org");
+    });
 }
 
 fn icon_licenses(ui: &mut egui::Ui) {

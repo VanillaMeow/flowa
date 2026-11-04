@@ -222,7 +222,11 @@ impl Filmstrip {
         let Some(Some(texture)) = self.textures.get(path) else {
             icons::paint(
                 painter,
-                Icon::Image,
+                if crate::viewer::catalog::is_video(path) {
+                    Icon::Play
+                } else {
+                    Icon::Image
+                },
                 rect.center() - vec2(0., 9.),
                 22.,
                 colors.muted,
@@ -242,6 +246,10 @@ impl Filmstrip {
     }
 
     fn request_thumbnail(&mut self, path: &Path) {
+        if crate::viewer::catalog::is_video(path) {
+            return;
+        }
+
         if self.textures.contains_key(path) || self.pending.contains(path) {
             return;
         }

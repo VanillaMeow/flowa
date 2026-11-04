@@ -32,6 +32,8 @@ pub(crate) enum Command {
     FlipHorizontal,
     FlipVertical,
     TogglePlay,
+    SeekVideo(f64),
+    SetVideoVolume(f64),
     ToggleSlideshow,
     ToggleFullscreen,
     ToggleFilmstrip,

@@ -36,9 +36,8 @@ impl Flowa {
 
                     if self.browser.entries().is_empty() {
                         self.clear_image();
-                        self.image.error = Some(
-                            "There are no supported images in this folder.".into(),
-                        );
+                        self.image.error =
+                            Some("There are no supported files in this folder.".into());
                     } else {
                         self.select(self.browser.index(), ctx);
                     }

@@ -13,6 +13,19 @@ pub const EXTENSIONS: &[&str] = &[
     "svg", "svgz", "jxl",
 ];
 
+pub const VIDEO_EXTENSIONS: &[&str] = &[
+    "mp4", "m4v", "mkv", "webm", "mov", "avi", "mpg", "mpeg", "m2ts", "mts", "ts",
+    "ogv",
+];
+
+pub fn is_video(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| {
+        VIDEO_EXTENSIONS
+            .iter()
+            .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+    })
+}
+
 pub fn supported(path: &Path) -> bool {
     let ext = path
         .extension()
@@ -20,6 +33,7 @@ pub fn supported(path: &Path) -> bool {
         .to_string_lossy()
         .to_ascii_lowercase();
     EXTENSIONS.contains(&ext.as_str())
+        || (cfg!(all(feature = "video", target_os = "linux")) && is_video(path))
         || (cfg!(feature = "avif") && ext == "avif")
         || (cfg!(feature = "heif") && matches!(ext.as_str(), "heic" | "heif"))
 }

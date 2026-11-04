@@ -83,9 +83,9 @@ fn perform(task: Task, clipboard: &mut Option<arboard::Clipboard>) -> Result<Out
     match task {
         Task::Pick { folder, start } => {
             let mut dialog = rfd::FileDialog::new().set_title(if folder {
-                "Open image folder"
+                "Open folder"
             } else {
-                "Open image"
+                "Open file"
             });
             if let Some(start) = start {
                 dialog = dialog.set_directory(start);
@@ -96,6 +96,10 @@ fn perform(task: Task, clipboard: &mut Option<arboard::Clipboard>) -> Result<Out
             } else {
                 let mut extensions = catalog::EXTENSIONS.to_vec();
 
+                if cfg!(all(feature = "video", target_os = "linux")) {
+                    extensions.extend_from_slice(catalog::VIDEO_EXTENSIONS);
+                }
+
                 if cfg!(feature = "avif") {
                     extensions.push("avif");
                 }
@@ -105,7 +109,7 @@ fn perform(task: Task, clipboard: &mut Option<arboard::Clipboard>) -> Result<Out
 
                 Ok(Outcome::Picked(
                     dialog
-                        .add_filter("Images", &extensions)
+                        .add_filter("Images and videos", &extensions)
                         .add_filter("All files", &["*"])
                         .pick_file(),
                 ))

@@ -5,6 +5,7 @@ use egui::RichText;
 use crate::{
     app::Command,
     utils::format,
+    video::VideoState,
     viewer::{catalog::Entry, image_session::DecodedImage},
 };
 
@@ -17,6 +18,7 @@ pub(crate) fn show(
     root: &mut egui::Ui,
     entry: Option<&Entry>,
     decoded: Option<&DecodedImage>,
+    video: &VideoState,
     colors: Colors,
     commands: &mut Vec<Command>,
 ) {
@@ -29,17 +31,17 @@ pub(crate) fn show(
             ui.add_space(18.);
 
             egui::ScrollArea::vertical().show(ui, |ui| {
-                details(ui, entry, decoded, colors, commands);
+                details(ui, entry, decoded, video, colors, commands);
             });
         });
 }
 
 fn header(ui: &mut egui::Ui, commands: &mut Vec<Command>) {
     ui.horizontal(|ui| {
-        ui.heading("Image details");
+        ui.heading("File details");
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if icons::button(ui, Icon::Close, "Close image details", false).clicked() {
+            if icons::button(ui, Icon::Close, "Close file details", false).clicked() {
                 commands.push(Command::ToggleInspector);
             }
         });
@@ -50,6 +52,7 @@ fn details(
     ui: &mut egui::Ui,
     entry: Option<&Entry>,
     decoded: Option<&DecodedImage>,
+    video: &VideoState,
     colors: Colors,
     commands: &mut Vec<Command>,
 ) {
@@ -59,6 +62,10 @@ fn details(
 
     if let Some(decoded) = decoded {
         image_details(ui, decoded, colors);
+    }
+
+    if video.active {
+        video_details(ui, video, colors);
     }
 
     ui.add_space(10.);
@@ -77,6 +84,35 @@ fn file_details(ui: &mut egui::Ui, entry: &Entry, colors: Colors) {
 
     detail(ui, "FILE", &entry.name, colors);
     detail(ui, "FOLDER", &folder, colors);
+
+    if crate::viewer::catalog::is_video(&entry.path) {
+        let container = entry
+            .path
+            .extension()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_uppercase();
+        detail(ui, "CONTAINER", &container, colors);
+        detail(ui, "FILE SIZE", &format::file_size(entry.size), colors);
+    }
+}
+
+fn video_details(ui: &mut egui::Ui, video: &VideoState, colors: Colors) {
+    if !video.size.contains(&0) {
+        let dimensions = format!("{} × {} pixels", video.size[0], video.size[1]);
+        detail(ui, "DIMENSIONS", &dimensions, colors);
+    }
+
+    if video.duration > 0. {
+        detail(ui, "DURATION", &format::media_time(video.duration), colors);
+    }
+
+    detail(ui, "DECODER", &video.decoder_description(), colors);
+    detail(ui, "RENDERER", "Vulkan · wgpu / libmpv", colors);
+
+    if let Some(error) = &video.error {
+        detail(ui, "PLAYBACK ERROR", error, colors);
+    }
 }
 
 fn image_details(ui: &mut egui::Ui, image: &DecodedImage, colors: Colors) {

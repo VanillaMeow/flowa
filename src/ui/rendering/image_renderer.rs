@@ -460,7 +460,7 @@ fn paint_backdrop(
     }
 }
 
-fn paint_source(
+pub(crate) fn paint_source(
     painter: &egui::Painter,
     texture: egui::TextureId,
     source: Rect,

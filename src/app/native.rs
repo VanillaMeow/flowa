@@ -21,6 +21,8 @@ pub(crate) fn run(
 ) -> eframe::Result {
     let mut options = native_options(settings.window_size);
     let renderer = settings.renderer;
+
+    configure_video(&mut options, renderer);
     let mut startup = Some(Startup {
         settings,
         config_path,
@@ -69,6 +71,9 @@ fn preferred_backends(renderer: RendererPreference) -> Option<Backends> {
 }
 
 fn run_once(options: NativeOptions, startup: &mut Option<Startup>) -> eframe::Result {
+    let video_device =
+        matches!(options.wgpu_options.wgpu_setup, WgpuSetup::Existing(_));
+
     eframe::run_native(
         "flowa",
         options,
@@ -82,12 +87,45 @@ fn run_once(options: NativeOptions, startup: &mut Option<Startup>) -> eframe::Re
                 startup.settings,
                 startup.config_path,
                 startup.launch,
+                video_device,
             )))
         }),
     )
 }
 
+fn configure_video(options: &mut NativeOptions, renderer: RendererPreference) {
+    #[cfg(all(feature = "video", target_os = "linux"))]
+    {
+        if !matches!(
+            renderer,
+            RendererPreference::Auto | RendererPreference::Vulkan
+        ) {
+            return;
+        }
+
+        if let Some(backend) = std::env::var_os("WGPU_BACKEND")
+            && backend != "vulkan"
+        {
+            return;
+        }
+
+        match crate::video::gpu::setup() {
+            Ok(Some(setup)) => options.wgpu_options.wgpu_setup = setup,
+            Ok(None) => {}
+            Err(error) => log::warn!("Video device setup: {error:#}"),
+        }
+    }
+
+    let _ = (options, renderer);
+}
+
 fn set_backends(options: &mut NativeOptions, backends: Backends) {
+    if backends == Backends::GL
+        && matches!(options.wgpu_options.wgpu_setup, WgpuSetup::Existing(_))
+    {
+        options.wgpu_options.wgpu_setup = WgpuSetup::without_display_handle();
+    }
+
     if let WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup {
         setup.instance_descriptor.backends = backends;
     }

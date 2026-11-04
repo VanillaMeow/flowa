@@ -32,6 +32,20 @@ cargo build --release
 
 Pass an image or folder path as the first argument.
 
+## Video playback on Linux
+
+Build Flowa's Vulkan-enabled libmpv before opening videos:
+
+```sh
+./packaging/linux/build-video.sh
+RUSTFLAGS="-C target-cpu=native" cargo build --release
+./target/release/flowa /path/to/video.mp4
+```
+
+See [the video backend guide](native/mpv/README.md) for native dependencies,
+installation, and hardware playback tests. Flowa keeps its wgpu renderer and
+shares video textures with mpv directly on the GPU.
+
 To omit native AVIF and HEIF support:
 
 ```sh

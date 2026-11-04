@@ -6,6 +6,7 @@ mod services;
 mod settings;
 mod ui;
 mod utils;
+mod video;
 mod viewer;
 
 use clap::Parser;

@@ -9,6 +9,21 @@ mod catalog {
         assert_eq!(next_index(0, 3, -1, true), Some(2));
         assert_eq!(next_index(2, 3, 1, false), Some(2));
     }
+
+    #[test]
+    fn video_extensions_are_case_insensitive_and_feature_gated() {
+        use crate::viewer::catalog::{is_video, supported};
+        use std::path::Path;
+
+        assert!(is_video(Path::new("clip.MP4")));
+        assert!(is_video(Path::new("clip.mkv")));
+        assert!(!is_video(Path::new("photo.png")));
+        assert!(!is_video(Path::new("mp4")));
+        assert_eq!(
+            supported(Path::new("clip.MP4")),
+            cfg!(all(feature = "video", target_os = "linux"))
+        );
+    }
 }
 
 mod browser {

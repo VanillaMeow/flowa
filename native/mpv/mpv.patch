@@ -1,0 +1,54 @@
+--- a/video/out/gpu/libmpv_gpu.c
++++ b/video/out/gpu/libmpv_gpu.c
+@@ -4,8 +4,14 @@
+ #include "mpv/render_gl.h"
+ #include "video.h"
+ #include "video/out/libmpv.h"
++#if HAVE_VULKAN
++#include "video/out/vulkan/flowa_vk.h"
++#endif
+ 
+ static const struct libmpv_gpu_context_fns *context_backends[] = {
++#if HAVE_VULKAN
++    &libmpv_gpu_context_flowa_vk,
++#endif
+ #if HAVE_GL
+     &libmpv_gpu_context_gl,
+ #endif
+@@ -158,6 +164,19 @@
+ {
+     struct priv *p = ctx->priv;
+ 
++#if HAVE_VULKAN
++    if (strcmp(p->context->fns->api_name, FLOWA_VK_API) == 0) {
++        struct flowa_vk_target *target =
++            get_mpv_render_param(params, FLOWA_VK_TARGET, NULL);
++        if (!target || !target->width || !target->height)
++            return MPV_ERROR_INVALID_PARAMETER;
++
++        *out_w = target->width;
++        *out_h = target->height;
++        return 0;
++    }
++#endif
++
+     // Mapping the surface is cheap, better than adding new backend entrypoints.
+     struct ra_tex *tex;
+     int err = p->context->fns->wrap_fbo(p->context, params, &tex);
+--- a/video/out/gpu/libmpv_gpu.h
++++ b/video/out/gpu/libmpv_gpu.h
+@@ -38,3 +38,4 @@
+ };
+ 
+ extern const struct libmpv_gpu_context_fns libmpv_gpu_context_gl;
++extern const struct libmpv_gpu_context_fns libmpv_gpu_context_flowa_vk;
+--- a/meson.build
++++ b/meson.build
+@@ -1309,6 +1309,7 @@
+ if features['vulkan']
+     dependencies += vulkan
+     sources += files('video/out/hwdec/hwdec_vulkan.c',
++                     'video/out/vulkan/libmpv_vk.c',
+                      'video/out/vulkan/context.c',
+                      'video/out/vulkan/utils.c',
+                      'video/filter/vf_gpu_vulkan.c')

@@ -9,8 +9,8 @@ use crate::{app::Launch, settings::Theme};
 #[derive(Parser)]
 #[command(name = "flowa", version, about, args_override_self = true)]
 pub(crate) struct Cli {
-    /// Image or folder to open
-    #[arg(value_name = "IMAGE_OR_FOLDER")]
+    /// Image, video, or folder to open
+    #[arg(value_name = "FILE_OR_FOLDER")]
     path: Option<PathBuf>,
 
     /// Open preferences
@@ -21,7 +21,7 @@ pub(crate) struct Cli {
     #[arg(long)]
     filmstrip: bool,
 
-    /// Show image details
+    /// Show file details
     #[arg(long)]
     info: bool,
 

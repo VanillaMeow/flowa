@@ -35,12 +35,15 @@ pub(crate) fn read(
         return commands;
     }
 
-    // Typing a filename must not also navigate or rotate the image
+    // Text fields and modal UI own their keyboard input
     if ctx.text_edit_focused() || preferences_open || egui::Popup::is_any_open(ctx) {
         return commands;
     }
 
-    if key(egui::Modifiers::NONE, egui::Key::ArrowRight) {
+    let slider_focused = super::video_controls::wants_keyboard_input(ctx);
+
+    // Sliders use navigation keys locally while playback and window shortcuts stay available
+    if !slider_focused && key(egui::Modifiers::NONE, egui::Key::ArrowRight) {
         commands.push(Command::Navigate(1));
     }
 
@@ -48,15 +51,15 @@ pub(crate) fn read(
         commands.push(Command::Refresh);
     }
 
-    if key(egui::Modifiers::NONE, egui::Key::ArrowLeft) {
+    if !slider_focused && key(egui::Modifiers::NONE, egui::Key::ArrowLeft) {
         commands.push(Command::Navigate(-1));
     }
 
-    if key(egui::Modifiers::NONE, egui::Key::Home) {
+    if !slider_focused && key(egui::Modifiers::NONE, egui::Key::Home) {
         commands.push(Command::SelectFirst);
     }
 
-    if key(egui::Modifiers::NONE, egui::Key::End) {
+    if !slider_focused && key(egui::Modifiers::NONE, egui::Key::End) {
         commands.push(Command::SelectLast);
     }
 
