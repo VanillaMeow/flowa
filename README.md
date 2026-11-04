@@ -1,3 +1,6 @@
+> [!WARNING]
+> This project is current in heavy development. Please check back later.
+
 # flowa
 
 **flowa** is a native image and video viewer built with Rust, egui, and wgpu.
