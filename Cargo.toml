@@ -10,6 +10,7 @@ default = ["avif", "heif", "video"]
 avif = ["image/avif-native"]
 heif = ["dep:libheif-rs"]
 video = ["dep:ash", "dep:libloading", "dep:pollster"]
+static-video = ["video"]
 
 [dependencies]
 anyhow = "1"
@@ -45,6 +46,9 @@ trash = "5"
 [dev-dependencies]
 tempfile = "3"
 
+[build-dependencies]
+pkg-config = "0.3"
+
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 zbus = { version = "5", features = ["p2p"] }
 
@@ -54,7 +58,7 @@ lto = "thin"
 codegen-units = 1
 strip = true
 
-# Build with packaging/linux/build-portable.sh to bundle native codecs
+# Build with packaging/linux/build-portable.sh to statically link native codecs
 [profile.portable]
 inherits = "release"
 

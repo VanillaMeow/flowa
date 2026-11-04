@@ -280,6 +280,7 @@ impl eframe::App for Flowa {
         self.capture.update(
             &ctx,
             &self.image,
+            &self.video,
             &self.ui.canvas.renderer,
             self.browser.entries().len(),
         );

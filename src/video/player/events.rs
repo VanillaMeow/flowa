@@ -14,6 +14,9 @@ impl Player {
             self.swap_pending = false;
         }
 
+        // Advanced control requires servicing GPU requests before FILE_LOADED can arrive
+        self.update_render_context();
+
         for _ in 0..MAX_EVENTS_PER_POLL {
             // SAFETY: Events and their payloads are read before the next wait_event call
             let event = unsafe { &*(self.api.wait_event)(self.handle, 0.) };
@@ -78,6 +81,16 @@ fn apply_property(state: &mut VideoState, property: &mpv::Property) {
                     state.decoder =
                         CStr::from_ptr(value).to_string_lossy().into_owned();
                     log::info!("Video decoder: {}", state.decoder);
+                }
+            }
+            (b"current-ao", mpv::FORMAT_STRING) => {
+                let value = *property.data.cast::<*const std::ffi::c_char>();
+
+                if !value.is_null() {
+                    log::info!(
+                        "Audio output: {}",
+                        CStr::from_ptr(value).to_string_lossy()
+                    );
                 }
             }
             _ => {}

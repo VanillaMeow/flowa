@@ -10,6 +10,17 @@ use super::{Player, SLOT_COUNT, Target, mpv};
 use mpv::{RenderParam, VulkanTarget};
 
 impl Player {
+    /// Services queued GPU work even while loading or before video dimensions exist
+    pub(super) fn update_render_context(&mut self) {
+        if !self.wakeup.dirty.swap(false, Ordering::AcqRel) {
+            return;
+        }
+
+        // SAFETY: Render functions run serially on the owning UI thread
+        let updates = unsafe { (self.api.render_context_update)(self.render) };
+        self.needs_redraw |= updates & mpv::RENDER_UPDATE_FRAME != 0;
+    }
+
     /// Reuses the last frame unless mpv requests a redraw or the target size changes
     pub fn render(&mut self, size: [u32; 2]) -> Result<Option<egui::TextureId>> {
         if size.contains(&0) {
@@ -28,18 +39,7 @@ impl Player {
             self.resize(size)?;
         }
 
-        let dirty = self.wakeup.dirty.swap(false, Ordering::AcqRel);
-        let updated = if dirty {
-            // SAFETY: Render functions run serially on the owning UI thread
-            unsafe {
-                (self.api.render_context_update)(self.render) & mpv::RENDER_UPDATE_FRAME
-                    != 0
-            }
-        } else {
-            false
-        };
-
-        if !resized && !updated && !self.needs_redraw {
+        if !resized && !self.needs_redraw {
             return Ok(self.displayed);
         }
 

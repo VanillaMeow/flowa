@@ -1421,6 +1421,7 @@ dependencies = [
  "log",
  "natord",
  "open",
+ "pkg-config",
  "pollster 0.4.0",
  "resvg",
  "rfd",

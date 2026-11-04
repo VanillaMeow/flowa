@@ -2,14 +2,17 @@
 
 use std::{
     ffi::{CStr, CString, c_char, c_int, c_void},
-    path::{Path, PathBuf},
     sync::Arc,
 };
+
+#[cfg(not(feature = "static-video"))]
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail, ensure};
 use ash::vk;
 
 // Public enum values are pinned by mpv's stable C client and rendering APIs
+const ERROR_OPTION_NOT_FOUND: c_int = -5;
 pub(super) const FORMAT_STRING: c_int = 1;
 pub(super) const FORMAT_FLAG: c_int = 3;
 pub(super) const FORMAT_INT64: c_int = 4;
@@ -104,7 +107,8 @@ type Callback = Option<unsafe extern "C" fn(*mut c_void)>;
 
 /// Typed symbols from the pinned libmpv API
 ///
-/// Keeping the library here guarantees that its function pointers remain valid
+/// Dynamic builds retain the library for the lifetime of every function pointer
+/// Portable builds link the same entry points directly into the executable
 pub(super) struct Api {
     pub create: unsafe extern "C" fn() -> Handle,
     pub initialize: unsafe extern "C" fn(Handle) -> c_int,
@@ -125,11 +129,13 @@ pub(super) struct Api {
     pub render_context_update: unsafe extern "C" fn(Handle) -> u64,
     pub render_context_render: unsafe extern "C" fn(Handle, *mut RenderParam) -> c_int,
     pub render_context_report_swap: unsafe extern "C" fn(Handle),
+    #[cfg(not(feature = "static-video"))]
     _library: libloading::Library,
 }
 
 impl Api {
     /// Checks the private Vulkan ABI before loading any engine entry points
+    #[cfg(not(feature = "static-video"))]
     pub fn load() -> Result<Arc<Self>> {
         let path = library_path()
             .context("Build the video backend with packaging/linux/build-video.sh")?;
@@ -177,7 +183,130 @@ impl Api {
     }
 }
 
+#[cfg(feature = "static-video")]
+mod linked {
+    use super::*;
+
+    // These signatures match the same pinned client API as the dynamic loader
+    unsafe extern "C" {
+        pub fn flowa_mpv_vulkan_abi_version() -> u32;
+        pub fn mpv_create() -> Handle;
+        pub fn mpv_initialize(handle: Handle) -> c_int;
+        pub fn mpv_terminate_destroy(handle: Handle);
+        pub fn mpv_set_option_string(
+            handle: Handle,
+            name: *const c_char,
+            value: *const c_char,
+        ) -> c_int;
+        pub fn mpv_command_async(
+            handle: Handle,
+            userdata: u64,
+            arguments: *const *const c_char,
+        ) -> c_int;
+        pub fn mpv_observe_property(
+            handle: Handle,
+            userdata: u64,
+            name: *const c_char,
+            format: c_int,
+        ) -> c_int;
+        pub fn mpv_wait_event(handle: Handle, timeout: f64) -> *const Event;
+        pub fn mpv_set_wakeup_callback(
+            handle: Handle,
+            callback: Callback,
+            data: *mut c_void,
+        );
+        pub fn mpv_error_string(error: c_int) -> *const c_char;
+        pub fn mpv_render_context_create(
+            context: *mut Handle,
+            handle: Handle,
+            parameters: *mut RenderParam,
+        ) -> c_int;
+        pub fn mpv_render_context_free(context: Handle);
+        pub fn mpv_render_context_set_update_callback(
+            context: Handle,
+            callback: Callback,
+            data: *mut c_void,
+        );
+        pub fn mpv_render_context_update(context: Handle) -> u64;
+        pub fn mpv_render_context_render(
+            context: Handle,
+            parameters: *mut RenderParam,
+        ) -> c_int;
+        pub fn mpv_render_context_report_swap(context: Handle);
+        #[cfg(test)]
+        pub fn mpv_get_property_string(
+            handle: Handle,
+            name: *const c_char,
+        ) -> *mut c_char;
+        #[cfg(test)]
+        pub fn mpv_free(data: *mut c_void);
+    }
+}
+
+#[cfg(feature = "static-video")]
 impl Api {
+    pub fn load() -> Result<Arc<Self>> {
+        // SAFETY: The statically linked backend implements this versioned ABI
+        ensure!(
+            unsafe { linked::flowa_mpv_vulkan_abi_version() } == VULKAN_ABI_VERSION,
+            "Unsupported Flowa Vulkan backend ABI"
+        );
+
+        Ok(Arc::new(Self {
+            create: linked::mpv_create,
+            initialize: linked::mpv_initialize,
+            terminate_destroy: linked::mpv_terminate_destroy,
+            set_option_string: linked::mpv_set_option_string,
+            command_async: linked::mpv_command_async,
+            observe_property: linked::mpv_observe_property,
+            wait_event: linked::mpv_wait_event,
+            set_wakeup_callback: linked::mpv_set_wakeup_callback,
+            error_string: linked::mpv_error_string,
+            render_context_create: linked::mpv_render_context_create,
+            render_context_free: linked::mpv_render_context_free,
+            render_context_set_update_callback:
+                linked::mpv_render_context_set_update_callback,
+            render_context_update: linked::mpv_render_context_update,
+            render_context_render: linked::mpv_render_context_render,
+            render_context_report_swap: linked::mpv_render_context_report_swap,
+        }))
+    }
+}
+
+impl Api {
+    #[cfg(test)]
+    pub(super) fn audio_output(&self, handle: Handle) -> Result<String> {
+        #[cfg(not(feature = "static-video"))]
+        type GetPropertyString =
+            unsafe extern "C" fn(Handle, *const c_char) -> *mut c_char;
+
+        #[cfg(feature = "static-video")]
+        let (get_property, free) = (linked::mpv_get_property_string, linked::mpv_free);
+
+        // SAFETY: The owning Api retains the library and these are stable client functions
+        #[cfg(not(feature = "static-video"))]
+        let (get_property, free) = unsafe {
+            (
+                *self
+                    ._library
+                    .get::<GetPropertyString>(b"mpv_get_property_string\0")?,
+                *self
+                    ._library
+                    .get::<unsafe extern "C" fn(*mut c_void)>(b"mpv_free\0")?,
+            )
+        };
+
+        // SAFETY: The property string is copied before being returned to mpv's allocator
+        unsafe {
+            let value = get_property(handle, c"current-ao".as_ptr());
+            ensure!(!value.is_null(), "No audio output was initialized");
+
+            let output = CStr::from_ptr(value).to_string_lossy().into_owned();
+            free(value.cast());
+            Ok(output)
+        }
+    }
+
     pub fn check(&self, code: c_int) -> Result<()> {
         if code >= 0 {
             return Ok(());
@@ -192,6 +321,27 @@ impl Api {
         // SAFETY: Options are set before initialization on the owning thread
         self.check(unsafe {
             (self.set_option_string)(handle, name.as_ptr(), value.as_ptr())
+        })
+        .with_context(|| format!("Cannot set mpv option {}", name.to_string_lossy()))
+    }
+
+    /// Handles options provided by optional mpv features such as its Lua UI
+    pub fn optional_option(
+        &self,
+        handle: Handle,
+        name: &CStr,
+        value: &CStr,
+    ) -> Result<()> {
+        // SAFETY: Options are set before initialization on the owning thread
+        let result =
+            unsafe { (self.set_option_string)(handle, name.as_ptr(), value.as_ptr()) };
+
+        if result == ERROR_OPTION_NOT_FOUND {
+            return Ok(());
+        }
+
+        self.check(result).with_context(|| {
+            format!("Cannot set mpv option {}", name.to_string_lossy())
         })
     }
 
@@ -208,6 +358,7 @@ impl Api {
     }
 }
 
+#[cfg(not(feature = "static-video"))]
 pub(super) fn library_path() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("FLOWA_MPV_LIBRARY") {
         return Some(path.into());

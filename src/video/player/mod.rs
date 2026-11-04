@@ -126,7 +126,6 @@ impl Player {
             (c"hwdec", c"auto-safe"),
             (c"idle", c"yes"),
             (c"keep-open", c"yes"),
-            (c"osc", c"no"),
             (c"input-default-bindings", c"no"),
             (c"input-vo-keyboard", c"no"),
             (c"terminal", c"no"),
@@ -134,6 +133,8 @@ impl Player {
         ] {
             self.api.option(self.handle, name, value)?;
         }
+
+        self.api.optional_option(self.handle, c"osc", c"no")?;
 
         // SAFETY: Initialization precedes rendering and event processing
         self.api
@@ -149,6 +150,7 @@ impl Player {
             (c"video-params/dw", mpv::FORMAT_INT64),
             (c"video-params/dh", mpv::FORMAT_INT64),
             (c"hwdec-current", mpv::FORMAT_STRING),
+            (c"current-ao", mpv::FORMAT_STRING),
         ] {
             self.api.check(unsafe {
                 (self.api.observe_property)(self.handle, 0, name.as_ptr(), format)
@@ -291,6 +293,7 @@ mod tests {
         ))?;
         let ctx = egui::Context::default();
         let mut player = Player::new(&graphics, &ctx)?;
+        player.command(&["set", "ao", "sdl3"])?;
         let mut state = VideoState {
             active: true,
             loading: true,
@@ -306,6 +309,10 @@ mod tests {
             state.decoder
         );
         ensure!(state.duration > 5., "Video duration was not received");
+        ensure!(
+            player.api.audio_output(player.handle)? == "sdl3",
+            "SDL3 audio output was not selected"
+        );
         let initial_frame = assert_video_pixels(&player)?;
 
         player.command(&["set", "pause", "yes"])?;
@@ -328,6 +335,16 @@ mod tests {
         state.loading = true;
         pump(&mut player, &mut state, |state| {
             !state.loading && state.position < 1. && !state.paused
+        })?;
+        assert_video_pixels(&player)?;
+
+        // Software decoders can request GPU allocations before file loading completes
+        player.command(&["stop"])?;
+        player.command(&["set", "hwdec", "no"])?;
+        player.load(&clip)?;
+        state.loading = true;
+        pump(&mut player, &mut state, |state| {
+            state.decoder == "no" && state.position > 0.1
         })?;
         assert_video_pixels(&player)?;
 

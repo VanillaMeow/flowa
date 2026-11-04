@@ -22,7 +22,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential ca-certificates curl pkg-config cmake meson ninja-build nasm \
-            xz-utils git binutils
+            xz-utils git binutils patch patchelf python3-jinja2 hwdata \
+            libass-dev libvulkan-dev libffmpeg-nvenc-dev \
+            libasound2-dev libpulse-dev libpipewire-0.3-dev ffmpeg
 
       - name: Compute native cache key
         id: native-cache
@@ -39,11 +41,28 @@ jobs:
           path: .cache/portable-deps
           key: portable-native-ubuntu-24.04-${{ runner.arch }}-${{ steps.native-cache.outputs.key }}
 
-      - name: Build with bundled codecs
+      - name: Build with statically linked image and video codecs
+        env:
+          FLOWA_MAX_GLIBC: '2.39'
         run: ./packaging/linux/build-portable.sh
 
       - name: Check the glibc baseline
-        run: ./packaging/linux/check-portable.sh target/x86_64-unknown-linux-gnu/portable/flowa 2.39
+        run: ./packaging/linux/test-portable.sh target/x86_64-unknown-linux-gnu/portable/flowa
+
+      - name: Test video in a clean runtime
+        run: |
+          ffmpeg -hide_banner -loglevel error -y \
+            -f lavfi -i testsrc2=size=320x180:rate=24 \
+            -f lavfi -i anullsrc=r=48000:cl=stereo -t 4 \
+            -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac \
+            target/portable-test.mp4
+          docker build --target runtime-check -t flowa-portable-runtime \
+            -f packaging/linux/portable.Containerfile packaging/linux
+          docker run --rm --network none \
+            -v "$PWD/target/x86_64-unknown-linux-gnu/portable/flowa:/flowa:ro" \
+            -v "$PWD/target/portable-test.mp4:/fixture.mp4:ro" \
+            -v "$PWD/packaging/linux/smoke-test-portable.sh:/smoke-test.sh:ro" \
+            flowa-portable-runtime bash /smoke-test.sh /flowa /fixture.mp4
 
       - uses: actions/upload-artifact@v7
         with:

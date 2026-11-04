@@ -38,7 +38,7 @@ Build Flowa's Vulkan-enabled libmpv before opening videos:
 
 ```sh
 ./packaging/linux/build-video.sh
-RUSTFLAGS="-C target-cpu=native" cargo build --release
+cargo build --release
 ./target/release/flowa /path/to/video.mp4
 ```
 
@@ -69,7 +69,15 @@ Uninstall with `./packaging/linux/uninstall-local.sh`.
 
 ## Portable Linux build
 
-The portable executable bundles AVIF and HEIC codecs. It targets x86_64 Linux with glibc 2.39 or newer and still needs a working desktop and GPU drivers.
+The portable build produces one executable with statically linked AVIF and HEIC
+codecs, Flowa's Vulkan libmpv backend, FFmpeg 9.0, SDL 3.4.18, and libplacebo.
+It targets x86_64 Linux with glibc 2.39 or newer. Copy the executable wherever you
+want to run it. There is no launcher, extraction step, or companion media library.
+
+A working desktop, Vulkan loader, and GPU drivers are still required. SDL3 loads
+the host's PipeWire, PulseAudio, or ALSA client library for audio. VA-API and CUDA
+also use the host's GPU drivers. Software decoding remains available when the
+source codec has no hardware decoder.
 
 With Podman and podman-compose installed, run from the repository root:
 
@@ -79,15 +87,27 @@ podman-compose run --rm --build portable
 
 This builds in Ubuntu 24.04 and checks the glibc 2.39 limit.
 Output is `target/x86_64-unknown-linux-gnu/portable/flowa`.
-Build caches persist on the host. Builds use two jobs by default; set `CARGO_BUILD_JOBS` to change this.
+Build caches persist on the host. Builds use two jobs by default; set
+`CARGO_BUILD_JOBS` to change this. The first build compiles the media stack and
+will take longer than a regular Rust build.
 
-For a native x86_64 GNU/Linux build, install Rust, a C/C++ toolchain, CMake, Meson, Ninja, NASM, pkg-config, curl, tar, xz, and binutils, then run:
+For a native x86_64 GNU/Linux build, install Rust and the packages listed in
+[the builder container](packaging/linux/portable.Containerfile), then run:
 
 ```sh
 ./packaging/linux/build-portable.sh
 ./packaging/linux/check-portable.sh target/x86_64-unknown-linux-gnu/portable/flowa 2.39
 ```
 
-The script downloads verified codec sources and caches them under `.cache/portable-deps`. System codec development packages are unnecessary. Building on a newer distribution may exceed the glibc limit. `cargo build --profile portable` alone does not bundle codecs.
+The script downloads checksum-verified sources and caches them under
+`.cache/portable-deps`. FFmpeg and SDL are built from the pinned sources rather
+than the distribution's versions. It preserves the generic x86-64 CPU baseline
+even when local builds use `RUSTFLAGS="-C target-cpu=native"`.
+Building on a newer distribution may exceed the glibc limit.
+`cargo build --profile portable` alone does not build or link the media stack.
 
-The [portable workflow](.github/workflows/portable.yml) uses the same build and compatibility checks. After downloading its `flowa` artifact, run `chmod +x flowa`.
+The [portable workflow](.github/workflows/portable.yml) uses the same build and
+compatibility checks. It copies only the executable into a clean Ubuntu runtime
+without system FFmpeg, SDL, or mpv, renders a video through software Vulkan, and
+checks the screenshot for decoded pixels. The uploaded artifact is the `flowa`
+executable. After downloading it, run `chmod +x flowa`.

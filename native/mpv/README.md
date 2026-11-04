@@ -15,16 +15,17 @@ On Arch Linux, install the native development dependencies:
 
 ```sh
 sudo pacman -S --needed base-devel meson ninja pkgconf curl patch \
-    ffmpeg libplacebo libass vulkan-headers vulkan-icd-loader
+    ffmpeg sdl3 libplacebo libass vulkan-headers vulkan-icd-loader
 ```
 
+The native build requires FFmpeg 9.0 or newer and SDL3 3.2 or newer.
 For NVIDIA hardware decoding, mpv also needs `ffnvcodec-headers` at build time and
 a working NVIDIA driver with CUDA/NVDEC libraries at runtime. Other mpv features
 and decoder integrations are detected from the installed development packages.
 
 ```sh
 ./packaging/linux/build-video.sh
-RUSTFLAGS="-C target-cpu=native" cargo build --release
+cargo build --release
 ./target/release/flowa /path/to/video.mp4
 ```
 
@@ -37,9 +38,19 @@ then the development build location above. For a local installation, copy the
 library beside the executable. It still depends on the system FFmpeg, libplacebo,
 libass, and the other libraries selected by Meson. This is not a portable build.
 
+For distribution, use `packaging/linux/build-portable.sh`. It builds this backend
+with FFmpeg 9.0 and SDL 3.4.18, then statically links the media stack into
+the single Flowa executable. The `static-video` feature calls linked symbols
+directly and does not search for `libflowa-mpv.so`. See [the portable build guide](../../BUILDING.md#portable-linux-build).
+
 The backend requires Linux and Vulkan. Image viewing remains available without
 the library. Use `--no-default-features` to omit video and the native image codecs,
 or `--no-default-features --features avif,heif` for the previous image-only build.
+
+The build adds an SDL3 audio-stream backend with `sdl3-audio.patch` and
+`ao_sdl3.c`. SDL3 handles audio only; windowing and video rendering stay with
+eframe and wgpu. The static SDL3 library dynamically loads the host audio clients
+so their plugins and configuration match the running desktop.
 
 The build also applies `cuda-zero-init.patch` to the pinned mpv source. Its NVDEC
 Vulkan mapper otherwise leaves the timeline semaphore counter and cleanup handles
@@ -56,6 +67,10 @@ hardware decoder interop.
 The UI thread owns all wgpu and libmpv render submissions. Libmpv's control API
 uses asynchronous commands and observed properties. Wakeup callbacks only request
 an egui repaint. Decoder and audio threads remain managed by mpv.
+
+Render-context updates are serviced while loading, before dimensions or a frame
+are available. Advanced control allows decoders to queue GPU initialization work
+at that stage, and delaying those updates until `FILE_LOADED` can deadlock startup.
 
 Each video uses three `Rgba8Unorm` textures. Wgpu initializes each texture once so
 its initialization tracking cannot clear externally rendered pixels. For each
@@ -85,7 +100,7 @@ responsive control widths, timeline placement above the filmstrip, and pointer
 and keyboard seeking. The ignored native
 integration test generates a short H.264/AAC clip with FFmpeg, requires actual
 hardware decoding, checks GPU-rendered pixels, exercises pause, seek, volume,
-target resizing, reload, and cleanup:
+target resizing, reload, software decoding, and cleanup:
 
 ```sh
 RUSTFLAGS="-C target-cpu=native" cargo test --release \

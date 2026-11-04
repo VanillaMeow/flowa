@@ -8,7 +8,8 @@ use std::{
 use anyhow::{Context, Result};
 
 use crate::{
-    ui::rendering::image_renderer::ImageRenderer, viewer::image_session::ImageSession,
+    ui::rendering::image_renderer::ImageRenderer, video::VideoSession,
+    viewer::image_session::ImageSession,
 };
 
 pub(super) struct Capture {
@@ -32,6 +33,7 @@ impl Capture {
         &mut self,
         ctx: &egui::Context,
         image: &ImageSession,
+        video: &VideoSession,
         renderer: &ImageRenderer,
         file_count: usize,
     ) {
@@ -49,14 +51,18 @@ impl Capture {
             return;
         };
 
-        if renderer.has_pending_tiles() {
+        let waiting_for_video = video.state.active
+            && video.state.error.is_none()
+            && (video.state.loading || video.texture.is_none());
+
+        if waiting_for_video || renderer.has_pending_tiles() {
             ctx.request_repaint_after(Duration::from_millis(100));
             return;
         }
 
         self.requested = true;
         log::info!(
-            "Screenshot ready: {} detailed tiles, {} images in folder",
+            "Screenshot ready: {} detailed tiles, {} files in folder",
             renderer.tile_count(),
             file_count
         );
@@ -93,5 +99,52 @@ impl Capture {
                 }
             }),
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::Capture;
+    use crate::{
+        ui::rendering::image_renderer::ImageRenderer, video::VideoSession,
+        viewer::image_session::ImageSession,
+    };
+
+    #[test]
+    fn video_screenshots_wait_for_a_frame_and_allow_error_capture() {
+        let ctx = egui::Context::default();
+        let renderer = ImageRenderer::new(ctx.clone(), false);
+        let image = ImageSession::new();
+        let mut video = VideoSession::default();
+        video.state.active = true;
+        video.state.loading = true;
+
+        let mut capture = Capture::new(Some("unused-screenshot.png".into()), true);
+        capture.started = Instant::now() - Duration::from_secs(3);
+        let update = |capture: &mut Capture, video: &VideoSession| {
+            let mut output = ctx.run_ui(Default::default(), |_| {
+                capture.update(&ctx, &image, video, &renderer, 1);
+            });
+            output.textures_delta.clear();
+        };
+
+        update(&mut capture, &video);
+        assert!(!capture.requested);
+
+        video.state.loading = false;
+        update(&mut capture, &video);
+        assert!(!capture.requested);
+
+        video.texture = Some(egui::TextureId::User(1));
+        update(&mut capture, &video);
+        assert!(capture.requested);
+
+        capture.requested = false;
+        video.texture = None;
+        video.state.error = Some("Decoder failed".into());
+        update(&mut capture, &video);
+        assert!(capture.requested);
     }
 }

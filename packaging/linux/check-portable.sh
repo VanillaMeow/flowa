@@ -25,7 +25,7 @@ fi
 
 while IFS= read -r library; do
     case "$library" in
-        libc.so.6|libm.so.6|libgcc_s.so.1|libpthread.so.0|libdl.so.2|librt.so.1|libutil.so.1|ld-linux-x86-64.so.2) ;;
+        libc.so.6|libm.so.6|libgcc_s.so.1|libpthread.so.0|libdl.so.2|librt.so.1|libutil.so.1|libresolv.so.2|ld-linux-x86-64.so.2|libvulkan.so.1) ;;
         *)
             printf 'Unexpected shared dependency: %s\n' "$library" >&2
             exit 1

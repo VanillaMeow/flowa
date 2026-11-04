@@ -10,7 +10,7 @@ if [[ $(uname -s) != Linux || $(rustc -vV | sed -n 's/^host: //p') != x86_64-unk
     exit 1
 fi
 
-for tool in cc c++ cmake meson ninja nasm pkg-config curl sha256sum tar readelf; do
+for tool in cc c++ cmake meson ninja nasm pkg-config curl sha256sum tar readelf patch; do
     if ! command -v "$tool" >/dev/null; then
         printf 'Missing build tool: %s\n' "$tool" >&2
         exit 1
@@ -26,7 +26,13 @@ jobs=${CARGO_BUILD_JOBS:-$(nproc)}
 native_dir="$project_dir/.cache/portable-deps"
 download_dir="$native_dir/downloads"
 # Include the build recipe and compiler versions so Cargo sees a new library path after changes
-build_key=$({ sha256sum "$project_dir/packaging/linux/build-portable.sh"; cc --version; c++ --version; ldd --version; } | sha256sum | cut -d ' ' -f 1)
+build_key=$({
+    sha256sum "$project_dir/packaging/linux/"{build-portable.sh,build-static-video.sh,portable.Containerfile} \
+        "$project_dir/native/mpv/"{*.c,*.h,*.patch}
+    cc --version
+    c++ --version
+    ldd --version
+} | sha256sum | cut -d ' ' -f 1)
 
 if [[ ${1:-} == --print-native-cache-key ]]; then
     printf '%s\n' "$build_key"
@@ -145,11 +151,19 @@ export SYSTEM_DEPS_DAV1D_LINK=static
 export SYSTEM_DEPS_DAV1D_BUILD_INTERNAL=never
 export SYSTEM_DEPS_LIBHEIF_LINK=static
 
+# Build the media stack before Cargo so libmpv can be linked into the executable
+export FLOWA_STATIC_BUILD_ROOT=${FLOWA_STATIC_BUILD_ROOT:-"$build_dir/video"}
+"$project_dir/packaging/linux/build-static-video.sh" "$prefix"
+export FLOWA_STATIC_MPV_PREFIX="$FLOWA_STATIC_BUILD_ROOT/prefix"
+export PKG_CONFIG_PATH="$FLOWA_STATIC_MPV_PREFIX/lib/pkgconfig:$prefix/lib/pkgconfig"
+unset PKG_CONFIG_LIBDIR
+
 # Pin the target and CPU baseline even when the developer has local Cargo settings
 export CARGO_ENCODED_RUSTFLAGS=$'-C\x1ftarget-cpu=x86-64'
-cargo build --locked --profile portable --target x86_64-unknown-linux-gnu --features avif,heif
+cargo build --locked --profile portable --target x86_64-unknown-linux-gnu \
+    --no-default-features --features avif,heif,static-video
 
 binary="$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/portable/flowa"
-"$project_dir/packaging/linux/check-portable.sh" "$binary"
+"$project_dir/packaging/linux/check-portable.sh" "$binary" "${FLOWA_MAX_GLIBC:-}"
 "$binary" --version
 printf 'Portable executable: %s\n' "$binary"

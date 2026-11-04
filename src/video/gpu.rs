@@ -11,13 +11,13 @@ use eframe::{
 
 use super::mpv;
 
-/// Creates a shared Vulkan device only when the versioned playback library exists
+/// Creates the Vulkan device shared by wgpu and the playback engine
 pub(crate) fn setup() -> Result<Option<WgpuSetup>> {
+    #[cfg(not(feature = "static-video"))]
     if mpv::library_path().is_none() {
         return Ok(None);
     }
 
-    let _api = mpv::Api::load()?;
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::VULKAN,
         ..wgpu::InstanceDescriptor::new_without_display_handle_from_env()
@@ -27,6 +27,9 @@ pub(crate) fn setup() -> Result<Option<WgpuSetup>> {
             power_preference: wgpu::PowerPreference::HighPerformance,
             ..Default::default()
         }))?;
+
+    // Initialize the host GPU driver before opening the playback engine
+    let _api = mpv::Api::load()?;
     let (device, queue) = create_device(&adapter)?;
 
     Ok(Some(WgpuSetup::Existing(WgpuSetupExisting {
