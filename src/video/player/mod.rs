@@ -123,7 +123,8 @@ impl Player {
         for (name, value) in [
             (c"config", c"no"),
             (c"vo", c"libmpv"),
-            (c"hwdec", c"auto-safe"),
+            // Prefer direct hardware paths and use software decoding if none works
+            (c"hwdec", c"nvdec,vaapi,vulkan"),
             (c"idle", c"yes"),
             (c"keep-open", c"yes"),
             (c"input-default-bindings", c"no"),

@@ -9,6 +9,16 @@ The build disables OpenGL. Video images stay in GPU memory between mpv's rendere
 and egui. Hardware decoding depends on the GPU, driver, and source codec. Unsupported
 codecs can still use software decoding, followed by a GPU upload, as in mpv.
 
+Decoder selection tries `nvdec`, `vaapi`, then `vulkan`, followed by software
+decoding. Copy-back methods such as `vulkan-copy` are excluded from automatic
+selection. The current bridge uses mpv's legacy `gpu` renderer through libplacebo;
+it does not provide `gpu-next` feature parity. Direct Vulkan Video decoding also
+needs a decode-capable device and queue plus mpv hardware-context integration,
+which the current graphics-only imported device does not provide.
+The legacy Vulkan mapper additionally requires `ra_vk_ctx_get()` to recognize
+the rendering context; it currently rejects our swapchain-free bridge. Selecting
+`hwdec=vulkan` alone cannot enable that missing integration.
+
 ## Build and run
 
 On Arch Linux, install the native development dependencies:
