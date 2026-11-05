@@ -155,7 +155,16 @@ impl ThumbnailWorker {
                     generation: request.generation,
                     image: None,
                 };
-                let image = thumbnail(&result.path).ok();
+                let image = if crate::viewer::catalog::is_video(&result.path) {
+                    crate::video::thumbnail(
+                        &result.path,
+                        &active_generation,
+                        result.generation,
+                    )
+                } else {
+                    thumbnail(&result.path)
+                }
+                .ok();
 
                 if active_generation.load(Ordering::Relaxed) != request.generation {
                     continue;

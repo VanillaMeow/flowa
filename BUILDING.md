@@ -54,7 +54,8 @@ Output: `target/x86_64-unknown-linux-gnu/portable/flowa`
 
 This is one x86_64 executable with statically linked media libraries. It requires
 glibc 2.39+, a Vulkan loader, GPU drivers, and a host audio backend. Video decoding
-requires compatible hardware; software video decoding is disabled.
+prefers compatible hardware and falls back to CPU decoding. Rendering still
+requires Vulkan, including when decoding on the CPU.
 
 Sources are checksum-verified and cached in `.cache/portable-deps`. Builds use two
 jobs by default; override with `CARGO_BUILD_JOBS`. Portable builds always use the

@@ -2,14 +2,14 @@
 set -euo pipefail
 
 if [[ $# -lt 2 || $# -gt 3 ]]; then
-    printf 'Usage: %s BINARY VIDEO_FIXTURE [unavailable|hardware]\n' "$0" >&2
+    printf 'Usage: %s BINARY VIDEO_FIXTURE [software|hardware]\n' "$0" >&2
     exit 1
 fi
 
 binary=$(realpath "$1")
 fixture=$(realpath "$2")
-expected=${3:-unavailable}
-if [[ $expected != unavailable && $expected != hardware ]]; then
+expected=${3:-software}
+if [[ $expected != software && $expected != hardware ]]; then
     printf 'Invalid playback expectation: %s\n' "$expected" >&2
     exit 1
 fi
@@ -34,19 +34,13 @@ cat "$work_dir/playback.log"
 grep -q 'Audio output: sdl3' "$work_dir/playback.log"
 grep -q 'Renderer: .*Vulkan' "$work_dir/playback.log"
 
-# Software Vulkan CI has no video decoder and must show an actionable error
-if [[ $expected == unavailable ]]; then
-    grep -q 'Hardware decoding is unavailable' "$work_dir/playback.log"
-    if grep -q 'Video decoder:' "$work_dir/playback.log"; then
-        printf '%s\n' 'A decoder was unexpectedly selected in the software Vulkan runtime.' >&2
-        exit 1
-    fi
-    test -s "$work_dir/frame.png"
-    printf '%s\n' 'Single portable executable correctly rejects missing hardware decoding'
-    exit 0
+# Software Vulkan CI must decode video on the CPU and upload the resulting frames
+if [[ $expected == software ]]; then
+    grep -q 'Video decoder: software (CPU frames uploaded to GPU)' "$work_dir/playback.log"
+else
+    grep -q 'Video decoder: .*GPU-resident frames' "$work_dir/playback.log"
 fi
 
-grep -q 'Video decoder: .*GPU-resident frames' "$work_dir/playback.log"
 if grep -Eq '\bERROR\b|Video backend unavailable|Video device setup:' "$work_dir/playback.log"; then
     exit 1
 fi
@@ -64,5 +58,5 @@ with Image.open(sys.argv[1]) as screenshot:
 if colored_pixels < 10000:
     raise SystemExit("Portable playback did not render the video test pattern")
 
-print("Single portable executable rendered hardware-decoded video through Vulkan")
+print("Single portable executable rendered video through Vulkan")
 PY

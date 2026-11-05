@@ -1,4 +1,4 @@
-//! Hardware candidate selection and bounded first-GOP replay without software fallback
+//! Hardware-first candidate selection and bounded first-GOP replay with software fallback
 
 use std::sync::Arc;
 
@@ -8,16 +8,46 @@ use strum::{IntoStaticStr, VariantArray};
 use super::{
     media::{Frame, HardwareCodec, Packet, Receive, Sent, Stream},
     shared::{BYTE_LIMIT, PACKET_LIMIT, Shared},
+    software::SoftwareDecoder,
 };
 use crate::video::{gpu::NativeGpu, native};
 
-// Variant order matches the native hardware decoder candidate indices
+// Variant order Matches the native decoder candidate indices
 #[derive(Clone, Copy, IntoStaticStr, VariantArray)]
 #[strum(serialize_all = "lowercase")]
 enum Backend {
     Nvdec,
     Vulkan,
     Vaapi,
+    Software,
+}
+
+enum Codec {
+    Hardware(HardwareCodec),
+    Software(SoftwareDecoder),
+}
+
+impl Codec {
+    fn flush(&mut self) {
+        match self {
+            Self::Hardware(codec) => codec.flush(),
+            Self::Software(codec) => codec.flush(),
+        }
+    }
+
+    fn send(&mut self, packet: Option<&Packet>) -> Result<Sent> {
+        match self {
+            Self::Hardware(codec) => codec.send(packet),
+            Self::Software(codec) => codec.send(packet),
+        }
+    }
+
+    fn receive(&mut self) -> Result<Receive<Frame>> {
+        match self {
+            Self::Hardware(codec) => codec.receive(),
+            Self::Software(codec) => codec.receive(),
+        }
+    }
 }
 
 enum Input {
@@ -27,7 +57,7 @@ enum Input {
 }
 
 pub(super) struct Decoder {
-    codec: Option<HardwareCodec>,
+    codec: Option<Codec>,
     gpu: Arc<NativeGpu>,
     stream: Arc<Stream>,
     candidate: usize,
@@ -71,6 +101,21 @@ impl Decoder {
         self.eof = false;
     }
 
+    pub fn can_fallback(&self) -> bool {
+        matches!(
+            self.backend,
+            Some(Backend::Nvdec | Backend::Vulkan | Backend::Vaapi)
+        )
+    }
+
+    pub fn use_software(&mut self) -> Result<()> {
+        self.clear_probe();
+        self.probing = true;
+        self.selected = None;
+        self.candidate = Backend::Software as usize;
+        self.open_next()
+    }
+
     pub fn next(&mut self, shared: &Shared) -> Result<Option<Frame>> {
         if self.codec.is_none() {
             self.open_next()?;
@@ -81,7 +126,7 @@ impl Decoder {
             let received = self
                 .codec
                 .as_mut()
-                .context("No hardware codec is open")?
+                .context("No video codec is open")?
                 .receive();
             match received {
                 Ok(Receive::Item(frame)) => {
@@ -99,13 +144,16 @@ impl Decoder {
                     }
                     ensure!(
                         !self.probing,
-                        "The video stream produced no hardware-decoded frames"
+                        "The video stream produced no decoded frames"
                     );
                     self.eof = true;
                     return Ok(None);
                 }
                 Err(error) => {
-                    log::debug!("Hardware decoder failed: {error:#}");
+                    if !self.probing {
+                        return Err(error);
+                    }
+                    log::debug!("Video decoder failed: {error:#}");
                     self.retry()?;
                     continue;
                 }
@@ -123,16 +171,20 @@ impl Decoder {
             match self
                 .codec
                 .as_mut()
-                .context("No hardware codec is open")?
+                .context("No video codec is open")?
                 .send(packet.as_ref())
             {
                 Ok(Sent::Again) => {
                     self.unsent = packet;
                     self.flushed = false;
+                    return Ok(None);
                 }
                 Ok(Sent::Accepted | Sent::End) => {}
                 Err(error) => {
-                    log::debug!("Hardware decoder rejected a packet: {error:#}");
+                    if !self.probing {
+                        return Err(error);
+                    }
+                    log::debug!("Video decoder rejected a packet: {error:#}");
                     self.retry()?;
                 }
             }
@@ -171,7 +223,7 @@ impl Decoder {
             ensure!(
                 self.probe.len() < PACKET_LIMIT
                     && packet.bytes <= BYTE_LIMIT.saturating_sub(self.probe_bytes),
-                "The hardware decoder did not produce a frame within the probe limit"
+                "The video decoder did not produce a frame within the probe limit"
             );
             self.probe.push(packet.try_clone()?);
             self.probe_bytes += packet.bytes;
@@ -181,10 +233,7 @@ impl Decoder {
     }
 
     fn retry(&mut self) -> Result<()> {
-        ensure!(
-            self.probing,
-            "The hardware decoder failed during playback; software fallback is disabled"
-        );
+        ensure!(self.probing, "The video decoder failed during playback");
         self.open_next()
     }
 
@@ -195,7 +244,16 @@ impl Decoder {
         while let Some(&backend) = Backend::VARIANTS.get(self.candidate) {
             let index = self.candidate;
             self.candidate += 1;
-            match HardwareCodec::new(&self.gpu, &self.stream, index as i32) {
+            let codec = match backend {
+                Backend::Software => SoftwareDecoder::new(
+                    Arc::clone(&self.gpu),
+                    Arc::clone(&self.stream),
+                )
+                .map(Codec::Software),
+                _ => HardwareCodec::new(&self.gpu, &self.stream, index as i32)
+                    .map(Codec::Hardware),
+            };
+            match codec {
                 Ok(codec) => {
                     self.codec = Some(codec);
                     self.backend = Some(backend);
@@ -212,7 +270,7 @@ impl Decoder {
         }
 
         bail!(
-            "Hardware decoding is unavailable for {} on this GPU/driver. Tried NVDEC, Vulkan Video, and VA-API; software decoding is disabled",
+            "Video decoding is unavailable for {}. Tried NVDEC, Vulkan Video, VA-API, and software decoding",
             native::string(&self.stream.info.codec)
         )
     }
@@ -234,6 +292,6 @@ mod tests {
         let names: Vec<&'static str> =
             Backend::VARIANTS.iter().copied().map(Into::into).collect();
 
-        assert_eq!(names, ["nvdec", "vulkan", "vaapi"]);
+        assert_eq!(names, ["nvdec", "vulkan", "vaapi", "software"]);
     }
 }

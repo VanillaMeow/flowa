@@ -6,12 +6,32 @@ pub(crate) mod gpu;
 mod native;
 #[cfg(all(feature = "video", target_os = "linux"))]
 mod player;
+#[cfg(all(feature = "video", target_os = "linux"))]
+mod thumbnail;
 
 use std::{path::Path, time::Duration};
 
 use anyhow::{Result, bail};
 
-/// Playback properties reported by the FFmpeg hardware player
+/// Extracts filmstrip pixels without requiring an initialized playback device
+pub(crate) fn thumbnail(
+    path: &Path,
+    generation: &std::sync::atomic::AtomicU64,
+    expected: u64,
+) -> Result<egui::ColorImage> {
+    #[cfg(all(feature = "video", target_os = "linux"))]
+    {
+        thumbnail::extract(path, generation, expected)
+    }
+
+    #[cfg(not(all(feature = "video", target_os = "linux")))]
+    {
+        let _ = (path, generation, expected);
+        bail!("This build does not support video thumbnails")
+    }
+}
+
+/// Playback properties reported by the FFmpeg player
 ///
 /// Times are seconds, volume is a percentage, and size includes display aspect ratio
 pub(crate) struct VideoState {
@@ -33,10 +53,14 @@ impl VideoState {
         self.active && !self.loading && self.error.is_none()
     }
 
-    /// Describes hardware selection before the first decoded frame arrives
+    /// Describes decoder selection before the first decoded frame arrives
     pub fn decoder_description(&self) -> String {
         if self.decoder.is_empty() || self.decoder == "no" {
-            return "Hardware decoder not selected".into();
+            return "Selecting video decoder".into();
+        }
+
+        if self.decoder == "software" {
+            return "Software decoding · CPU".into();
         }
 
         format!("Hardware decoding · {}", self.decoder)

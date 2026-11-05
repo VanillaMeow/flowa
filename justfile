@@ -60,7 +60,7 @@ configure-c:
 test *args:
     cargo test --locked "$@"
 
-# Verify portability and missing-decoder behavior in a clean Linux runtime
+# Verify portability and software video playback in a clean Linux runtime
 test-portable binary=portable_binary:
     tools/portable/container.sh test "$1"
 

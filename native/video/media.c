@@ -2,7 +2,6 @@
 #include "internal.h"
 
 #include <errno.h>
-#include <libavutil/bprint.h>
 #include <libavutil/display.h>
 #include <math.h>
 #include <stdarg.h>
@@ -21,32 +20,6 @@ int video_av_error(char *error, size_t size, const char *message, int code) {
     char detail[AV_ERROR_MAX_STRING_SIZE];
     av_strerror(code, detail, sizeof(detail));
     return video_error(error, size, "%s: %s", message, detail);
-}
-
-static int probe_streams(AVFormatContext *format) {
-    // Metadata discovery must not briefly decode video in software
-    AVBPrint allowed;
-    av_bprint_init(&allowed, 0, AV_BPRINT_SIZE_UNLIMITED);
-    void *iterator = NULL;
-    const AVCodec *codec;
-
-    while ((codec = av_codec_iterate(&iterator))) {
-        if (av_codec_is_decoder(codec) && codec->type != AVMEDIA_TYPE_VIDEO)
-            av_bprintf(&allowed, "%s%s", allowed.len ? "," : "", codec->name);
-    }
-
-    if (!av_bprint_is_complete(&allowed)) {
-        av_bprint_finalize(&allowed, NULL);
-        return AVERROR(ENOMEM);
-    }
-
-    int result = av_bprint_finalize(&allowed, &format->codec_whitelist);
-    if (result < 0)
-        return result;
-
-    result = avformat_find_stream_info(format, NULL);
-    av_freep(&format->codec_whitelist);
-    return result;
 }
 
 static int open_audio(struct flowa_media *media) {
@@ -104,7 +77,7 @@ struct flowa_media *flowa_media_open(
     if (result < 0)
         goto error;
 
-    result = probe_streams(media->format);
+    result = avformat_find_stream_info(media->format, NULL);
     if (result < 0)
         goto error;
 

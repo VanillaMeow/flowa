@@ -106,7 +106,7 @@ macro_rules! define_api {
                 let api = Self { $($name: linked::$name,)* };
 
                 // SAFETY: The version query takes no arguments and owns no resources
-                ensure!(unsafe { (api.video_abi_version)() } == 2,
+                ensure!(unsafe { (api.video_abi_version)() } == 3,
                     "Unsupported Flowa FFmpeg shim ABI; rebuild Flowa with Cargo");
                 Ok(Arc::new(api))
             }
@@ -137,6 +137,7 @@ define_api! {
     fn decoder_receive(decoder: Handle, frame: *mut Handle, error: *mut c_char, size: usize) -> c_int = "flowa_decoder_receive";
     fn frame_free(frame: Handle) -> () = "flowa_frame_free";
     fn frame_get_info(frame: Handle, info: *mut FrameInfo) -> () = "flowa_frame_get_info";
+    fn video_thumbnail(path: *const c_char, interrupt: Interrupt, data: *mut c_void, pixels: *mut u8, max_width: c_int, max_height: c_int, width: *mut c_int, height: *mut c_int, rotation: *mut f64, error: *mut c_char, size: usize) -> c_int = "flowa_video_thumbnail";
     fn media_audio_send(media: Handle, packet: Handle, error: *mut c_char, size: usize) -> c_int = "flowa_media_audio_send";
     fn media_audio_receive(media: Handle, block: *mut AudioBlock, error: *mut c_char, size: usize) -> c_int = "flowa_media_audio_receive";
     fn audio_block_free(samples: *mut f32) -> () = "flowa_audio_block_free";

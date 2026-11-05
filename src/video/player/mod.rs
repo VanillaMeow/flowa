@@ -21,6 +21,7 @@ mod engine;
 mod media;
 mod rendering;
 mod shared;
+mod software;
 mod worker;
 
 use engine::{Engine, Snapshot};
@@ -32,7 +33,7 @@ struct Target {
     id: egui::TextureId,
 }
 
-/// Owns one hardware-only player and retires native resources before wgpu targets
+/// Owns one video player and retires native resources before wgpu targets
 pub(super) struct Player {
     gpu: Arc<NativeGpu>,
     engine: Engine,
@@ -122,7 +123,11 @@ impl Player {
 
         let decoder = &status.decoder;
         if !decoder.is_empty() && state.decoder != *decoder {
-            log::info!("Video decoder: {decoder} (GPU-resident frames)");
+            if decoder == "software" {
+                log::info!("Video decoder: software (CPU frames uploaded to GPU)");
+            } else {
+                log::info!("Video decoder: {decoder} (GPU-resident frames)");
+            }
             state.decoder = decoder.clone();
         }
         let audio = &status.audio;
@@ -237,7 +242,7 @@ mod tests {
             state.position > 0.25 && state.size == [640, 360]
         })?;
         ensure!(
-            !state.decoder.is_empty(),
+            !state.decoder.is_empty() && state.decoder != "software",
             "Hardware decoding was not selected: {}",
             state.decoder
         );
@@ -318,7 +323,7 @@ mod tests {
 
     #[test]
     #[ignore = "Requires the FFmpeg backend, Vulkan, and ffmpeg"]
-    fn unsupported_hardware_never_decodes_in_software() -> Result<()> {
+    fn unsupported_hardware_falls_back_to_software() -> Result<()> {
         let folder = tempfile::tempdir()?;
         let clip = folder.path().join("software-only.nut");
         let generated = std::process::Command::new("ffmpeg")
@@ -331,7 +336,7 @@ mod tests {
                 "-i",
                 "testsrc2=size=128x96:rate=10",
                 "-t",
-                "1",
+                "3",
                 "-c:v",
                 "rawvideo",
             ])
@@ -350,25 +355,44 @@ mod tests {
             ..Default::default()
         };
         player.load(&clip)?;
-        let deadline = Instant::now() + Duration::from_secs(5);
-
-        while state.error.is_none() && Instant::now() < deadline {
-            player.poll(&mut state);
-            std::thread::sleep(Duration::from_millis(5));
-        }
-
+        pump(&mut player, &mut state, |state| state.position > 0.1)?;
         ensure!(
-            state.error.as_deref().is_some_and(|error| error
-                .contains("Hardware decoding is unavailable")
-                && error.contains("software decoding is disabled")),
-            "Expected an explicit hardware-only error, got {:?}",
-            state.error
+            state.decoder == "software",
+            "Software fallback was not selected"
         );
-        ensure!(state.decoder.is_empty(), "A software decoder was selected");
-        ensure!(
-            player.displayed.is_none(),
-            "A software frame reached the renderer"
-        );
+        let initial_frame = assert_video_pixels(&player)?;
+
+        player.command(Command::TogglePause)?;
+        pump(&mut player, &mut state, |state| state.paused)?;
+        player.command(Command::Seek(2.0))?;
+        player.command(Command::Seek(1.5))?;
+        pump(&mut player, &mut state, |state| {
+            (state.position - 1.5).abs() < 0.15
+        })?;
+        wait_for_changed_frame(&mut player, &mut state, initial_frame)?;
+        player.render([256, 192])?;
+        graphics.queue.submit([]);
+        assert_video_pixels(&player)?;
+
+        player.command(Command::Seek(state.duration))?;
+        pump(&mut player, &mut state, |state| state.position > 2.8)?;
+        player.command(Command::TogglePause)?;
+        pump(&mut player, &mut state, |state| {
+            state.paused && state.position > 2.8
+        })?;
+        player.command(Command::TogglePause)?;
+        pump(&mut player, &mut state, |state| {
+            !state.paused && state.position < 1.0
+        })?;
+
+        // Closing while the CPU worker has queued frames must not block teardown
+        player.stop();
+        player.load(&clip)?;
+        state.loading = true;
+        pump(&mut player, &mut state, |state| {
+            !state.loading && state.position < 1.0
+        })?;
+        assert_video_pixels(&player)?;
         player.stop();
         Ok(())
     }

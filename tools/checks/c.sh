@@ -23,7 +23,7 @@ for tool in "${required_tools[@]}"; do
 done
 
 cd "$project_dir"
-dependencies=(libavformat libavcodec libavutil libswresample libplacebo sdl3)
+dependencies=(libavformat libavcodec libavutil libswresample libswscale libplacebo sdl3)
 pkg_flags=$(pkg-config --cflags "${dependencies[@]}")
 read -r -a include_flags <<< "$pkg_flags"
 compile_flags=(

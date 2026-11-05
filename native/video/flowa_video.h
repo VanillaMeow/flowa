@@ -5,7 +5,8 @@
 #include <stdint.h>
 #include <vulkan/vulkan.h>
 
-#define FLOWA_VIDEO_ABI 2
+#define FLOWA_VIDEO_ABI 3
+#define FLOWA_DECODER_SOFTWARE 3
 #define FLOWA_VIDEO_SLOTS 3
 #define FLOWA_VIDEO_ERROR_SIZE 768
 
@@ -119,7 +120,7 @@ int flowa_media_seek(
 struct flowa_packet *flowa_packet_clone(const struct flowa_packet *packet);
 void flowa_packet_free(struct flowa_packet *packet);
 
-// Backend values are 0=NVDEC, 1=Vulkan, 2=VA-API; Rust controls ordering and retries
+// Backend values are 0=NVDEC, 1=Vulkan, 2=VA-API, 3=software; software accepts a NULL GPU
 struct flowa_decoder *flowa_decoder_create(
     struct flowa_gpu *gpu,
     const struct flowa_stream *stream,
@@ -145,6 +146,21 @@ void flowa_frame_free(struct flowa_frame *frame);
 void flowa_frame_get_info(
     const struct flowa_frame *frame,
     struct flowa_frame_info *info
+);
+
+// Writes a small packed RGBA poster without initializing audio or a GPU
+int flowa_video_thumbnail(
+    const char *path,
+    int (*interrupt)(void *),
+    void *userdata,
+    uint8_t *pixels,
+    int max_width,
+    int max_height,
+    int *width,
+    int *height,
+    double *rotation,
+    char *error,
+    size_t error_size
 );
 
 int flowa_media_audio_send(

@@ -248,10 +248,6 @@ impl Filmstrip {
     }
 
     fn request_thumbnail(&mut self, path: &Path) {
-        if crate::viewer::catalog::is_video(path) {
-            return;
-        }
-
         if self.textures.contains_key(path) || self.pending.contains(path) {
             return;
         }

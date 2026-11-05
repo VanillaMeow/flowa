@@ -10,18 +10,48 @@ Use `just build`. Cargo compiles the shim and links the installed media librarie
 `just portable` statically links the media stack into one executable.
 See [BUILDING.md](../../BUILDING.md) for dependencies and commands.
 
-## Hardware decoding
+## Decoding and fallback
 
-Decoder selection tries NVDEC, Vulkan Video, then VA-API. Each backend must return
-hardware frames. Unsupported codecs or drivers produce an error; software video
-decoding and CPU copy-back are disabled. Audio decoding runs on the CPU.
+Decoder selection tries NVDEC, Vulkan Video, VA-API, then FFmpeg software decoding.
+Hardware candidates must return hardware frames. Failed candidates replay a
+bounded set of initial packets into the next decoder. Software decoding runs on a
+dedicated worker with bounded packet and frame channels and two codec threads.
+Seek generations discard stale CPU frames. Audio decoding also runs on the CPU.
+
+A hardware decode error after playback starts switches to software and seeks to
+the current position, preserving pause state and the displayed frame. This
+recovery requires a seekable duration. GPU import failures and device loss still
+report an error rather than attempting renderer recovery.
 
 Vulkan and VA-API frames are imported into the renderer. NVDEC uses a GPU-to-GPU
 copy into Vulkan memory. Timeline semaphores synchronize video textures with wgpu.
 Seeking keeps the displayed frame until its replacement is ready.
 
+Software frames upload into reusable libplacebo plane textures. They use the same
+color conversion, SDR output, and tone mapping as hardware frames. CPU fallback
+still requires the Linux Vulkan renderer; it does not enable OpenGL playback.
+
 Output is SDR RGBA with libplacebo tone mapping. Subtitles, track selection, and
 end-to-end HDR display output are not implemented.
+
+## Filmstrip thumbnails
+
+Only visible filmstrip items request thumbnails. A bounded background worker opens
+video independently of playback, selects a nearby keyframe within the first three
+seconds, and scales a decoded CPU frame directly to at most 192 by 128 pixels.
+It creates no audio output or GPU device. Display rotation and sample aspect ratio
+are applied before returning pixels to the UI.
+
+Extraction checks folder-generation cancellation and a cooperative three-second
+deadline, and limits poster decoding to 512 packets or 32 MiB after stream probing. FFmpeg codec calls
+cannot be interrupted midway through decoding a frame. Thumbnail textures use the
+existing 128-entry in-memory filmstrip cache, including failed requests; uploads
+remain limited to four per UI frame. There is no disk cache.
+
+Thumbnails use libswscale matrix and range conversion. HDR thumbnails do not yet
+receive the playback renderer's HDR-to-SDR tone mapping.
+
+See [rendering backend work](BACKENDS.md) for OpenGL, Metal, and DX12.
 
 ## Validation
 
@@ -36,6 +66,19 @@ Requires FFmpeg's command-line tools, Vulkan, and a hardware decoder. It checks
 pixels, pause, seeking, volume, resize, reload, and teardown.
 On NVIDIA, `CUDA_VISIBLE_DEVICES=-1` exercises Vulkan Video if supported.
 
+Additional focused tests:
+
+```sh
+cargo test unsupported_hardware_falls_back_to_software -- --ignored --nocapture
+cargo test hardware_failure_recovers_with_software_frames -- --ignored --nocapture
+cargo test video_posters_handle -- --ignored --nocapture
+```
+
+The fallback test uses raw video with no hardware decoder configuration and checks
+rendered pixels, pause, consecutive seeks, resize, EOF, replay, reload, and teardown.
+The recovery test starts with hardware H.264 and injects a decode failure. The
+poster test requires ffmpeg with libx264 but needs no graphics or audio device.
+
 For Vulkan validation, install the Khronos layer and set `WGPU_VALIDATION=1`,
 `WGPU_DEBUG=1`, and `VK_LAYER_VALIDATE_SYNC=1`.
 On GTX 1050 Ti / NVIDIA 580.178.04, NVDEC passes validation. Vulkan H.264 playback
@@ -43,5 +86,6 @@ works but FFmpeg's frame pool triggers `VUID-VkImageCreateInfo-pNext-06811` for
 unsupported mutable-image flags. This remains unresolved.
 
 `just test-portable` checks the single executable in a clean Ubuntu runtime with
-no hardware decoder. It verifies startup and an explicit missing-decoder error;
-actual hardware playback is covered by the test above.
+no hardware decoder. It verifies startup, CPU decoder selection, SDL audio, and
+rendered video pixels through software Vulkan. Actual hardware playback is covered
+by the test above.

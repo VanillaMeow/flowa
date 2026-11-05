@@ -326,16 +326,7 @@ impl HardwareCodec {
             _ => {
                 let handle = NonNull::new(handle)
                     .context("FFmpeg returned an empty video frame")?;
-                let mut info = std::mem::MaybeUninit::uninit();
-                unsafe {
-                    (self.api.frame_get_info)(handle.as_ptr(), info.as_mut_ptr())
-                };
-                Ok(Receive::Item(Frame {
-                    api: Arc::clone(&self.api),
-                    handle,
-                    info: unsafe { info.assume_init() },
-                    _gpu: Arc::clone(&self.gpu),
-                }))
+                Ok(Receive::Item(Frame::from_handle(&self.gpu, handle)))
             }
         }
     }
@@ -357,6 +348,20 @@ pub(super) struct Frame {
 }
 
 impl Frame {
+    pub fn from_handle(gpu: &Arc<NativeGpu>, handle: NonNull<c_void>) -> Self {
+        let mut info = std::mem::MaybeUninit::uninit();
+
+        // SAFETY: Receive transferred a valid frame reference and the shim fills every field
+        unsafe { (gpu.api.frame_get_info)(handle.as_ptr(), info.as_mut_ptr()) };
+
+        Self {
+            api: Arc::clone(&gpu.api),
+            handle,
+            info: unsafe { info.assume_init() },
+            _gpu: Arc::clone(gpu),
+        }
+    }
+
     pub fn raw(&self) -> Handle {
         self.handle.as_ptr()
     }

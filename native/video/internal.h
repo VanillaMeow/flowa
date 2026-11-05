@@ -33,6 +33,7 @@ struct flowa_gpu {
     const AVHWDeviceContext *upload_device;
     bool video_queue;
     char render_node[128];
+    pl_tex software_planes[4];
     pl_tex targets[FLOWA_VIDEO_SLOTS];
     VkImage images[FLOWA_VIDEO_SLOTS];
     struct gpu_flight *flights;

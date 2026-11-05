@@ -1,4 +1,4 @@
-// Shared Vulkan device creation and hardware-frame rendering
+// Shared Vulkan device creation and hardware and software frame rendering
 #include "internal.h"
 
 #include <libplacebo/utils/libav.h>
@@ -240,6 +240,9 @@ void flowa_gpu_reset_frames(struct flowa_gpu *gpu) {
     video_gpu_collect(gpu, true);
     av_buffer_unref(&gpu->upload_pool);
     gpu->upload_device = NULL;
+
+    for (int plane = 0; plane < 4; plane++)
+        pl_tex_destroy(gpu->vk->gpu, &gpu->software_planes[plane]);
 }
 
 void video_gpu_collect(struct flowa_gpu *gpu, bool finish) {
@@ -274,7 +277,7 @@ void flowa_gpu_destroy(struct flowa_gpu *gpu) {
 
     if (gpu->vk) {
         video_gpu_clear_targets(gpu);
-        av_buffer_unref(&gpu->upload_pool);
+        flowa_gpu_reset_frames(gpu);
         av_buffer_unref(&gpu->av_device);
         pl_renderer_destroy(&gpu->renderer);
         pl_vulkan_destroy(&gpu->vk);
@@ -419,13 +422,19 @@ int flowa_gpu_render(
     }
 
     struct pl_frame input = {0};
-    if (!pl_map_avframe_ex(device, &input, pl_avframe_params(.frame = source))) {
+    if (
+        !pl_map_avframe_ex(
+            device,
+            &input,
+            pl_avframe_params(.frame = source, .tex = gpu->software_planes)
+        )
+    ) {
         pl_gpu_finish(device);
         av_frame_free(&converted);
         return video_error(
             error,
             error_size,
-            "Cannot import the hardware frame into the Vulkan renderer"
+            "Cannot map the video frame into the Vulkan renderer"
         );
     }
     pl_frame_copy_stream_props(&input, stream->video);
@@ -446,7 +455,7 @@ int flowa_gpu_render(
         return video_error(
             error,
             error_size,
-            "Cannot retain an in-flight hardware video frame"
+            "Cannot retain an in-flight video frame"
         );
     }
     flight->converted = converted;

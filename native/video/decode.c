@@ -1,4 +1,4 @@
-// FFmpeg hardware-context construction and individual codec operations
+// FFmpeg hardware and software codec construction and individual operations
 #include "internal.h"
 
 #include <errno.h>
@@ -85,28 +85,40 @@ struct flowa_decoder *flowa_decoder_create(
         AV_HWDEVICE_TYPE_VAAPI,
     };
 
-    if (backend < 0 || backend >= 3) {
-        video_error(error, size, "Invalid hardware decoder backend");
+    if (backend < 0 || backend > FLOWA_DECODER_SOFTWARE) {
+        video_error(error, size, "Invalid video decoder backend");
         return NULL;
     }
 
     struct flowa_decoder *decoder = calloc(1, sizeof(*decoder));
     if (!decoder) {
-        video_error(error, size, "Cannot allocate the hardware decoder");
+        video_error(error, size, "Cannot allocate the video decoder");
         return NULL;
     }
 
-    const AVCodec *codec = hardware_codec(
-        stream->video->codecpar->codec_id,
-        types[backend],
-        &decoder->format
-    );
-    AVBufferRef *device = codec ? hardware_device(gpu, types[backend]) : NULL;
-    if (!device) {
+    bool software = backend == FLOWA_DECODER_SOFTWARE;
+    decoder->format = AV_PIX_FMT_NONE;
+    const AVCodec *codec = NULL;
+    AVBufferRef *device = NULL;
+
+    if (software) {
+        codec = avcodec_find_decoder(stream->video->codecpar->codec_id);
+    } else {
+        codec = hardware_codec(
+            stream->video->codecpar->codec_id,
+            types[backend],
+            &decoder->format
+        );
+        if (codec)
+            device = hardware_device(gpu, types[backend]);
+    }
+
+    if (!codec || (!software && !device)) {
         video_error(
             error,
             size,
-            "The hardware backend does not support this codec or GPU"
+            software ? "No software decoder supports this codec"
+                     : "The hardware backend does not support this codec or GPU"
         );
         flowa_decoder_free(decoder);
         return NULL;
@@ -126,12 +138,14 @@ struct flowa_decoder *flowa_decoder_create(
         goto error;
 
     decoder->codec->pkt_timebase = stream->video->time_base;
-    decoder->codec->get_format = hardware_format;
+    decoder->codec->max_pixels = 64 * 1024 * 1024;
+    if (!software)
+        decoder->codec->get_format = hardware_format;
     decoder->codec->opaque = decoder;
 
-    // Rust serializes video submissions with libplacebo and wgpu on the UI thread
-    decoder->codec->thread_count = 1;
-    decoder->codec->thread_type = 0;
+    // Hardware submissions stay on the UI thread; software codecs run on a worker
+    decoder->codec->thread_count = software ? 2 : 1;
+    decoder->codec->thread_type = software ? FF_THREAD_FRAME | FF_THREAD_SLICE : 0;
     result = avcodec_open2(decoder->codec, codec, NULL);
     if (result < 0)
         goto error;
@@ -139,7 +153,7 @@ struct flowa_decoder *flowa_decoder_create(
     return decoder;
 
 error:
-    video_av_error(error, size, "Cannot initialize the hardware decoder", result);
+    video_av_error(error, size, "Cannot initialize the video decoder", result);
     flowa_decoder_free(decoder);
     return NULL;
 }
@@ -188,15 +202,18 @@ int flowa_decoder_receive(
             return 0;
         return result == AVERROR_EOF
                    ? 2
-                   : video_av_error(error, size, "Hardware decoding failed", result);
+                   : video_av_error(error, size, "Video decoding failed", result);
     }
 
-    if (!frame->hw_frames_ctx || frame->format != decoder->format) {
+    if (
+        decoder->format != AV_PIX_FMT_NONE &&
+        (!frame->hw_frames_ctx || frame->format != decoder->format)
+    ) {
         av_frame_free(&frame);
         return video_error(
             error,
             size,
-            "The decoder returned a software frame; refusing CPU video decoding"
+            "The hardware decoder returned an unexpected frame format"
         );
     }
 

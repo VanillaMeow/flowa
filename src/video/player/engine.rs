@@ -232,7 +232,7 @@ impl Engine {
         let current = self
             .current
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No hardware frame is available"))?;
+            .ok_or_else(|| anyhow::anyhow!("No video frame is available"))?;
         let shared = self
             .shared
             .as_ref()
@@ -258,7 +258,7 @@ impl Engine {
         if let Err(error) = &result {
             shared.fail(error);
         }
-        ensure!(result? > 0, "The hardware frame could not be rendered");
+        ensure!(result? > 0, "The video frame could not be rendered");
         Ok(())
     }
 
@@ -308,8 +308,13 @@ impl Engine {
                 let Some(decoder) = &mut self.decoder else {
                     return Ok(());
                 };
-                let Some(frame) = decoder.next(shared)? else {
-                    return Ok(());
+                let frame = match decoder.next(shared) {
+                    Ok(Some(frame)) => frame,
+                    Ok(None) => return Ok(()),
+                    Err(error) => {
+                        self.recover_decoder(shared, error)?;
+                        return Ok(());
+                    }
                 };
                 let position = media::timestamp(
                     frame.info.timestamp,
@@ -351,6 +356,23 @@ impl Engine {
                 }
             }
         }
+        Ok(())
+    }
+
+    fn recover_decoder(&mut self, shared: &Shared, error: anyhow::Error) -> Result<()> {
+        if !self.decoder.as_ref().is_some_and(Decoder::can_fallback) {
+            return Err(error);
+        }
+
+        let position = shared.lock().position(Instant::now())?;
+        self.seek(position)?;
+        log::warn!("Hardware video decoding failed: {error:#}. Retrying in software");
+
+        if let Some(decoder) = &mut self.decoder {
+            decoder.use_software()?;
+        }
+        self.pending = None;
+
         Ok(())
     }
 
@@ -420,5 +442,118 @@ impl Engine {
 impl Drop for Engine {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use anyhow::{Context, Result, ensure};
+    use eframe::egui_wgpu::{RenderState, RendererOptions, WgpuConfiguration};
+
+    use super::*;
+    use crate::video::{VideoState, gpu, player::Player};
+
+    #[test]
+    #[ignore = "Requires Vulkan, a hardware H.264 decoder, and ffmpeg with libx264"]
+    fn hardware_failure_recovers_with_software_frames() -> Result<()> {
+        let folder = tempfile::tempdir()?;
+        let clip = folder.path().join("recovery.mp4");
+        let generated = std::process::Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=320x180:rate=24",
+                "-t",
+                "3",
+                "-c:v",
+                "libx264",
+            ])
+            .arg(&clip)
+            .status()?;
+        ensure!(
+            generated.success(),
+            "Could not generate the recovery fixture"
+        );
+
+        let setup = gpu::setup()?;
+        let instance = pollster::block_on(setup.new_instance());
+        let config = WgpuConfiguration {
+            wgpu_setup: setup,
+            ..Default::default()
+        };
+        let graphics = pollster::block_on(RenderState::create(
+            &config,
+            &instance,
+            None,
+            RendererOptions::default(),
+        ))?;
+        let mut player = Player::new(&graphics, &egui::Context::default())?;
+        let mut state = VideoState {
+            active: true,
+            loading: true,
+            ..Default::default()
+        };
+        player.load(&clip)?;
+        pump(&mut player, &mut state, |state| state.position > 0.1)?;
+        ensure!(
+            state.decoder != "software",
+            "A hardware decoder is required for this test"
+        );
+        player.command(crate::video::Command::TogglePause)?;
+        let position = state.position;
+        let shared = player
+            .engine
+            .shared
+            .as_ref()
+            .map(Arc::clone)
+            .context("No media worker")?;
+        player
+            .engine
+            .recover_decoder(&shared, anyhow::anyhow!("Injected hardware failure"))?;
+        ensure!(
+            player.displayed.is_some(),
+            "Recovery blanked the displayed texture"
+        );
+
+        pump(&mut player, &mut state, |state| {
+            state.decoder == "software" && !state.seeking
+        })?;
+        ensure!(state.paused, "Recovery changed pause state");
+        ensure!(
+            (state.position - position).abs() < 0.15,
+            "Recovery lost the playback position"
+        );
+        ensure!(state.size == [320, 180], "Recovery lost frame dimensions");
+        player.stop();
+        Ok(())
+    }
+
+    fn pump(
+        player: &mut Player,
+        state: &mut VideoState,
+        ready: impl Fn(&VideoState) -> bool,
+    ) -> Result<()> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+
+        loop {
+            player.poll(state);
+            ensure!(state.error.is_none(), "Playback failed: {:?}", state.error);
+            if state.ready() {
+                player.render(state.size)?;
+                player.graphics.queue.submit([]);
+            }
+            if ready(state) && player.displayed.is_some() {
+                return Ok(());
+            }
+
+            ensure!(Instant::now() < deadline, "Decoder recovery timed out");
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 }

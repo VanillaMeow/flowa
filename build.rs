@@ -7,6 +7,7 @@ const MEDIA_LIBRARIES: &[(&str, &str)] = &[
     ("libavcodec", "63"),
     ("libavutil", "61"),
     ("libswresample", "7"),
+    ("libswscale", "10"),
     ("libplacebo", "7.360"),
     ("sdl3", "3.2"),
 ];
@@ -50,7 +51,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         libraries.push(library);
     }
 
-    for source in ["gpu.c", "decode.c", "media.c"] {
+    for source in ["gpu.c", "decode.c", "media.c", "thumbnail.c"] {
         let path = format!("native/video/{source}");
         println!("cargo:rerun-if-changed={path}");
         compiler.file(path);
