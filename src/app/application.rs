@@ -360,7 +360,7 @@ impl Flowa {
                 ui,
                 &self.video.state,
                 self.colors,
-                self.ui.fullscreen,
+                self.settings.values.compact_video_controls,
                 &mut commands,
             );
             self.handle_commands(std::mem::take(&mut commands), ctx);
@@ -387,6 +387,7 @@ impl Flowa {
             settings: &self.settings.values,
             colors: self.colors,
             can_navigate: self.browser.entries().len() > 1,
+            fullscreen: self.ui.fullscreen,
         };
         let response = self.ui.canvas.show(ui, content, &mut commands);
 

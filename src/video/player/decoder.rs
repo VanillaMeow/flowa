@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail, ensure};
+use strum::{IntoStaticStr, VariantArray};
 
 use super::{
     media::{Frame, HardwareCodec, Packet, Receive, Sent, Stream},
@@ -10,23 +11,13 @@ use super::{
 };
 use crate::video::{gpu::NativeGpu, native};
 
-#[derive(Clone, Copy)]
+// Variant order matches the native hardware decoder candidate indices
+#[derive(Clone, Copy, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "lowercase")]
 enum Backend {
     Nvdec,
     Vulkan,
     Vaapi,
-}
-
-impl Backend {
-    const ALL: [Self; 3] = [Self::Nvdec, Self::Vulkan, Self::Vaapi];
-
-    fn name(self) -> &'static str {
-        match self {
-            Self::Nvdec => "nvdec",
-            Self::Vulkan => "vulkan",
-            Self::Vaapi => "vaapi",
-        }
-    }
 }
 
 enum Input {
@@ -95,7 +86,7 @@ impl Decoder {
             match received {
                 Ok(Receive::Item(frame)) => {
                     if self.probing {
-                        self.selected = self.backend.map(Backend::name);
+                        self.selected = self.backend.map(Into::into);
                         self.probing = false;
                         self.clear_probe();
                     }
@@ -201,7 +192,7 @@ impl Decoder {
         self.codec = None;
         self.unsent = None;
 
-        while let Some(&backend) = Backend::ALL.get(self.candidate) {
+        while let Some(&backend) = Backend::VARIANTS.get(self.candidate) {
             let index = self.candidate;
             self.candidate += 1;
             match HardwareCodec::new(&self.gpu, &self.stream, index as i32) {
@@ -213,7 +204,10 @@ impl Decoder {
                     self.replay = 0;
                     return Ok(());
                 }
-                Err(error) => log::debug!("{} unavailable: {error:#}", backend.name()),
+                Err(error) => {
+                    let name: &'static str = backend.into();
+                    log::debug!("{name} unavailable: {error:#}");
+                }
             }
         }
 
@@ -227,5 +221,19 @@ impl Decoder {
         self.probe.clear();
         self.probe_bytes = 0;
         self.replay = 0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Backend;
+    use strum::VariantArray;
+
+    #[test]
+    fn backend_order_matches_the_native_decoder_indices() {
+        let names: Vec<&'static str> =
+            Backend::VARIANTS.iter().copied().map(Into::into).collect();
+
+        assert_eq!(names, ["nvdec", "vulkan", "vaapi"]);
     }
 }

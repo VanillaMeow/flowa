@@ -31,6 +31,7 @@ pub(crate) struct CanvasContent<'a> {
     pub settings: &'a Settings,
     pub colors: Colors,
     pub can_navigate: bool,
+    pub fullscreen: bool,
 }
 
 pub(crate) struct ImageCanvas {
@@ -157,7 +158,7 @@ impl ImageCanvas {
         let size = vec2(video.state.size[0] as f32, video.state.size[1] as f32);
         self.displayed_size = Some(size);
         self.handle_pointer(response, ui.ctx());
-        self.fit_image(size, content.settings, ui.ctx().pixels_per_point());
+        self.fit_image(size, content, ui.ctx().pixels_per_point());
 
         let painter = ui.painter().with_clip_rect(self.rect);
         super::rendering::image_renderer::paint_source(
@@ -182,7 +183,7 @@ impl ImageCanvas {
         self.displayed_size = Some(size);
 
         self.handle_pointer(response, ctx);
-        self.fit_image(size, content.settings, ctx.pixels_per_point());
+        self.fit_image(size, content, ctx.pixels_per_point());
 
         let painter = ui.painter().with_clip_rect(self.rect);
         let frame = RenderFrame {
@@ -255,14 +256,21 @@ impl ImageCanvas {
         }
     }
 
-    fn fit_image(&mut self, size: Vec2, settings: &Settings, pixels_per_point: f32) {
+    fn fit_image(
+        &mut self,
+        size: Vec2,
+        content: &CanvasContent<'_>,
+        pixels_per_point: f32,
+    ) {
         if !self.view.fit {
             return;
         }
 
-        self.view.zoom = self
-            .view
-            .fit_zoom(self.rect.size(), size, settings.fit_small);
+        let padding = if content.fullscreen { 0. } else { 24. };
+        let settings = content.settings;
+        self.view.zoom =
+            self.view
+                .fit_zoom(self.rect.size(), size, settings.fit_small, padding);
 
         // Small images should not be enlarged on high-DPI displays
         if !settings.fit_small {

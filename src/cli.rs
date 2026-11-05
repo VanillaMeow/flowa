@@ -54,12 +54,10 @@ impl Cli {
 }
 
 fn parse_theme(value: &str) -> Result<Theme, String> {
-    let normalized = value.to_ascii_lowercase().replace(' ', "");
-
-    Theme::ALL
-        .into_iter()
-        .find(|theme| theme.name().to_ascii_lowercase().replace(' ', "") == normalized)
-        .ok_or_else(|| format!("Unknown theme: {value}"))
+    value
+        .replace(' ', "")
+        .parse()
+        .map_err(|_| format!("Unknown theme: {value}"))
 }
 
 fn parse_zoom(value: &str) -> Result<f32, String> {
@@ -70,4 +68,28 @@ fn parse_zoom(value: &str) -> Result<f32, String> {
     }
 
     Ok(percent)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_theme;
+    use crate::settings::Theme;
+
+    #[test]
+    fn theme_names_keep_their_case_and_spacing_rules() {
+        for (input, expected) in [
+            ("Sweet", Theme::Sweet),
+            ("sWeEt", Theme::Sweet),
+            ("OLED", Theme::Oled),
+            ("high contrast", Theme::HighContrast),
+            ("HighContrast", Theme::HighContrast),
+            ("System / Qt", Theme::System),
+            ("SYSTEM/QT", Theme::System),
+        ] {
+            assert_eq!(parse_theme(input), Ok(expected));
+        }
+
+        assert_eq!(parse_theme("missing"), Err("Unknown theme: missing".into()));
+        assert!(parse_theme("System").is_err());
+    }
 }

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use crate::settings::SortOrder;
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Command {
     OpenFile,
     OpenFolder,
@@ -38,7 +38,6 @@ pub(crate) enum Command {
     ToggleFullscreen,
     ToggleFilmstrip,
     ToggleInspector,
-    OpenPreferences,
     TogglePreferences,
     Escape,
     Quit,

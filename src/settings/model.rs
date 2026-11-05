@@ -3,59 +3,54 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use strum::{AsRefStr, EnumString, VariantArray};
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    AsRefStr,
+    EnumString,
+    VariantArray,
+)]
+#[strum(ascii_case_insensitive)]
 pub enum Theme {
     #[default]
+    #[strum(to_string = "System / Qt", serialize = "System/Qt")]
     System,
     Charcoal,
     Midnight,
+    Sweet,
     Nord,
     Catppuccin,
     Dracula,
     Forest,
+    #[strum(to_string = "OLED")]
     Oled,
     Paper,
     Sand,
     Latte,
+    #[strum(to_string = "High contrast", serialize = "HighContrast")]
     HighContrast,
 }
 
-impl Theme {
-    pub const ALL: [Self; 12] = [
-        Self::System,
-        Self::Charcoal,
-        Self::Midnight,
-        Self::Nord,
-        Self::Catppuccin,
-        Self::Dracula,
-        Self::Forest,
-        Self::Oled,
-        Self::Paper,
-        Self::Sand,
-        Self::Latte,
-        Self::HighContrast,
-    ];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::System => "System / Qt",
-            Self::Charcoal => "Charcoal",
-            Self::Midnight => "Midnight",
-            Self::Nord => "Nord",
-            Self::Catppuccin => "Catppuccin",
-            Self::Dracula => "Dracula",
-            Self::Forest => "Forest",
-            Self::Oled => "OLED",
-            Self::Paper => "Paper",
-            Self::Sand => "Sand",
-            Self::Latte => "Latte",
-            Self::HighContrast => "High contrast",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    AsRefStr,
+    VariantArray,
+)]
 pub enum Accent {
     #[default]
     Theme,
@@ -72,80 +67,65 @@ pub enum Accent {
     Coral,
 }
 
-impl Accent {
-    pub const ALL: [Self; 12] = [
-        Self::Theme,
-        Self::Violet,
-        Self::Iris,
-        Self::Blue,
-        Self::Sky,
-        Self::Teal,
-        Self::Mint,
-        Self::Green,
-        Self::Amber,
-        Self::Peach,
-        Self::Rose,
-        Self::Coral,
-    ];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Theme => "Theme",
-            Self::Violet => "Violet",
-            Self::Iris => "Iris",
-            Self::Blue => "Blue",
-            Self::Sky => "Sky",
-            Self::Teal => "Teal",
-            Self::Mint => "Mint",
-            Self::Green => "Green",
-            Self::Amber => "Amber",
-            Self::Peach => "Peach",
-            Self::Rose => "Rose",
-            Self::Coral => "Coral",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    AsRefStr,
+    VariantArray,
+)]
 pub enum Canvas {
     #[default]
     Theme,
+    #[strum(to_string = "Neutral dark")]
     Dark,
     Black,
     White,
     Custom,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    AsRefStr,
+    VariantArray,
+)]
 pub enum SortOrder {
     #[default]
     Name,
+    #[strum(to_string = "Date modified")]
     Modified,
+    #[strum(to_string = "File size")]
     Size,
 }
 
-impl SortOrder {
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Name => "Name",
-            Self::Modified => "Date modified",
-            Self::Size => "File size",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, AsRefStr,
+)]
 pub enum RendererPreference {
     #[default]
     Auto,
     Vulkan,
+    #[strum(to_string = "OpenGL")]
     OpenGl,
     Metal,
+    #[strum(to_string = "DirectX 12")]
     DirectX12,
 }
 
 impl RendererPreference {
-    pub const ALL: &[Self] = &[
+    pub const SUPPORTED: &[Self] = &[
         Self::Auto,
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         Self::Vulkan,
@@ -156,16 +136,6 @@ impl RendererPreference {
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         Self::OpenGl,
     ];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Auto => "Auto",
-            Self::Vulkan => "Vulkan",
-            Self::OpenGl => "OpenGL",
-            Self::Metal => "Metal",
-            Self::DirectX12 => "DirectX 12",
-        }
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -181,6 +151,7 @@ pub struct Settings {
     pub checker_contrast: f32,
 
     pub filmstrip: bool,
+    pub compact_video_controls: bool,
     pub info: bool,
     pub ui_scale: f32,
     pub fit_small: bool,
@@ -210,6 +181,7 @@ impl Default for Settings {
             checker_size: 12.0,
             checker_contrast: 0.09,
             filmstrip: false,
+            compact_video_controls: true,
             info: false,
             ui_scale: 1.0,
             fit_small: false,
@@ -240,7 +212,7 @@ impl Settings {
         self.window_size[1] = self.window_size[1].clamp(400.0, 4320.0);
         self.recent.truncate(12);
 
-        if !RendererPreference::ALL.contains(&self.renderer) {
+        if !RendererPreference::SUPPORTED.contains(&self.renderer) {
             self.renderer = RendererPreference::Auto;
         }
     }

@@ -1,4 +1,4 @@
-//! Responsive video controls with a full-width timeline above the filmstrip
+//! Compact or two-row video controls above the filmstrip
 
 use std::time::{Duration, Instant};
 
@@ -7,11 +7,14 @@ use egui::{Align, Id, Layout, Response, RichText, style::HandleShape, vec2};
 use crate::{app::Command, utils::format::media_time, video::VideoState};
 
 use super::{
+    actions,
     icons::{self, Icon},
     theme::Colors,
 };
 
 const CONTROL_SIZE: f32 = 34.;
+const TIMELINE_HEIGHT: f32 = 22.;
+const ROW_SPACING: f32 = 4.;
 const INLINE_VOLUME_WIDTH: f32 = 104.;
 const INLINE_VOLUME_BREAKPOINT: f32 = 420.;
 const SEEK_ACKNOWLEDGEMENT_TIMEOUT: Duration = Duration::from_secs(1);
@@ -55,7 +58,7 @@ impl VideoControls {
         root: &mut egui::Ui,
         state: &VideoState,
         colors: Colors,
-        fullscreen: bool,
+        compact: bool,
         commands: &mut Vec<Command>,
     ) {
         self.acknowledge_seek(state.position);
@@ -63,12 +66,33 @@ impl VideoControls {
         let frame = egui::Frame::new()
             .fill(colors.panel)
             .inner_margin(egui::Margin::symmetric(18, 10));
+        let transport_height = root.spacing().interact_size.y.max(CONTROL_SIZE);
+        let timeline_height = root
+            .text_style_height(&egui::TextStyle::Body)
+            .max(TIMELINE_HEIGHT);
+        let content_height = transport_height
+            + if compact {
+                0.
+            } else {
+                timeline_height + ROW_SPACING
+            };
+        let separator_height = root
+            .visuals()
+            .widgets
+            .noninteractive
+            .bg_stroke
+            .width
+            .round();
 
+        // Bottom panels need their final height before laying out the first frame
         egui::Panel::bottom("video-controls")
             .resizable(false)
+            .exact_size(
+                content_height + frame.total_margin().sum().y + separator_height,
+            )
             .frame(frame)
             .show(root, |ui| {
-                self.contents(ui, state, colors, fullscreen, commands)
+                self.contents(ui, state, colors, compact, commands)
             });
     }
 
@@ -77,13 +101,19 @@ impl VideoControls {
         ui: &mut egui::Ui,
         state: &VideoState,
         colors: Colors,
-        fullscreen: bool,
+        compact: bool,
         commands: &mut Vec<Command>,
     ) {
-        ui.spacing_mut().item_spacing = vec2(12., 4.);
+        ui.spacing_mut().item_spacing = vec2(12., ROW_SPACING);
         ui.spacing_mut().slider_rail_height = 3.;
+
+        if compact {
+            ui.horizontal(|ui| self.compact_row(ui, state, colors, commands));
+            return;
+        }
+
         ui.horizontal(|ui| self.timeline(ui, state, colors, commands));
-        ui.horizontal(|ui| self.transport(ui, state, colors, fullscreen, commands));
+        ui.horizontal(|ui| self.transport(ui, state, commands));
     }
 
     fn timeline(
@@ -93,7 +123,7 @@ impl VideoControls {
         colors: Colors,
         commands: &mut Vec<Command>,
     ) {
-        ui.spacing_mut().interact_size.y = 22.;
+        ui.spacing_mut().interact_size.y = TIMELINE_HEIGHT;
         let position = self
             .seek
             .as_ref()
@@ -160,22 +190,43 @@ impl VideoControls {
         response.on_hover_text(format!("Seek · {}", media_time(position)));
     }
 
-    fn transport(
+    fn compact_row(
         &mut self,
         ui: &mut egui::Ui,
         state: &VideoState,
         colors: Colors,
-        fullscreen: bool,
         commands: &mut Vec<Command>,
     ) {
-        let compact = ui.available_width() < INLINE_VOLUME_BREAKPOINT;
-
         ui.add_enabled_ui(state.ready(), |ui| play_button(ui, state.paused, commands));
-        playback_status(ui, state, colors);
+
+        let volume_menu = ui.available_width() < 640.;
+        let volume_width = if volume_menu {
+            CONTROL_SIZE
+        } else {
+            CONTROL_SIZE + INLINE_VOLUME_WIDTH + ui.spacing().item_spacing.x
+        };
+        let timeline_width =
+            ui.available_width() - volume_width - ui.spacing().item_spacing.x;
+
+        ui.allocate_ui_with_layout(
+            vec2(timeline_width, CONTROL_SIZE),
+            Layout::left_to_right(Align::Center),
+            |ui| self.timeline(ui, state, colors, commands),
+        );
+        self.volume_controls(ui, state, volume_menu, commands);
+    }
+
+    fn transport(
+        &mut self,
+        ui: &mut egui::Ui,
+        state: &VideoState,
+        commands: &mut Vec<Command>,
+    ) {
+        let volume_menu = ui.available_width() < INLINE_VOLUME_BREAKPOINT;
+        ui.add_enabled_ui(state.ready(), |ui| play_button(ui, state.paused, commands));
 
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            fullscreen_button(ui, fullscreen, commands);
-            self.volume_controls(ui, state, compact, commands);
+            self.volume_controls(ui, state, volume_menu, commands);
         });
     }
 
@@ -266,37 +317,12 @@ impl VideoControls {
 
 fn play_button(ui: &mut egui::Ui, paused: bool, commands: &mut Vec<Command>) {
     let icon = if paused { Icon::Play } else { Icon::Pause };
-    let label = if paused {
-        "Play · Space"
-    } else {
-        "Pause · Space"
-    };
+    let verb = if paused { "Play" } else { "Pause" };
+    let label = format!("{verb} · {}", actions::PLAY.shortcut_text(ui.ctx()));
 
-    if icons::button(ui, icon, label, false).clicked() {
+    if icons::button(ui, icon, &label, false).clicked() {
         commands.push(Command::TogglePlay);
     }
-}
-
-fn fullscreen_button(ui: &mut egui::Ui, fullscreen: bool, commands: &mut Vec<Command>) {
-    if icons::button(ui, Icon::Fullscreen, "Fullscreen · F11", fullscreen).clicked() {
-        commands.push(Command::ToggleFullscreen);
-    }
-}
-
-fn playback_status(ui: &mut egui::Ui, state: &VideoState, colors: Colors) {
-    let label = if state.error.is_some() {
-        "Playback unavailable"
-    } else if state.loading {
-        "Opening video…"
-    } else if state.seeking {
-        "Seeking…"
-    } else if state.paused {
-        "Paused"
-    } else {
-        "Playing"
-    };
-
-    ui.label(RichText::new(label).small().color(colors.muted));
 }
 
 fn volume_slider(
@@ -401,6 +427,16 @@ mod tests {
         width: f32,
         events: Vec<Event>,
     ) -> (Vec<Command>, egui::Response) {
+        frame_with_layout(ctx, controls, width, false, events)
+    }
+
+    fn frame_with_layout(
+        ctx: &egui::Context,
+        controls: &mut VideoControls,
+        width: f32,
+        compact: bool,
+        events: Vec<Event>,
+    ) -> (Vec<Command>, egui::Response) {
         let input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(width, 600.))),
             events,
@@ -429,7 +465,7 @@ mod tests {
             );
             strip_top = strip.response.rect.top();
 
-            controls.show(root, &state, colors, false, &mut commands);
+            controls.show(root, &state, colors, compact, &mut commands);
             controls_top = root.available_rect_before_wrap().bottom();
         });
         output.textures_delta.clear();
@@ -446,6 +482,13 @@ mod tests {
             timeline.rect.bottom() < strip_top,
             "Transport must sit above the filmstrip"
         );
+
+        let height = strip_top - controls_top;
+        if compact {
+            assert!(height <= 60., "Compact controls took {height} points");
+        } else {
+            assert!(height > 70., "Expanded controls took {height} points");
+        }
 
         for shape in output.shapes {
             let bounds = shape.shape.visual_bounding_rect();
@@ -474,6 +517,23 @@ mod tests {
             assert!(timeline.rect.width() > previous_width);
             assert!(timeline.rect.width() > width - 200.);
             previous_width = timeline.rect.width();
+        }
+    }
+
+    #[test]
+    fn compact_controls_fit_on_one_row_at_every_supported_width() {
+        let ctx = egui::Context::default();
+        let mut controls = VideoControls::default();
+
+        for width in [320., 400., 640., 800., 1200., 1920.] {
+            frame_with_layout(&ctx, &mut controls, width, true, Vec::new());
+            let (_, timeline) =
+                frame_with_layout(&ctx, &mut controls, width, true, Vec::new());
+            assert!(
+                timeline.rect.width() > 48.,
+                "Timeline at {width}: {:?}",
+                timeline.rect
+            );
         }
     }
 

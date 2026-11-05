@@ -43,6 +43,55 @@ fn mix(a: Color32, b: Color32, amount: f32) -> Color32 {
     egui::lerp(egui::Rgba::from(a)..=egui::Rgba::from(b), amount).into()
 }
 
+/// Base colors and overrides shared by every built-in theme
+struct Palette {
+    canvas: [u8; 3],
+    panel: [u8; 3],
+    text: [u8; 3],
+    accent: [u8; 3],
+    raised: Option<[u8; 3]>,
+    muted_mix: f32,
+    border_mix: f32,
+}
+
+impl Palette {
+    const fn new(
+        canvas: [u8; 3],
+        panel: [u8; 3],
+        text: [u8; 3],
+        accent: [u8; 3],
+    ) -> Self {
+        Self {
+            canvas,
+            panel,
+            text,
+            accent,
+            raised: None,
+            muted_mix: 0.63,
+            border_mix: 0.13,
+        }
+    }
+
+    fn resolve(self, accent: Accent) -> Colors {
+        let panel = rgb(self.panel);
+        let text = rgb(self.text);
+
+        Colors {
+            canvas: rgb(self.canvas),
+            panel,
+            text,
+            accent: accent_color(accent, rgb(self.accent)),
+            raised: self
+                .raised
+                .map(rgb)
+                .unwrap_or_else(|| mix(panel, text, 0.065)),
+            muted: mix(panel, text, self.muted_mix),
+            border: mix(panel, text, self.border_mix),
+            dark: panel.r() < 128,
+        }
+    }
+}
+
 pub fn colors(theme: Theme, accent: Accent, system_dark: bool) -> Colors {
     if theme == Theme::System {
         if let Some(mut system_colors) = kde_colors() {
@@ -61,66 +110,59 @@ pub fn colors(theme: Theme, accent: Accent, system_dark: bool) -> Colors {
         );
     }
 
-    let (canvas, panel, text, highlight) = match theme {
+    let palette = match theme {
         Theme::Charcoal | Theme::System => {
-            ([24, 25, 28], [31, 32, 36], [232, 232, 235], [163, 190, 164])
+            Palette::new([24, 25, 28], [31, 32, 36], [232, 232, 235], [163, 190, 164])
         }
         Theme::Midnight => {
-            ([15, 20, 31], [22, 28, 42], [224, 231, 244], [136, 166, 243])
+            Palette::new([15, 20, 31], [22, 28, 42], [224, 231, 244], [136, 166, 243])
         }
-        Theme::Nord => ([36, 42, 53], [46, 52, 64], [236, 239, 244], [136, 192, 208]),
+        Theme::Sweet => Palette {
+            raised: Some([30, 34, 51]),
+            muted_mix: 0.65,
+            border_mix: 0.16,
+            ..Palette::new([22, 25, 37], [24, 27, 40], [211, 218, 227], [197, 14, 210])
+        },
+        Theme::Nord => {
+            Palette::new([36, 42, 53], [46, 52, 64], [236, 239, 244], [136, 192, 208])
+        }
         Theme::Catppuccin => {
-            ([24, 24, 37], [30, 30, 46], [205, 214, 244], [203, 166, 247])
+            Palette::new([24, 24, 37], [30, 30, 46], [205, 214, 244], [203, 166, 247])
         }
         Theme::Dracula => {
-            ([30, 31, 42], [40, 42, 54], [248, 248, 242], [189, 147, 249])
+            Palette::new([30, 31, 42], [40, 42, 54], [248, 248, 242], [189, 147, 249])
         }
-        Theme::Forest => ([20, 29, 27], [27, 38, 34], [224, 235, 222], [163, 190, 140]),
-        Theme::Oled => ([0, 0, 0], [12, 12, 15], [236, 236, 240], [185, 174, 235]),
-        Theme::Paper => (
+        Theme::Forest => {
+            Palette::new([20, 29, 27], [27, 38, 34], [224, 235, 222], [163, 190, 140])
+        }
+        Theme::Oled => {
+            Palette::new([0, 0, 0], [12, 12, 15], [236, 236, 240], [185, 174, 235])
+        }
+        Theme::Paper => Palette::new(
             [242, 243, 245],
             [252, 252, 253],
             [36, 40, 48],
             [88, 103, 173],
         ),
-        Theme::Sand => (
+        Theme::Sand => Palette::new(
             [235, 231, 223],
             [248, 245, 238],
             [54, 49, 45],
             [148, 99, 75],
         ),
-        Theme::Latte => (
+        Theme::Latte => Palette::new(
             [230, 233, 239],
             [239, 241, 245],
             [76, 79, 105],
             [136, 57, 239],
         ),
-        Theme::HighContrast => {
-            ([0, 0, 0], [10, 10, 10], [255, 255, 255], [255, 221, 82])
-        }
+        Theme::HighContrast => Palette {
+            border_mix: 0.65,
+            ..Palette::new([0, 0, 0], [10, 10, 10], [255, 255, 255], [255, 221, 82])
+        },
     };
 
-    let panel = rgb(panel);
-    let text = rgb(text);
-
-    Colors {
-        canvas: rgb(canvas),
-        panel,
-        text,
-        accent: accent_color(accent, rgb(highlight)),
-        raised: mix(panel, text, 0.065),
-        muted: mix(panel, text, 0.63),
-        border: mix(
-            panel,
-            text,
-            if theme == Theme::HighContrast {
-                0.65
-            } else {
-                0.13
-            },
-        ),
-        dark: panel.r() < 128,
-    }
+    palette.resolve(accent)
 }
 
 pub fn apply(ctx: &egui::Context, colors: Colors) {

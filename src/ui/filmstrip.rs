@@ -132,6 +132,8 @@ impl Filmstrip {
         colors: Colors,
         commands: &mut Vec<Command>,
     ) {
+        ui.style_mut().always_scroll_the_only_direction = true;
+
         egui::ScrollArea::horizontal()
             .id_salt("thumbnails")
             .auto_shrink([false, false])

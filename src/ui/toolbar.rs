@@ -1,6 +1,7 @@
 //! Viewer menus, toolbar controls, and the status bar
 
 use egui::RichText;
+use strum::VariantArray;
 
 use crate::{
     app::Command,
@@ -11,6 +12,7 @@ use crate::{
 };
 
 use super::{
+    actions,
     canvas::ImageCanvas,
     icons::{self, Icon},
     theme::Colors,
@@ -64,7 +66,7 @@ fn toolbar_contents(
     ui.add_space(4.);
     ui.menu_button("File", |ui| file_menu(ui, state, commands));
 
-    if icons::button(ui, Icon::Open, "Open file · Ctrl+O", false).clicked() {
+    if actions::OPEN_FILE.button(ui, Icon::Open, false).clicked() {
         commands.push(Command::OpenFile);
     }
 
@@ -105,45 +107,27 @@ fn compact_view_menu(
     ui.add_enabled_ui(ready, |ui| compact_zoom_menu(ui, commands));
     ui.separator();
 
-    for (label, selected, command) in [
-        (
-            "Thumbnail strip",
-            state.settings.filmstrip,
-            Command::ToggleFilmstrip,
-        ),
-        (
-            "File details",
-            state.settings.info,
-            Command::ToggleInspector,
-        ),
-        ("Fullscreen", state.fullscreen, Command::ToggleFullscreen),
+    for (action, selected) in [
+        (&actions::FILMSTRIP, state.settings.filmstrip),
+        (&actions::INSPECTOR, state.settings.info),
+        (&actions::FULLSCREEN, state.fullscreen),
     ] {
-        if ui.selectable_label(selected, label).clicked() {
-            commands.push(command);
-            ui.close();
-        }
+        action.menu_label(ui, action.label, true, selected, commands);
     }
 
     ui.separator();
-
-    if ui.button("Preferences…").clicked() {
-        commands.push(Command::OpenPreferences);
-        ui.close();
-    }
+    actions::PREFERENCES.menu(ui, true, commands);
 }
 
 fn compact_zoom_menu(ui: &mut egui::Ui, commands: &mut Vec<Command>) {
-    for (label, command) in [
-        ("Fit to window", Command::Fit),
-        ("Actual pixels", Command::ActualPixels),
-        ("Zoom in", Command::Zoom(1.25)),
-        ("Zoom out", Command::Zoom(0.8)),
-        ("Rotate clockwise", Command::RotateClockwise),
+    for action in [
+        &actions::FIT,
+        &actions::ACTUAL_PIXELS,
+        &actions::ZOOM_IN,
+        &actions::ZOOM_OUT,
+        &actions::ROTATE,
     ] {
-        if ui.button(label).clicked() {
-            commands.push(command);
-            ui.close();
-        }
+        action.menu(ui, true, commands);
     }
 }
 
@@ -152,11 +136,11 @@ fn navigation_buttons(
     state: &ToolbarState<'_>,
     commands: &mut Vec<Command>,
 ) {
-    for (icon, label, delta) in [
-        (Icon::Left, "Previous file · Left arrow", -1),
-        (Icon::Right, "Next file · Right arrow", 1),
+    for (icon, action, delta) in [
+        (Icon::Left, &actions::PREVIOUS, -1),
+        (Icon::Right, &actions::NEXT, 1),
     ] {
-        let response = icons::button(ui, icon, label, false);
+        let response = action.button(ui, icon, false);
 
         if response.clicked() {
             commands.push(Command::Navigate(delta));
@@ -183,87 +167,40 @@ fn image_title(ui: &mut egui::Ui, state: &ToolbarState<'_>) {
 }
 
 fn file_menu(ui: &mut egui::Ui, state: &ToolbarState<'_>, commands: &mut Vec<Command>) {
-    if ui.button("Open file…                    Ctrl+O").clicked() {
-        ui.close();
-        commands.push(Command::OpenFile);
-    }
+    actions::OPEN_FILE.menu(ui, true, commands);
+    actions::OPEN_FOLDER.menu(ui, true, commands);
+    actions::REFRESH.menu(ui, state.browser.folder().is_some(), commands);
 
-    if ui.button("Open folder…             Ctrl+Shift+O").clicked() {
-        ui.close();
-        commands.push(Command::OpenFolder);
-    }
+    ui.separator();
+    file_actions(ui, state, commands);
 
+    let can_reveal = state.browser.current().is_some() && state.busy.is_none();
     if ui
-        .add_enabled(
-            state.browser.folder().is_some(),
-            egui::Button::new("Refresh folder                              F5"),
-        )
+        .add_enabled(can_reveal, egui::Button::new("Show folder in file manager"))
         .clicked()
+        && let Some(entry) = state.browser.current()
     {
-        commands.push(Command::Refresh);
+        commands.push(Command::Reveal(entry.path.clone()));
         ui.close();
     }
 
     ui.separator();
-    ui.add_enabled_ui(
-        state.image.decoded.is_some() && state.busy.is_none(),
-        |ui| {
-            if ui
-                .button("Copy image                         Ctrl+C")
-                .clicked()
-            {
-                ui.close();
-                commands.push(Command::CopyImage);
-            }
-            if ui
-                .button("Export a copy…             Ctrl+Shift+S")
-                .clicked()
-            {
-                ui.close();
-                commands.push(Command::Export);
-            }
-        },
-    );
-    ui.add_enabled_ui(
-        state.browser.current().is_some() && state.busy.is_none(),
-        |ui| {
-            if ui
-                .button("Rename…                                F2")
-                .clicked()
-            {
-                ui.close();
-                commands.push(Command::RequestRename);
-            }
-            if ui
-                .button("Move to trash…                     Delete")
-                .clicked()
-            {
-                ui.close();
-                commands.push(Command::RequestTrash);
-            }
-            if ui.button("Show folder in file manager").clicked()
-                && let Some(entry) = state.browser.current()
-            {
-                commands.push(Command::Reveal(entry.path.clone()));
-                ui.close();
-            }
-        },
-    );
-    ui.separator();
-    if ui
-        .button("Preferences…                     Ctrl+,")
-        .clicked()
-    {
-        commands.push(Command::OpenPreferences);
-        ui.close();
-    }
+    actions::PREFERENCES.menu(ui, true, commands);
+    actions::QUIT.menu(ui, true, commands);
+}
 
-    if ui
-        .button("Quit                                  Ctrl+Q")
-        .clicked()
-    {
-        commands.push(Command::Quit);
-    }
+fn file_actions(
+    ui: &mut egui::Ui,
+    state: &ToolbarState<'_>,
+    commands: &mut Vec<Command>,
+) {
+    let image_ready = state.image.decoded.is_some() && state.busy.is_none();
+    let file_ready = state.browser.current().is_some() && state.busy.is_none();
+
+    actions::COPY_IMAGE.menu(ui, image_ready, commands);
+    actions::EXPORT.menu(ui, image_ready, commands);
+    actions::RENAME.menu(ui, file_ready, commands);
+    actions::TRASH.menu(ui, file_ready, commands);
 }
 
 fn window_buttons(
@@ -271,37 +208,23 @@ fn window_buttons(
     state: &ToolbarState<'_>,
     commands: &mut Vec<Command>,
 ) {
-    if icons::button(ui, Icon::Fullscreen, "Fullscreen · F11", state.fullscreen)
-        .clicked()
-    {
-        commands.push(Command::ToggleFullscreen);
-    }
-
-    if icons::button(
-        ui,
-        Icon::Settings,
-        "Preferences · Ctrl+,",
-        state.preferences_open,
-    )
-    .clicked()
-    {
-        commands.push(Command::TogglePreferences);
-    }
-
-    if icons::button(ui, Icon::Info, "File details · I", state.settings.info).clicked()
-    {
-        commands.push(Command::ToggleInspector);
-    }
-
-    if icons::button(
-        ui,
-        Icon::Filmstrip,
-        "Thumbnail strip · T",
-        state.settings.filmstrip,
-    )
-    .clicked()
-    {
-        commands.push(Command::ToggleFilmstrip);
+    for (action, icon, selected) in [
+        (&actions::FULLSCREEN, Icon::Fullscreen, state.fullscreen),
+        (
+            &actions::PREFERENCES,
+            Icon::Settings,
+            state.preferences_open,
+        ),
+        (&actions::INSPECTOR, Icon::Info, state.settings.info),
+        (
+            &actions::FILMSTRIP,
+            Icon::Filmstrip,
+            state.settings.filmstrip,
+        ),
+    ] {
+        if action.button(ui, icon, selected).clicked() {
+            commands.push(action.command.clone());
+        }
     }
 }
 
@@ -319,48 +242,40 @@ fn view_buttons(
         } else {
             state.slideshow
         };
-        if icons::button(
-            ui,
-            if playing { Icon::Pause } else { Icon::Play },
-            if playing {
-                "Pause · Space"
-            } else {
-                "Play · Space"
-            },
-            false,
-        )
-        .clicked()
+        if actions::PLAY
+            .button(ui, if playing { Icon::Pause } else { Icon::Play }, false)
+            .clicked()
         {
             commands.push(Command::TogglePlay);
         }
     }
 
-    if !narrow
-        && icons::button(ui, Icon::Rotate, "Rotate clockwise · R", false).clicked()
-    {
+    if !narrow && actions::ROTATE.button(ui, Icon::Rotate, false).clicked() {
         commands.push(Command::RotateClockwise);
     }
 
-    if icons::button(ui, Icon::Fit, "Fit to window · 0", state.canvas.view.fit)
+    if actions::FIT
+        .button(ui, Icon::Fit, state.canvas.view.fit)
         .clicked()
     {
         commands.push(Command::Fit);
     }
 
     if !narrow
-        && icons::button(
-            ui,
-            Icon::Actual,
-            "Actual pixels · 1",
-            !state.canvas.view.fit
-                && (state.canvas.view.zoom * ctx.pixels_per_point() - 1.).abs() < 0.001,
-        )
-        .clicked()
+        && actions::ACTUAL_PIXELS
+            .button(
+                ui,
+                Icon::Actual,
+                !state.canvas.view.fit
+                    && (state.canvas.view.zoom * ctx.pixels_per_point() - 1.).abs()
+                        < 0.001,
+            )
+            .clicked()
     {
         commands.push(Command::ActualPixels);
     }
 
-    if icons::button(ui, Icon::Plus, "Zoom in · +", false).clicked() {
+    if actions::ZOOM_IN.button(ui, Icon::Plus, false).clicked() {
         commands.push(Command::Zoom(1.25));
     }
     let percentage = format!(
@@ -378,7 +293,7 @@ fn view_buttons(
         commands.push(Command::ActualPixels);
     }
 
-    if icons::button(ui, Icon::Minus, "Zoom out · -", false).clicked() {
+    if actions::ZOOM_OUT.button(ui, Icon::Minus, false).clicked() {
         commands.push(Command::Zoom(0.8));
     }
 }
@@ -463,93 +378,39 @@ pub(crate) fn context_menu(
     state: &ToolbarState<'_>,
     commands: &mut Vec<Command>,
 ) {
-    if ui.button("Fit to window                     0").clicked() {
-        commands.push(Command::Fit);
-        ui.close();
-    }
-
-    if ui.button("Actual pixels                    1").clicked() {
-        commands.push(Command::ActualPixels);
-        ui.close();
-    }
-
-    if ui.button("Rotate clockwise              R").clicked() {
-        commands.push(Command::RotateClockwise);
-        ui.close();
-    }
-
-    if ui.button("Flip horizontally               H").clicked() {
-        commands.push(Command::FlipHorizontal);
-        ui.close();
-    }
-
-    if ui.button("Flip vertically                   V").clicked() {
-        commands.push(Command::FlipVertical);
-        ui.close();
+    for action in [
+        &actions::FIT,
+        &actions::ACTUAL_PIXELS,
+        &actions::ROTATE,
+        &actions::FLIP_HORIZONTAL,
+        &actions::FLIP_VERTICAL,
+    ] {
+        action.menu(ui, true, commands);
     }
 
     ui.separator();
     playback_menu(ui, state, commands);
+    ui.separator();
+    file_actions(ui, state, commands);
 
-    if state.image.animated()
-        && ui
-            .button(if state.image.playback.playing {
-                "Pause animation"
-            } else {
-                "Play animation"
-            })
-            .clicked()
-    {
-        commands.push(Command::TogglePlay);
-        ui.close();
+    ui.separator();
+    ui.menu_button("Sort folder", |ui| sort_menu(ui, state, commands));
+}
+
+fn sort_menu(ui: &mut egui::Ui, state: &ToolbarState<'_>, commands: &mut Vec<Command>) {
+    let old = (state.settings.sort, state.settings.reverse_sort);
+    let (mut order, mut reverse) = old;
+
+    for &sort in SortOrder::VARIANTS {
+        ui.selectable_value(&mut order, sort, sort.as_ref());
     }
 
     ui.separator();
-    if ui
-        .add_enabled(
-            state.image.decoded.is_some(),
-            egui::Button::new("Copy image                  Ctrl+C"),
-        )
-        .clicked()
-    {
-        commands.push(Command::CopyImage);
-        ui.close();
-    }
+    ui.checkbox(&mut reverse, "Reverse order");
 
-    if ui
-        .add_enabled(
-            state.image.decoded.is_some(),
-            egui::Button::new("Export a copy…"),
-        )
-        .clicked()
-    {
-        commands.push(Command::Export);
-        ui.close();
+    if old != (order, reverse) {
+        commands.push(Command::Sort { order, reverse });
     }
-
-    if ui.button("Rename…").clicked() {
-        commands.push(Command::RequestRename);
-        ui.close();
-    }
-
-    if ui.button("Move to trash…").clicked() {
-        commands.push(Command::RequestTrash);
-        ui.close();
-    }
-
-    ui.separator();
-    ui.menu_button("Sort folder", |ui| {
-        let old = (state.settings.sort, state.settings.reverse_sort);
-        let (mut order, mut reverse) = old;
-        for sort in [SortOrder::Name, SortOrder::Modified, SortOrder::Size] {
-            ui.selectable_value(&mut order, sort, sort.name());
-        }
-        ui.separator();
-        ui.checkbox(&mut reverse, "Reverse order");
-        if old != (order, reverse) {
-            commands.push(Command::Sort { order, reverse });
-        }
-    });
 }
 
 fn playback_menu(
@@ -558,20 +419,8 @@ fn playback_menu(
     commands: &mut Vec<Command>,
 ) {
     if state.video.active {
-        let label = if state.video.paused {
-            "Play video"
-        } else {
-            "Pause video"
-        };
-
-        if ui
-            .add_enabled(state.video.ready(), egui::Button::new(label))
-            .clicked()
-        {
-            commands.push(Command::TogglePlay);
-            ui.close();
-        }
-
+        let label = if state.video.paused { "Play" } else { "Pause" };
+        actions::PLAY.menu_label(ui, label, state.video.ready(), false, commands);
         return;
     }
 
@@ -580,9 +429,14 @@ fn playback_menu(
     } else {
         "Start slideshow"
     };
+    actions::SLIDESHOW.menu_label(ui, label, true, false, commands);
 
-    if ui.button(label).clicked() {
-        commands.push(Command::ToggleSlideshow);
-        ui.close();
+    if state.image.animated() {
+        let label = if state.image.playback.playing {
+            "Pause animation"
+        } else {
+            "Play animation"
+        };
+        actions::PLAY.menu_label(ui, label, true, false, commands);
     }
 }

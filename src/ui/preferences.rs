@@ -1,41 +1,15 @@
 //! Preferences window, tabs, and shortcut reference
 
 use egui::{Color32, RichText, vec2};
+use strum::VariantArray;
 
 use crate::settings::{Accent, Canvas, RendererPreference, Settings, Theme};
 use crate::video::VideoSession;
 
 use super::{
-    icons,
+    actions, icons,
     theme::{self, Colors},
 };
-
-pub const SHORTCUTS: &[(&str, &str)] = &[
-    ("Ctrl+O", "Open file"),
-    ("Ctrl+Shift+O", "Open folder"),
-    ("Left / Right", "Previous / next file"),
-    ("Home / End", "First / last file"),
-    ("F5", "Refresh folder and reload file"),
-    ("Wheel / pinch", "Zoom toward the cursor"),
-    ("Drag", "Pan the image"),
-    ("Double-click / 0", "Fit without enlarging"),
-    ("1", "Actual pixels"),
-    ("+ / -", "Zoom in / out"),
-    ("R / Shift+R", "Rotate clockwise / counterclockwise"),
-    ("H / V", "Flip horizontally / vertically"),
-    ("T", "Toggle thumbnail strip"),
-    ("I", "Toggle file details"),
-    ("Space", "Play / pause video or animation; toggle slideshow"),
-    ("F / F11", "Toggle fullscreen"),
-    ("Esc", "Close dialog / leave fullscreen"),
-    ("Ctrl+C", "Copy image"),
-    ("Ctrl+Shift+C", "Copy file path"),
-    ("Ctrl+Shift+S", "Export a copy"),
-    ("F2", "Rename file"),
-    ("Delete", "Move to trash, with confirmation"),
-    ("Ctrl+,", "Preferences"),
-    ("Ctrl+Q", "Quit"),
-];
 
 #[derive(Default)]
 pub struct PreferencesWindow {
@@ -133,6 +107,10 @@ fn preference_tab(
 
 fn viewing(ui: &mut egui::Ui, settings: &mut Settings) {
     ui.checkbox(&mut settings.filmstrip, "Show thumbnail strip");
+    ui.checkbox(
+        &mut settings.compact_video_controls,
+        "Compact video controls",
+    );
     ui.checkbox(&mut settings.info, "Show image details");
     ui.checkbox(&mut settings.fit_small, "Enlarge small images when fitting");
     ui.checkbox(
@@ -188,7 +166,7 @@ fn renderer_preference(
     ui.label("Renderer");
 
     egui::ComboBox::from_id_salt("renderer_preference")
-        .selected_text(renderer.name())
+        .selected_text(renderer.as_ref())
         .show_ui(ui, |ui| renderer_choices(ui, renderer));
 
     ui.label(
@@ -215,8 +193,8 @@ fn renderer_preference(
 }
 
 fn renderer_choices(ui: &mut egui::Ui, renderer: &mut RendererPreference) {
-    for &choice in RendererPreference::ALL {
-        ui.selectable_value(renderer, choice, choice.name());
+    for &choice in RendererPreference::SUPPORTED {
+        ui.selectable_value(renderer, choice, choice.as_ref());
     }
 }
 
@@ -224,13 +202,29 @@ fn shortcuts(ui: &mut egui::Ui) {
     egui::Grid::new("shortcuts")
         .num_columns(2)
         .spacing(vec2(36., 10.))
-        .show(ui, |ui| {
-            for &(key, description) in SHORTCUTS {
-                ui.monospace(key);
-                ui.label(description);
-                ui.end_row();
-            }
-        });
+        .show(ui, shortcut_rows);
+}
+
+fn shortcut_rows(ui: &mut egui::Ui) {
+    for action in actions::GLOBAL
+        .iter()
+        .chain(actions::NAVIGATION)
+        .chain(actions::VIEWER)
+    {
+        ui.monospace(action.shortcut_text(ui.ctx()));
+        ui.label(action.label.trim_end_matches('…'));
+        ui.end_row();
+    }
+
+    for (gesture, description) in [
+        ("Wheel / pinch", "Zoom toward the cursor"),
+        ("Drag", "Pan the image"),
+        ("Double-click", "Fit to window"),
+    ] {
+        ui.monospace(gesture);
+        ui.label(description);
+        ui.end_row();
+    }
 }
 
 fn about(ui: &mut egui::Ui, colors: Colors, video: &VideoSession) {
@@ -365,7 +359,7 @@ fn theme_picker(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors) {
         .num_columns(columns)
         .spacing(vec2(9., 9.))
         .show(ui, |ui| {
-            for (index, theme) in Theme::ALL.into_iter().enumerate() {
+            for (index, theme) in Theme::VARIANTS.iter().copied().enumerate() {
                 let selected = settings.theme == theme;
                 let button = theme_card(theme, selected, card_width, colors);
 
@@ -402,7 +396,7 @@ fn theme_card(
     } else {
         colors.border
     };
-    let title = RichText::new(theme.name()).color(preview.text);
+    let title = RichText::new(theme.as_ref()).color(preview.text);
 
     egui::Button::new(title)
         .fill(preview.panel)
@@ -411,27 +405,21 @@ fn theme_card(
 }
 
 fn accent_picker(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors) {
-    for accent in Accent::ALL {
+    for &accent in Accent::VARIANTS {
         let theme_accent =
             theme::colors(settings.theme, Accent::Theme, colors.dark).accent;
         let color = theme::accent_color(accent, theme_accent);
         let selected = settings.accent == accent;
 
-        if icons::swatch(ui, color, selected, accent.name()).clicked() {
+        if icons::swatch(ui, color, selected, accent.as_ref()).clicked() {
             settings.accent = accent;
         }
     }
 }
 
 fn canvas_picker(ui: &mut egui::Ui, settings: &mut Settings) {
-    for (canvas, label) in [
-        (Canvas::Theme, "Theme"),
-        (Canvas::Dark, "Neutral dark"),
-        (Canvas::Black, "Black"),
-        (Canvas::White, "White"),
-        (Canvas::Custom, "Custom"),
-    ] {
-        ui.selectable_value(&mut settings.canvas, canvas, label);
+    for &canvas in Canvas::VARIANTS {
+        ui.selectable_value(&mut settings.canvas, canvas, canvas.as_ref());
     }
 }
 

@@ -139,7 +139,6 @@ impl Flowa {
                 self.settings.values.info = !self.settings.values.info
             }
 
-            Command::OpenPreferences => self.ui.preferences.open = true,
             Command::TogglePreferences => {
                 self.ui.preferences.open = !self.ui.preferences.open
             }

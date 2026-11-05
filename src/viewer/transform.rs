@@ -32,10 +32,16 @@ impl View {
         }
     }
 
-    pub fn fit_zoom(&self, canvas: Vec2, size: Vec2, enlarge: bool) -> f32 {
+    pub fn fit_zoom(
+        &self,
+        canvas: Vec2,
+        size: Vec2,
+        enlarge: bool,
+        padding: f32,
+    ) -> f32 {
         let displayed_size = self.displayed_size(size);
-        let fit_zoom = ((canvas.x - 48.0).max(1.0) / displayed_size.x)
-            .min((canvas.y - 48.0).max(1.0) / displayed_size.y);
+        let fit_zoom = ((canvas.x - padding * 2.).max(1.0) / displayed_size.x)
+            .min((canvas.y - padding * 2.).max(1.0) / displayed_size.y);
         if enlarge { fit_zoom } else { fit_zoom.min(1.0) }.clamp(0.001, 128.0)
     }
 
