@@ -3,7 +3,7 @@
 #[cfg(all(feature = "video", target_os = "linux"))]
 pub(crate) mod gpu;
 #[cfg(all(feature = "video", target_os = "linux"))]
-mod mpv;
+mod native;
 #[cfg(all(feature = "video", target_os = "linux"))]
 mod player;
 
@@ -11,12 +11,13 @@ use std::{path::Path, time::Duration};
 
 use anyhow::{Result, bail};
 
-/// UI-facing playback properties observed from libmpv
+/// Playback properties reported by the FFmpeg hardware player
 ///
 /// Times are seconds, volume is a percentage, and size includes display aspect ratio
 pub(crate) struct VideoState {
     pub active: bool,
     pub loading: bool,
+    pub seeking: bool,
     pub paused: bool,
     pub position: f64,
     pub duration: f64,
@@ -32,10 +33,10 @@ impl VideoState {
         self.active && !self.loading && self.error.is_none()
     }
 
-    /// Describes the decoder without exposing an empty libmpv property to the UI
+    /// Describes hardware selection before the first decoded frame arrives
     pub fn decoder_description(&self) -> String {
         if self.decoder.is_empty() || self.decoder == "no" {
-            return "Software decoding".into();
+            return "Hardware decoder not selected".into();
         }
 
         format!("Hardware decoding · {}", self.decoder)
@@ -47,6 +48,7 @@ impl Default for VideoState {
         Self {
             active: false,
             loading: false,
+            seeking: false,
             paused: false,
             position: 0.,
             duration: 0.,
@@ -60,7 +62,7 @@ impl Default for VideoState {
 
 /// Coordinates playback state and the texture displayed by the image canvas
 ///
-/// The optional native player owns all GPU and libmpv resources on the UI thread
+/// The optional Rust player owns decoding and GPU resources for this window
 #[derive(Default)]
 pub(crate) struct VideoSession {
     pub state: VideoState,
@@ -113,6 +115,10 @@ impl VideoSession {
         if let Some(player) = &mut self.player {
             if let Err(error) = player.load(path) {
                 self.fail(error);
+            } else if let Err(error) =
+                player.command(Command::Volume(self.state.volume))
+            {
+                self.fail(error);
             }
             return;
         }
@@ -126,14 +132,13 @@ impl VideoSession {
         );
     }
 
-    /// Stops playback asynchronously before the browser changes its selection
+    /// Stops playback before the browser changes its selection
     pub fn close(&mut self) {
         #[cfg(all(feature = "video", target_os = "linux"))]
         if self.state.active
-            && let Some(player) = &self.player
-            && let Err(error) = player.command(&["stop"])
+            && let Some(player) = &mut self.player
         {
-            log::warn!("Could not stop video: {error:#}");
+            player.stop();
         }
 
         self.state = VideoState {
@@ -143,7 +148,7 @@ impl VideoSession {
         self.texture = None;
     }
 
-    /// Applies native events and prepares a frame without waiting for GPU completion
+    /// Advances playback and prepares a frame without waiting for GPU completion
     pub fn poll(&mut self, ctx: &egui::Context) {
         #[cfg(all(feature = "video", target_os = "linux"))]
         if let Some(player) = &mut self.player {
@@ -157,8 +162,18 @@ impl VideoSession {
             }
         }
 
-        if self.state.active && !self.state.paused && self.state.error.is_none() {
-            ctx.request_repaint_after(Duration::from_millis(16));
+        if self.state.active
+            && (!self.state.paused || self.state.seeking)
+            && self.state.error.is_none()
+        {
+            #[cfg(all(feature = "video", target_os = "linux"))]
+            let delay = self
+                .player
+                .as_ref()
+                .map_or(Duration::from_millis(16), player::Player::repaint_after);
+            #[cfg(not(all(feature = "video", target_os = "linux")))]
+            let delay = Duration::from_millis(16);
+            ctx.request_repaint_after(delay);
         }
     }
 
@@ -182,15 +197,15 @@ impl VideoSession {
             .unwrap_or("Video playback needs the optional Linux Vulkan backend")
     }
 
-    /// Changes the engine's pause state through its asynchronous command queue
+    /// Changes pause state while preserving the current frame
     pub fn toggle_play(&mut self) -> Result<()> {
-        self.command(&["cycle", "pause"])
+        self.command(Command::TogglePause)
     }
 
     /// Seeks to an absolute media time, bounded by the known duration
     pub fn seek(&mut self, seconds: f64) -> Result<()> {
         let position = seek_position(seconds, self.state.duration)?;
-        self.command(&["seek", &position.to_string(), "absolute+exact"])
+        self.command(Command::Seek(position))
     }
 
     /// Sets output volume as a percentage between zero and one hundred
@@ -199,16 +214,22 @@ impl VideoSession {
             bail!("Volume must be finite");
         }
 
-        self.command(&["set", "volume", &volume.clamp(0., 100.).to_string()])
+        self.command(Command::Volume(volume.clamp(0., 100.)))
     }
 
-    fn command(&self, args: &[&str]) -> Result<()> {
-        #[cfg(all(feature = "video", target_os = "linux"))]
-        if let Some(player) = &self.player {
-            return player.command(args);
+    fn command(&mut self, command: Command) -> Result<()> {
+        if let Command::Seek(value) | Command::Volume(value) = command
+            && !value.is_finite()
+        {
+            bail!("Playback control must be finite");
         }
 
-        let _ = args;
+        #[cfg(all(feature = "video", target_os = "linux"))]
+        if let Some(player) = &mut self.player {
+            return player.command(command);
+        }
+
+        let _ = command;
         bail!("Video backend unavailable")
     }
 
@@ -219,6 +240,13 @@ impl VideoSession {
         self.state.error = Some(format!("{error:#}"));
         self.texture = None;
     }
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum Command {
+    TogglePause,
+    Seek(f64),
+    Volume(f64),
 }
 
 fn seek_position(seconds: f64, duration: f64) -> Result<f64> {

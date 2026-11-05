@@ -272,11 +272,12 @@ fn about_video(ui: &mut egui::Ui, colors: Colors, video: &VideoSession) {
     ui.add_space(18.);
     ui.label(RichText::new("Video").strong());
     ui.label("MP4 · MKV · WebM · MOV · AVI · MPEG · M2TS / MTS · TS · OGV");
-    ui.label("Playback, seeking, volume, and subtitles through libmpv");
+    ui.label("FFmpeg hardware decoding · Vulkan rendering · SDL3 audio");
+    ui.label("Video frames stay on the GPU; software decoding is disabled");
     ui.add_space(8.);
 
     let status = if video.available() {
-        "Video playback is available · Vulkan"
+        "Hardware video backend is ready · Vulkan"
     } else {
         "Video playback is unavailable"
     };
@@ -288,9 +289,9 @@ fn about_video(ui: &mut egui::Ui, colors: Colors, video: &VideoSession) {
 
     ui.add_space(8.);
     ui.horizontal_wrapped(|ui| {
-        ui.hyperlink_to("mpv", "https://mpv.io");
         ui.hyperlink_to("libplacebo", "https://libplacebo.org");
         ui.hyperlink_to("FFmpeg", "https://ffmpeg.org");
+        ui.hyperlink_to("SDL3", "https://libsdl.org");
     });
 }
 

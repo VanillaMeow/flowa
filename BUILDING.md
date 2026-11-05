@@ -1,113 +1,89 @@
 # Building
 
-## Build
+Run `just` to list commands.
 
-You need the following tools installed:
+## Local build
 
-- [Git](https://git-scm.com/install/)
-- [Rust and Cargo](https://rustup.rs/) 1.99 or later
+Requires Rust 1.99+, Just, a C compiler, and pkg-config. Linux video builds need
+FFmpeg 9+, libplacebo 7.360+, SDL3, and Vulkan headers. AVIF and HEIC support need
+dav1d and libheif 1.17+ with an HEVC decoder.
 
 On Arch Linux:
 
 ```sh
-sudo pacman -S --needed rust pkgconf clang cmake wayland libxkbcommon dav1d libheif
+sudo pacman -S --needed rust just base-devel pkgconf clang cmake wayland \
+    libxkbcommon dav1d libheif ffmpeg libplacebo sdl3 vulkan-headers
 ```
 
-On Debian/Ubuntu:
+Build and run:
 
 ```sh
-sudo apt install build-essential pkg-config cmake libclang-dev libwayland-dev libxkbcommon-dev libdav1d-dev libheif-dev
+just build
+./target/release/flowa /path/to/file
 ```
 
-HEIF support needs libheif 1.17 or newer and an HEVC decoder plugin such as libde265 for HEIC files.
-
-## Build and run
+Cargo compiles the C video shim automatically. Local builds use system media
+libraries. For CPU-specific optimization:
 
 ```sh
-git clone https://github.com/VanillaMeow/flowa.git
-cd flowa
-cargo build --release
-./target/release/flowa
+RUSTFLAGS="-C target-cpu=native" just build
 ```
 
-Pass an image or folder path as the first argument.
-
-## Video playback on Linux
-
-Build Flowa's Vulkan-enabled libmpv before opening videos:
-
-```sh
-./packaging/linux/build-video.sh
-cargo build --release
-./target/release/flowa /path/to/video.mp4
-```
-
-See [the video backend guide](native/mpv/README.md) for native dependencies,
-installation, and hardware playback tests. Flowa keeps its wgpu renderer and
-shares video textures with mpv directly on the GPU.
-
-To omit native AVIF and HEIF support:
+`just run /path/to/file` builds and runs a debug version. Plain Cargo commands work
+as well. To build without video, AVIF, or HEIF:
 
 ```sh
 cargo build --release --no-default-features
 ```
 
-On Windows, use this variant with the Rust MSVC toolchain and Visual Studio C++ build tools. The executable is `target/release/flowa.exe`.
+On Windows, use that command with Rust MSVC and the Visual Studio C++ build tools.
 
-On Linux, file dialogs and trash operations need `xdg-desktop-portal`, a backend for your desktop, and a user D-Bus session.
-
-## Install on Linux
-
-After a release build:
-
-```sh
-./packaging/linux/install-local.sh
-```
-
-This installs the executable, icon, and desktop entry under `~/.local` without changing file associations.
-Uninstall with `./packaging/linux/uninstall-local.sh`.
+Linux file dialogs and trash operations need a working desktop portal and D-Bus.
 
 ## Portable Linux build
 
-The portable build produces one executable with statically linked AVIF and HEIC
-codecs, Flowa's Vulkan libmpv backend, FFmpeg 9.0, SDL 3.4.18, and libplacebo.
-It targets x86_64 Linux with glibc 2.39 or newer. Copy the executable wherever you
-want to run it. There is no launcher, extraction step, or companion media library.
-
-A working desktop, Vulkan loader, and GPU drivers are still required. SDL3 loads
-the host's PipeWire, PulseAudio, or ALSA client library for audio. VA-API and CUDA
-also use the host's GPU drivers. Software decoding remains available when the
-source codec has no hardware decoder.
-
-With Podman and podman-compose installed, run from the repository root:
+Requires Just and Podman or Docker. The container supplies Rust and the native SDK;
+Ubuntu 24.04's system FFmpeg is too old for a local video build.
 
 ```sh
-podman-compose run --rm --build portable
+just portable
+just test-portable
 ```
 
-This builds in Ubuntu 24.04 and checks the glibc 2.39 limit.
-Output is `target/x86_64-unknown-linux-gnu/portable/flowa`.
-Build caches persist on the host. Builds use two jobs by default; set
-`CARGO_BUILD_JOBS` to change this. The first build compiles the media stack and
-will take longer than a regular Rust build.
+Output: `target/x86_64-unknown-linux-gnu/portable/flowa`
 
-For a native x86_64 GNU/Linux build, install Rust and the packages listed in
-[the builder container](packaging/linux/portable.Containerfile), then run:
+This is one x86_64 executable with statically linked media libraries. It requires
+glibc 2.39+, a Vulkan loader, GPU drivers, and a host audio backend. Video decoding
+requires compatible hardware; software video decoding is disabled.
 
-```sh
-./packaging/linux/build-portable.sh
-./packaging/linux/check-portable.sh target/x86_64-unknown-linux-gnu/portable/flowa 2.39
-```
+Sources are checksum-verified and cached in `.cache/portable-deps`. Builds use two
+jobs by default; override with `CARGO_BUILD_JOBS`. Portable builds always use the
+generic x86-64 CPU baseline. `CONTAINER_ENGINE=docker` selects Docker explicitly.
 
-The script downloads checksum-verified sources and caches them under
-`.cache/portable-deps`. FFmpeg and SDL are built from the pinned sources rather
-than the distribution's versions. It preserves the generic x86-64 CPU baseline
-even when local builds use `RUSTFLAGS="-C target-cpu=native"`.
-Building on a newer distribution may exceed the glibc limit.
-`cargo build --profile portable` alone does not build or link the media stack.
+`just portable-native` runs the same build on an already prepared Linux host.
+The required SDK packages are listed in `tools/portable/Containerfile`.
 
-The [portable workflow](.github/workflows/portable.yml) uses the same build and
-compatibility checks. It copies only the executable into a clean Ubuntu runtime
-without system FFmpeg, SDL, or mpv, renders a video through software Vulkan, and
-checks the screenshot for decoded pixels. The uploaded artifact is the `flowa`
-executable. After downloading it, run `chmod +x flowa`.
+## Development
+
+| Command | Action |
+| --- | --- |
+| `just fmt` | Format Rust and C |
+| `just check` | Check formatting and run Rust and C analysis |
+| `just test` | Run ordinary tests |
+| `just configure-c` | Generate clangd's compilation database |
+| `just test-portable` | Check executable dependencies and run a clean-runtime test |
+
+C tools: Uncrustify, clang-tidy, and clangd. On Arch, install `uncrustify clang`;
+on Debian/Ubuntu, install `uncrustify clang clang-tidy clangd`.
+`UNCRUSTIFY`, `CLANG`, and `CLANG_TIDY` can select alternate executables.
+
+C formatting follows `uncrustify.cfg`. For editor formatting, pass the buffer to
+`uncrustify -q -c /path/to/flowa/uncrustify.cfg -l C`. Clangd's built-in formatter
+is disabled so it cannot undo the vertical header layout.
+
+See [video validation](native/video/README.md#validation) for hardware tests.
+
+## Install on Linux
+
+`just install` builds and installs under `~/.local`, including the desktop entry
+and icon. `just uninstall` removes the installation and preserves preferences.

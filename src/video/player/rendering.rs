@@ -1,29 +1,16 @@
-//! Shares a three-texture Vulkan ring between mpv and egui without CPU readback
-
-use std::sync::atomic::Ordering;
+//! Shares a three-texture Vulkan ring between libplacebo and egui
 
 use anyhow::{Context, Result, ensure};
 use ash::vk;
 use eframe::wgpu::{self, hal};
 
-use super::{Player, SLOT_COUNT, Target, mpv};
-use mpv::{RenderParam, VulkanTarget};
+use super::{Player, SLOT_COUNT, Target};
+use crate::video::native::Target as NativeTarget;
 
 impl Player {
-    /// Services queued GPU work even while loading or before video dimensions exist
-    pub(super) fn update_render_context(&mut self) {
-        if !self.wakeup.dirty.swap(false, Ordering::AcqRel) {
-            return;
-        }
-
-        // SAFETY: Render functions run serially on the owning UI thread
-        let updates = unsafe { (self.api.render_context_update)(self.render) };
-        self.needs_redraw |= updates & mpv::RENDER_UPDATE_FRAME != 0;
-    }
-
-    /// Reuses the last frame unless mpv requests a redraw or the target size changes
+    /// Reuses the last frame unless FFmpeg produces a new frame or the target size changes
     pub fn render(&mut self, size: [u32; 2]) -> Result<Option<egui::TextureId>> {
-        if size.contains(&0) {
+        if size.contains(&0) || self.status.frame_serial == 0 {
             return Ok(None);
         }
 
@@ -45,7 +32,6 @@ impl Player {
 
         self.draw()?;
         self.needs_redraw = false;
-        self.swap_pending = true;
 
         Ok(self.displayed)
     }
@@ -81,7 +67,7 @@ impl Player {
         // The native renderer borrows the image until it signals the next even value
         let texture = unsafe { target.texture.as_hal::<hal::api::Vulkan>() }
             .context("Vulkan texture unavailable")?;
-        let mut frame = VulkanTarget {
+        let frame = NativeTarget {
             image: unsafe { texture.raw_handle() },
             width: self.size[0],
             height: self.size[1],
@@ -90,18 +76,7 @@ impl Player {
             wait_value: ready,
             signal_value: self.timeline,
         };
-        let mut block = 0_i32;
-        let mut params = [
-            RenderParam::new(mpv::RENDER_PARAM_VULKAN_TARGET, &mut frame),
-            RenderParam::new(mpv::RENDER_PARAM_BLOCK_FOR_TARGET_TIME, &mut block),
-            RenderParam::end(),
-        ];
-
-        // SAFETY: The target is exclusively writable until mpv signals the completion value
-        let result = unsafe {
-            (self.api.render_context_render)(self.render, params.as_mut_ptr())
-        };
-        self.api.check(result)?;
+        self.engine.render(&frame)?;
 
         // The next egui submission waits on the GPU, so the UI thread stays unblocked
         let queue = unsafe { self.graphics.queue.as_hal::<hal::api::Vulkan>() }
@@ -188,6 +163,12 @@ impl Player {
             return Ok(());
         }
 
+        // Retire native image views before wgpu destroys the images they reference
+        unsafe { (self.gpu.api.gpu_retire_targets)(self.gpu.handle.as_ptr()) };
+        self.retire_targets_after_player()
+    }
+
+    pub(super) fn retire_targets_after_player(&mut self) -> Result<()> {
         self.graphics
             .device
             .poll(wgpu::PollType::wait_indefinitely())?;

@@ -16,7 +16,7 @@ const INLINE_VOLUME_WIDTH: f32 = 104.;
 const INLINE_VOLUME_BREAKPOINT: f32 = 420.;
 const SEEK_ACKNOWLEDGEMENT_TIMEOUT: Duration = Duration::from_secs(1);
 
-/// Keeps a scrub preview stable while libmpv asynchronously seeks to the new frame
+/// Keeps a scrub preview stable while FFmpeg seeks to the new frame
 pub(crate) struct VideoControls {
     seek: Option<SeekPreview>,
     audible_volume: f64,
@@ -288,6 +288,8 @@ fn playback_status(ui: &mut egui::Ui, state: &VideoState, colors: Colors) {
         "Playback unavailable"
     } else if state.loading {
         "Opening video…"
+    } else if state.seeking {
+        "Seeking…"
     } else if state.paused {
         "Paused"
     } else {

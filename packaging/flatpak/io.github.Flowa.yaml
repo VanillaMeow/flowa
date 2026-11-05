@@ -90,7 +90,8 @@ modules:
       env:
         CARGO_HOME: /run/build/flowa/cargo-home
     build-commands:
-      - cargo build --locked --release
+      # Video requires a newer media SDK than the Flatpak manifest currently supplies
+      - cargo build --locked --release --no-default-features --features avif,heif
       - install -Dm755 target/release/flowa /app/bin/flowa
       - install -Dm644 packaging/linux/flowa.desktop /app/share/applications/flowa.desktop
       - install -Dm644 assets/flowa.svg /app/share/icons/hicolor/scalable/apps/flowa.svg

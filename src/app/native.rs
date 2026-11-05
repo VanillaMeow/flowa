@@ -110,8 +110,7 @@ fn configure_video(options: &mut NativeOptions, renderer: RendererPreference) {
         }
 
         match crate::video::gpu::setup() {
-            Ok(Some(setup)) => options.wgpu_options.wgpu_setup = setup,
-            Ok(None) => {}
+            Ok(setup) => options.wgpu_options.wgpu_setup = setup,
             Err(error) => log::warn!("Video device setup: {error:#}"),
         }
     }

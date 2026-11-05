@@ -1,16 +1,8 @@
-//! Libmpv playback and synchronized GPU targets owned by the UI thread
+//! FFmpeg playback and shared Vulkan targets owned by the UI thread
 
-use std::{
-    ffi::c_void,
-    path::Path,
-    ptr,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-};
+use std::{path::Path, sync::Arc, time::Duration};
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result};
 use ash::vk;
 use eframe::{
     egui_wgpu::RenderState,
@@ -18,68 +10,50 @@ use eframe::{
 };
 
 use super::{
-    VideoState,
-    mpv::{self, Api},
+    Command, VideoState,
+    gpu::{self, NativeGpu},
 };
 
-mod context;
-mod events;
+mod audio;
+mod clock;
+mod decoder;
+mod engine;
+mod media;
 mod rendering;
+mod shared;
+mod worker;
 
-// The same ring size is declared by the private C embedding ABI
+use engine::{Engine, Snapshot};
+
 const SLOT_COUNT: usize = 3;
 
-/// Stable callback storage shared with libmpv's decoder and render threads
-struct Wakeup {
-    ctx: egui::Context,
-    dirty: AtomicBool,
-}
-
-unsafe extern "C" fn wakeup(data: *mut c_void) {
-    // SAFETY: Callback storage outlives both registered callbacks and libmpv
-    let wakeup = unsafe { &*data.cast::<Wakeup>() };
-    wakeup.dirty.store(true, Ordering::Release);
-    wakeup.ctx.request_repaint();
-}
-
-/// A wgpu-owned image registered with egui and borrowed by libplacebo
 struct Target {
     texture: wgpu::Texture,
     id: egui::TextureId,
 }
 
-/// Owns the engine and its GPU bridge, with teardown ordered explicitly in Drop
+/// Owns one hardware-only player and retires native resources before wgpu targets
 pub(super) struct Player {
-    api: Arc<Api>,
-    handle: *mut c_void,
-    render: *mut c_void,
-    wakeup: Box<Wakeup>,
+    gpu: Arc<NativeGpu>,
+    engine: Engine,
     graphics: RenderState,
     native: ash::Device,
     semaphore: vk::Semaphore,
-    // Odd values release a target to mpv; even values return it to wgpu
     timeline: u64,
     targets: Vec<Target>,
     size: [u32; 2],
     slot: usize,
     displayed: Option<egui::TextureId>,
     needs_redraw: bool,
-    swap_pending: bool,
+    status: Snapshot,
 }
 
 impl Player {
-    /// Borrows the application's graphics device and creates an isolated mpv client
     pub fn new(graphics: &RenderState, ctx: &egui::Context) -> Result<Self> {
-        ensure!(
-            graphics.adapter.get_info().backend == wgpu::Backend::Vulkan,
-            "Video playback requires the Vulkan renderer"
-        );
-        let api = Api::load()?;
-
-        // SAFETY: Wgpu retains ownership of these handles through graphics
-        let device = unsafe { graphics.device.as_hal::<hal::api::Vulkan>() }
+        let gpu = gpu::for_device(&graphics.device)?;
+        let guard = unsafe { graphics.device.as_hal::<hal::api::Vulkan>() }
             .context("Vulkan device unavailable")?;
-        let native = device.raw_device().clone();
+        let native = guard.raw_device().clone();
         let mut timeline = vk::SemaphoreTypeCreateInfo::default()
             .semaphore_type(vk::SemaphoreType::TIMELINE);
         let semaphore = unsafe {
@@ -88,16 +62,11 @@ impl Player {
                 None,
             )
         }?;
-        drop(device);
+        drop(guard);
 
-        let mut player = Self {
-            api,
-            handle: ptr::null_mut(),
-            render: ptr::null_mut(),
-            wakeup: Box::new(Wakeup {
-                ctx: ctx.clone(),
-                dirty: AtomicBool::new(true),
-            }),
+        Ok(Self {
+            engine: Engine::new(Arc::clone(&gpu), ctx.clone()),
+            gpu,
             graphics: graphics.clone(),
             native,
             semaphore,
@@ -106,122 +75,96 @@ impl Player {
             size: [0; 2],
             slot: 0,
             displayed: None,
-            needs_redraw: true,
-            swap_pending: false,
-        };
-        player.initialize()?;
-
-        Ok(player)
+            needs_redraw: false,
+            status: Snapshot::default(),
+        })
     }
 
-    fn initialize(&mut self) -> Result<()> {
-        // SAFETY: The handle is initialized and destroyed exclusively by this player
-        self.handle = unsafe { (self.api.create)() };
-        ensure!(!self.handle.is_null(), "Could not create libmpv");
-
-        // Flowa owns the controls and input, while mpv owns timing and decoding
-        for (name, value) in [
-            (c"config", c"no"),
-            (c"vo", c"libmpv"),
-            // Prefer direct hardware paths and use software decoding if none works
-            (c"hwdec", c"nvdec,vaapi,vulkan"),
-            (c"idle", c"yes"),
-            (c"keep-open", c"yes"),
-            (c"input-default-bindings", c"no"),
-            (c"input-vo-keyboard", c"no"),
-            (c"terminal", c"no"),
-            (c"video-timing-offset", c"0"),
-        ] {
-            self.api.option(self.handle, name, value)?;
-        }
-
-        self.api.optional_option(self.handle, c"osc", c"no")?;
-
-        // SAFETY: Initialization precedes rendering and event processing
-        self.api
-            .check(unsafe { (self.api.initialize)(self.handle) })?;
-        self.create_render_context()?;
-
-        // Observed properties keep the UI independent of engine command latency
-        for (name, format) in [
-            (c"pause", mpv::FORMAT_FLAG),
-            (c"time-pos", mpv::FORMAT_DOUBLE),
-            (c"duration", mpv::FORMAT_DOUBLE),
-            (c"volume", mpv::FORMAT_DOUBLE),
-            (c"video-params/dw", mpv::FORMAT_INT64),
-            (c"video-params/dh", mpv::FORMAT_INT64),
-            (c"hwdec-current", mpv::FORMAT_STRING),
-            (c"current-ao", mpv::FORMAT_STRING),
-        ] {
-            self.api.check(unsafe {
-                (self.api.observe_property)(self.handle, 0, name.as_ptr(), format)
-            })?;
-        }
-
-        let data = ptr::from_mut(self.wakeup.as_mut()).cast();
-
-        // SAFETY: Both callbacks only request repaint and access stable callback storage
-        unsafe {
-            (self.api.set_wakeup_callback)(self.handle, Some(wakeup), data);
-            (self.api.render_context_set_update_callback)(
-                self.render,
-                Some(wakeup),
-                data,
-            );
-        }
-
+    pub fn load(&mut self, path: &Path) -> Result<()> {
+        self.engine.open(path)?;
+        self.displayed = None;
+        self.status = Snapshot::default();
+        self.needs_redraw = false;
         Ok(())
     }
 
-    /// Replaces the current file without rebuilding the engine or GPU resources
-    pub fn load(&mut self, path: &Path) -> Result<()> {
-        use std::os::unix::ffi::OsStrExt;
-
-        // Filenames use mpv's native UTF-8 interface and reject embedded NUL bytes
-        let path = std::str::from_utf8(path.as_os_str().as_bytes())
-            .context("Video filenames must be valid UTF-8")?;
+    pub fn stop(&mut self) {
+        self.engine.stop();
         self.displayed = None;
-        self.needs_redraw = true;
-        self.command(&["loadfile", path, "replace"])?;
-        self.command(&["set", "pause", "no"])
+        self.status = Snapshot::default();
+        self.needs_redraw = false;
     }
 
-    /// Queues a command without blocking the UI on decoding or I/O
-    pub fn command(&self, args: &[&str]) -> Result<()> {
-        self.api.command(self.handle, args)
+    pub fn command(&mut self, command: Command) -> Result<()> {
+        match command {
+            Command::TogglePause => self.engine.toggle_pause(),
+            Command::Seek(seconds) => self.engine.seek(seconds),
+            Command::Volume(volume) => self.engine.set_volume(volume),
+        }
+    }
+
+    pub fn poll(&mut self, state: &mut VideoState) {
+        if !state.active {
+            return;
+        }
+
+        let status = self.engine.poll();
+        if let Some(error) = &status.error {
+            if state.error.as_ref() != Some(error) {
+                log::error!("Video playback: {error}");
+            }
+            state.error = Some(error.clone());
+            state.loading = false;
+            self.displayed = None;
+        } else {
+            state.loading = status.loading;
+        }
+
+        let decoder = &status.decoder;
+        if !decoder.is_empty() && state.decoder != *decoder {
+            log::info!("Video decoder: {decoder} (GPU-resident frames)");
+            state.decoder = decoder.clone();
+        }
+        let audio = &status.audio;
+        if *audio != self.status.audio && !audio.is_empty() {
+            log::info!("Audio output: {audio}");
+        }
+
+        state.paused = status.paused;
+        state.seeking = status.seeking;
+        state.position = status.position;
+        state.duration = status.duration;
+        state.volume = status.volume;
+        state.size = status.size;
+        self.needs_redraw |= status.frame_serial != self.status.frame_serial;
+        self.status = status;
+    }
+
+    pub fn repaint_after(&self) -> Duration {
+        let delay = self.status.next_frame_delay;
+        Duration::from_secs_f64(if delay.is_finite() {
+            delay.clamp(0.001, 0.1)
+        } else {
+            0.01
+        })
     }
 }
 
 impl Drop for Player {
     fn drop(&mut self) {
-        // SAFETY: Callbacks are disabled before freeing their storage or native contexts
-        unsafe {
-            if !self.render.is_null() {
-                (self.api.render_context_set_update_callback)(
-                    self.render,
-                    None,
-                    ptr::null_mut(),
-                );
-                (self.api.render_context_free)(self.render);
-            }
-            if !self.handle.is_null() {
-                (self.api.set_wakeup_callback)(self.handle, None, ptr::null_mut());
-                (self.api.terminate_destroy)(self.handle);
-            }
-        }
+        self.engine.stop();
 
-        // A window can close before egui consumes the final staged semaphore wait
         if let Some(queue) = unsafe { self.graphics.queue.as_hal::<hal::api::Vulkan>() }
         {
             queue.remove_wait_semaphore(self.semaphore);
             queue.remove_signal_semaphore(self.semaphore);
         }
 
-        if let Err(error) = self.clear_targets() {
+        // The player is gone, so retire GPU wrappers directly before destroying its textures
+        unsafe { (self.gpu.api.gpu_retire_targets)(self.gpu.handle.as_ptr()) };
+        if let Err(error) = self.retire_targets_after_player() {
             log::warn!("Video target cleanup: {error:#}");
         }
-
-        // SAFETY: Native rendering has stopped and all uses of the semaphore have completed
         unsafe { self.native.destroy_semaphore(self.semaphore, None) };
     }
 }
@@ -240,10 +183,11 @@ mod tests {
     };
 
     use super::Player;
+    use crate::video::Command;
     use crate::video::{VideoState, gpu};
 
     #[test]
-    #[ignore = "Requires the custom libmpv backend, Vulkan GPU, ffmpeg, and an audio device"]
+    #[ignore = "Requires the FFmpeg backend, a hardware decoder, Vulkan, ffmpeg, and an audio device"]
     fn native_vulkan_playback_seek_resize_and_reload() -> Result<()> {
         let _ = env_logger::Builder::from_env(
             env_logger::Env::default().default_filter_or("info"),
@@ -280,7 +224,84 @@ mod tests {
             .status()?;
         ensure!(generated.success(), "Could not generate the video fixture");
 
-        let setup = gpu::setup()?.context("Custom video backend is missing")?;
+        let graphics = test_graphics()?;
+        let ctx = egui::Context::default();
+        let mut player = Player::new(&graphics, &ctx)?;
+        let mut state = VideoState {
+            active: true,
+            loading: true,
+            ..Default::default()
+        };
+        player.load(&clip)?;
+        pump(&mut player, &mut state, |state| {
+            state.position > 0.25 && state.size == [640, 360]
+        })?;
+        ensure!(
+            !state.decoder.is_empty(),
+            "Hardware decoding was not selected: {}",
+            state.decoder
+        );
+        ensure!(state.duration > 5., "Video duration was not received");
+        ensure!(
+            player.status.audio.starts_with("sdl3/"),
+            "SDL3 audio output was not selected"
+        );
+        let initial_frame = assert_video_pixels(&player)?;
+
+        player.command(Command::TogglePause)?;
+        pump(&mut player, &mut state, |state| state.paused)?;
+        player.command(Command::Seek(3.0))?;
+        pump(&mut player, &mut state, |state| {
+            (state.position - 3.).abs() < 0.15
+        })?;
+        wait_for_changed_frame(&mut player, &mut state, initial_frame)?;
+        player.render([320, 180])?;
+        graphics.queue.submit([]);
+        assert_video_pixels(&player)?;
+
+        player.command(Command::Volume(25.0))?;
+        pump(&mut player, &mut state, |state| {
+            (state.volume - 25.).abs() < 0.01
+        })?;
+        player.stop();
+        player.load(&clip)?;
+        state.loading = true;
+        pump(&mut player, &mut state, |state| {
+            !state.loading && state.position < 1. && !state.paused
+        })?;
+        assert_video_pixels(&player)?;
+        ensure!(
+            (state.volume - 25.0).abs() < 0.01,
+            "Volume changed on reload"
+        );
+
+        // Consecutive seeks must discard packets and audio from superseded generations
+        player.command(Command::Seek(1.0))?;
+        player.command(Command::Seek(4.0))?;
+        player.command(Command::Seek(2.0))?;
+        pump(&mut player, &mut state, |state| {
+            (state.position - 2.0).abs() < 0.15
+        })?;
+        assert_video_pixels(&player)?;
+
+        player.command(Command::Seek(state.duration))?;
+        pump(&mut player, &mut state, |state| {
+            state.paused && state.position > 5.8
+        })?;
+        player.command(Command::TogglePause)?;
+        pump(&mut player, &mut state, |state| {
+            !state.paused && state.position < 1.0
+        })?;
+        assert_video_pixels(&player)?;
+
+        player.render([480, 270])?;
+        drop(player);
+        graphics.device.poll(wgpu::PollType::wait_indefinitely())?;
+        Ok(())
+    }
+
+    fn test_graphics() -> Result<RenderState> {
+        let setup = gpu::setup()?;
         let instance = pollster::block_on(setup.new_instance());
         let config = WgpuConfiguration {
             wgpu_setup: setup,
@@ -292,66 +313,63 @@ mod tests {
             None,
             RendererOptions::default(),
         ))?;
-        let ctx = egui::Context::default();
-        let mut player = Player::new(&graphics, &ctx)?;
-        player.command(&["set", "ao", "sdl3"])?;
+        Ok(graphics)
+    }
+
+    #[test]
+    #[ignore = "Requires the FFmpeg backend, Vulkan, and ffmpeg"]
+    fn unsupported_hardware_never_decodes_in_software() -> Result<()> {
+        let folder = tempfile::tempdir()?;
+        let clip = folder.path().join("software-only.nut");
+        let generated = std::process::Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=128x96:rate=10",
+                "-t",
+                "1",
+                "-c:v",
+                "rawvideo",
+            ])
+            .arg(&clip)
+            .status()?;
+        ensure!(
+            generated.success(),
+            "Could not generate the raw-video fixture"
+        );
+
+        let graphics = test_graphics()?;
+        let mut player = Player::new(&graphics, &egui::Context::default())?;
         let mut state = VideoState {
             active: true,
             loading: true,
             ..Default::default()
         };
         player.load(&clip)?;
-        pump(&mut player, &mut state, |state| {
-            state.position > 0.25 && state.size == [640, 360]
-        })?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+
+        while state.error.is_none() && Instant::now() < deadline {
+            player.poll(&mut state);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
         ensure!(
-            !state.decoder.is_empty() && state.decoder != "no",
-            "Hardware decoding was not selected: {}",
-            state.decoder
+            state.error.as_deref().is_some_and(|error| error
+                .contains("Hardware decoding is unavailable")
+                && error.contains("software decoding is disabled")),
+            "Expected an explicit hardware-only error, got {:?}",
+            state.error
         );
-        ensure!(state.duration > 5., "Video duration was not received");
+        ensure!(state.decoder.is_empty(), "A software decoder was selected");
         ensure!(
-            player.api.audio_output(player.handle)? == "sdl3",
-            "SDL3 audio output was not selected"
+            player.displayed.is_none(),
+            "A software frame reached the renderer"
         );
-        let initial_frame = assert_video_pixels(&player)?;
-
-        player.command(&["set", "pause", "yes"])?;
-        pump(&mut player, &mut state, |state| state.paused)?;
-        player.command(&["seek", "3", "absolute+exact"])?;
-        pump(&mut player, &mut state, |state| {
-            (state.position - 3.).abs() < 0.15
-        })?;
-        wait_for_changed_frame(&mut player, &mut state, initial_frame)?;
-        player.render([320, 180])?;
-        graphics.queue.submit([]);
-        assert_video_pixels(&player)?;
-
-        player.command(&["set", "volume", "25"])?;
-        pump(&mut player, &mut state, |state| {
-            (state.volume - 25.).abs() < 0.01
-        })?;
-        player.command(&["stop"])?;
-        player.load(&clip)?;
-        state.loading = true;
-        pump(&mut player, &mut state, |state| {
-            !state.loading && state.position < 1. && !state.paused
-        })?;
-        assert_video_pixels(&player)?;
-
-        // Software decoders can request GPU allocations before file loading completes
-        player.command(&["stop"])?;
-        player.command(&["set", "hwdec", "no"])?;
-        player.load(&clip)?;
-        state.loading = true;
-        pump(&mut player, &mut state, |state| {
-            state.decoder == "no" && state.position > 0.1
-        })?;
-        assert_video_pixels(&player)?;
-
-        player.render([480, 270])?;
-        drop(player);
-        graphics.device.poll(wgpu::PollType::wait_indefinitely())?;
+        player.stop();
         Ok(())
     }
 
@@ -361,17 +379,24 @@ mod tests {
         ready: impl Fn(&VideoState) -> bool,
     ) -> Result<()> {
         let deadline = Instant::now() + Duration::from_secs(10);
+        let already_displayed = player.displayed.is_some();
 
         loop {
             player.poll(state);
             ensure!(state.error.is_none(), "Playback failed: {:?}", state.error);
+            if already_displayed {
+                ensure!(
+                    !state.loading && player.displayed.is_some(),
+                    "Seeking blanked the displayed frame or re-entered initial loading"
+                );
+            }
             if !state.loading && !state.size.contains(&0) {
                 player.render(state.size)?;
             }
             player.graphics.queue.submit([]);
             player.graphics.device.poll(wgpu::PollType::Poll)?;
 
-            if ready(state) && player.displayed.is_some() {
+            if ready(state) && !state.seeking && player.displayed.is_some() {
                 return Ok(());
             }
             ensure!(

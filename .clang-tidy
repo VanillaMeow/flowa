@@ -1,0 +1,14 @@
+# FFmpeg's Vulkan bitmasks use enum types; Linux uses bounded POSIX snprintf APIs
+Checks: >-
+  -*,
+  clang-analyzer-*,
+  -clang-analyzer-optin.core.EnumCastOutOfRange,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+  bugprone-infinite-loop,
+  bugprone-sizeof-expression,
+  bugprone-suspicious-memset-usage,
+  bugprone-suspicious-missing-comma,
+  bugprone-suspicious-semicolon
+WarningsAsErrors: '*'
+HeaderFilterRegex: '(^|/)native/'
+FormatStyle: file

@@ -108,7 +108,7 @@ fn video_details(ui: &mut egui::Ui, video: &VideoState, colors: Colors) {
     }
 
     detail(ui, "DECODER", &video.decoder_description(), colors);
-    detail(ui, "RENDERER", "Vulkan · wgpu / libmpv", colors);
+    detail(ui, "RENDERER", "Vulkan · libplacebo / wgpu", colors);
 
     if let Some(error) = &video.error {
         detail(ui, "PLAYBACK ERROR", error, colors);

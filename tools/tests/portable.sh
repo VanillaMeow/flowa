@@ -14,7 +14,7 @@ trap 'rm -rf -- "$work_dir"' EXIT
 expect_rejection() {
     local message=$1 target=$2 baseline=${3:-2.39}
 
-    if "$script_dir/check-portable.sh" "$target" "$baseline" > "$work_dir/check.log" 2>&1; then
+    if "$script_dir/../checks/portable.sh" "$target" "$baseline" > "$work_dir/check.log" 2>&1; then
         printf 'Compatibility check unexpectedly accepted: %s\n' "$message" >&2
         exit 1
     fi
@@ -25,7 +25,7 @@ expect_rejection() {
     fi
 }
 
-"$script_dir/check-portable.sh" "$binary" 2.39
+"$script_dir/../checks/portable.sh" "$binary" 2.39
 expect_rejection 'exceeding the' "$binary" 2.1
 
 # Each mutation uses its own copy of the executable
