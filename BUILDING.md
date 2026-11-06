@@ -91,6 +91,17 @@ jobs by default; override with `CARGO_BUILD_JOBS`. Portable builds always use th
 generic x86-64 CPU baseline. `CONTAINER_ENGINE=docker` selects Docker explicitly.
 The build checks the executable's shared dependencies, RPATH, and glibc baseline.
 
+FFmpeg remains pinned to 9.0, validated with NVIDIA 580 and its CUDA 13.0 driver
+API. Revalidate NVDEC before changing the FFmpeg or NVIDIA codec-header versions.
+The local FFmpeg 9.0.2-100 package has a separate CUDA 13.0 compatibility patch;
+its playback results do not establish compatibility for unpatched 9.0.2 builds.
+
+The portable SDK applies `tools/portable/ffmpeg-vulkan-frames.patch` before building
+FFmpeg. It restricts Vulkan decode-image flags to those supported by the video
+profile and fixes access-mask bookkeeping and decoder synchronization. Native
+system-library builds need equivalent fixes for affected drivers. CUDA compatibility
+patches alone do not resolve this Vulkan allocation issue.
+
 `just portable-native` runs the same build on an already prepared Linux host.
 The required SDK packages are listed in `tools/portable/Containerfile`.
 

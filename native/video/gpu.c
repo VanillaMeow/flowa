@@ -7,26 +7,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int video_error(
-    char *error,
-    size_t size,
-    const char *format,
-    ...
-) {
+static int video_error(char *error, size_t size, const char *format, ...) {
     va_list arguments;
-    va_start(
-        arguments,
-        format
-    );
-    vsnprintf(
-        error,
-        size,
-        format,
-        arguments
-    );
-    va_end(
-        arguments
-    );
+    va_start(arguments, format);
+    vsnprintf(error, size, format, arguments);
+    va_end(arguments);
 
     return -1;
 }
@@ -151,7 +136,11 @@ struct flowa_gpu *flowa_gpu_create(
     gpu->logger = init->log;
     gpu->log = pl_log_create(
         PL_API_VER,
-        pl_log_params(.log_cb = gpu_log, .log_priv = gpu, .log_level = PL_LOG_WARN)
+        pl_log_params(
+            .log_cb = gpu_log,
+            .log_priv = gpu,
+            .log_level = PL_LOG_WARN
+        )
     );
 
     // Query core features before appending wgpu's additional feature requests
@@ -319,6 +308,7 @@ void video_gpu_collect(struct flowa_gpu *gpu, bool finish) {
         }
 
         *cursor = flight->next;
+        video_gpu_free_transfer(gpu, flight->converted, flight->transfer);
         av_frame_free(&flight->source);
         av_frame_free(&flight->converted);
         free(flight);
@@ -333,6 +323,7 @@ void flowa_gpu_destroy(struct flowa_gpu *gpu) {
     if (gpu->vk) {
         video_gpu_clear_targets(gpu);
         flowa_gpu_reset_frames(gpu);
+        video_gpu_destroy_transfer(gpu);
         av_buffer_unref(&gpu->av_device);
         pl_renderer_destroy(&gpu->renderer);
         pl_vulkan_destroy(&gpu->vk);
@@ -411,6 +402,15 @@ error:
     return NULL;
 }
 
+static void free_converted_frame(
+    struct flowa_gpu *gpu,
+    AVFrame **frame,
+    VkCommandBuffer command
+) {
+    video_gpu_free_transfer(gpu, *frame, command);
+    av_frame_free(frame);
+}
+
 int flowa_gpu_render(
     struct flowa_gpu *gpu,
     const struct AVFrame *frame,
@@ -463,6 +463,7 @@ int flowa_gpu_render(
     }
 
     AVFrame *converted = NULL;
+    VkCommandBuffer transfer = VK_NULL_HANDLE;
     const AVFrame *source = current;
     if (source->format == AV_PIX_FMT_CUDA) {
         converted = map_cuda_frame(gpu, source);
@@ -476,16 +477,43 @@ int flowa_gpu_render(
         source = converted;
     }
 
+    if (source->format == AV_PIX_FMT_VULKAN) {
+        const AVHWFramesContext *pool = (void *)source->hw_frames_ctx->data;
+        const AVVulkanFramesContext *images = pool->hwctx;
+        int plane_count = av_pix_fmt_count_planes(pool->sw_format);
+        bool needs_plane_views = plane_count > 1 &&
+            !images->format[1] &&
+            !(images->img_flags & VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT);
+        bool needs_plane_copy = needs_plane_views ||
+            !(images->usage & VK_IMAGE_USAGE_SAMPLED_BIT);
+
+        if (needs_plane_copy) {
+            converted = video_gpu_transfer_vulkan(gpu, source, &transfer);
+            if (!converted) {
+                return video_error(
+                    error,
+                    error_size,
+                    "Cannot copy Vulkan decode planes without CPU readback"
+                );
+            }
+
+            source = converted;
+        }
+    }
+
     struct pl_frame input = {0};
     if (
         !pl_map_avframe_ex(
             device,
             &input,
-            pl_avframe_params(.frame = source, .tex = gpu->software_planes)
+            pl_avframe_params(
+                .frame = source,
+                .tex = gpu->software_planes
+            )
         )
     ) {
         pl_gpu_finish(device);
-        av_frame_free(&converted);
+        free_converted_frame(gpu, &converted, transfer);
         return video_error(
             error,
             error_size,
@@ -498,22 +526,19 @@ int flowa_gpu_render(
     if (!flight) {
         pl_gpu_finish(device);
         pl_unmap_avframe(device, &input);
-        av_frame_free(&converted);
+        free_converted_frame(gpu, &converted, transfer);
         return -1;
     }
     flight->source = av_frame_clone(current);
     if (!flight->source) {
         pl_gpu_finish(device);
         pl_unmap_avframe(device, &input);
-        av_frame_free(&converted);
+        free_converted_frame(gpu, &converted, transfer);
         free(flight);
-        return video_error(
-            error,
-            error_size,
-            "Cannot retain an in-flight video frame"
-        );
+        return video_error(error, error_size, "Cannot retain an in-flight video frame");
     }
     flight->converted = converted;
+    flight->transfer = transfer;
     flight->semaphore = target->semaphore;
     flight->value = target->signal_value;
     flight->next = gpu->flights;

@@ -29,8 +29,10 @@ the current position, preserving pause state and the displayed frame. This
 recovery requires a seekable duration. GPU import failures and device loss still
 report an error rather than attempting renderer recovery.
 
-Vulkan and VA-API frames are imported into the renderer. NVDEC uses a GPU-to-GPU
-copy into Vulkan memory. Timeline semaphores synchronize video textures with wgpu.
+Compatible Vulkan and VA-API frames are imported into the renderer. Vulkan output
+without sampleable plane views is copied into separate sampleable planes
+on the GPU. NVDEC uses its existing GPU-to-GPU copy into Vulkan memory.
+Timeline semaphores synchronize transfers and video textures with wgpu.
 Seeking keeps the displayed frame until its replacement is ready.
 Seeking also clears a latched FFmpeg interruption error so an aborted read from a
 superseded seek cannot poison the next playback generation.
@@ -67,13 +69,21 @@ See [the backend roadmap](BACKENDS.md) for Windows, Metal, OpenGL, and DX12.
 Run the hardware playback test:
 
 ```sh
-RUSTFLAGS="-C target-cpu=native" SDL_AUDIO_DRIVER=dummy cargo test --release \
+WGPU_VALIDATION=1 WGPU_DEBUG=1 VK_LAYER_VALIDATE_SYNC=1 \
+    RUSTFLAGS="-C target-cpu=native" SDL_AUDIO_DRIVER=dummy cargo test --release \
     native_vulkan_playback_seek_resize_and_reload -- --ignored --nocapture
 ```
 
-Requires FFmpeg's command-line tools, Vulkan, and a hardware decoder. It checks
-pixels, pause, seeking, volume, resize, reload, and teardown.
-On NVIDIA, `CUDA_VISIBLE_DEVICES=-1` exercises Vulkan Video if supported.
+Requires FFmpeg's command-line tools, Vulkan, the Khronos validation layer, and a
+hardware decoder. It checks pixels, pause, seeking, volume, resize, reload, and
+teardown.
+The test verifies that the validation layer is active. Vulkan errors reported
+through wgpu fail the test, including errors during device teardown.
+Set `FLOWA_TEST_VIDEO_DECODER=nvdec` to require NVDEC specifically.
+On NVIDIA, set `CUDA_VISIBLE_DEVICES=-1` and `FLOWA_TEST_VIDEO_DECODER=vulkan`
+to require Vulkan Video instead of accepting another hardware candidate.
+Set `FLOWA_TEST_VIDEO_CODEC=hevc` to run the same checks with 10-bit HEVC instead
+of 8-bit H.264. This requires FFmpeg's `libx265` encoder.
 
 Additional focused tests:
 
@@ -91,9 +101,34 @@ poster test requires ffmpeg with libx264 but needs no graphics or audio device.
 
 For Vulkan validation, install the Khronos layer and set `WGPU_VALIDATION=1`,
 `WGPU_DEBUG=1`, and `VK_LAYER_VALIDATE_SYNC=1`.
-On GTX 1050 Ti / NVIDIA 580.178.04, NVDEC passes validation. Vulkan H.264 playback
-works but FFmpeg's frame pool triggers `VUID-VkImageCreateInfo-pNext-06811` for
-unsupported mutable-image flags. This remains unresolved.
+
+The portable FFmpeg 9.0 SDK applies
+[`ffmpeg-vulkan-frames.patch`](../../tools/portable/ffmpeg-vulkan-frames.patch).
+It removes storage usage from decode output, requires decode and GPU-copy support,
+and restricts image usage and creation flags to the selected video profile's
+capabilities. This follows the
+[Vulkan image creation requirements](https://docs.vulkan.org/refpages/latest/refpages/source/VkImageCreateInfo.html).
+When mutable views or sampling are unsupported, `native/video/transfer.c` copies
+the decoded planes into ordinary sampleable images, preserving frame metadata.
+The copy waits for decoder timeline values, signals updated source and destination
+values, and retains its command buffer until GPU completion.
+Dedicated reference-only images and DRM modifier allocations keep their existing
+paths. Decoded pixels remain on the GPU throughout playback.
+The patch also preserves 64-bit access masks and synchronizes decoder layout
+transitions with prior reads and writes, including uses on other queues.
+
+On GTX 1050 Ti / NVIDIA 580.178.04, the patched SDK passes forced Vulkan H.264 and
+10-bit HEVC playback, NVDEC H.264 playback, and the fallback/recovery tests with
+Khronos validation and synchronization checks enabled. This does not establish
+other GPU, driver, codec, or HDR output coverage.
+
+Unpatched FFmpeg pools can still trigger `VUID-VkImageCreateInfo-pNext-06811` on
+GTX 1050 Ti / NVIDIA 580.178.04. The local 9.0.2-100 package's CUDA 13.0 compatibility
+patch allows NVDEC but does not fix Vulkan image allocation. Rebuild FFmpeg with
+equivalent Vulkan fixes or use the patched portable SDK before expecting the
+forced Vulkan validation test to pass. FFmpeg 9.0 remains the portable pin;
+newer CUDA requirements are a separate
+compatibility concern.
 
 `just portable` checks the executable's shared dependencies, RPATH, and glibc
 baseline during the build. Use the Rust tests above for playback validation.

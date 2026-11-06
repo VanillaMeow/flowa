@@ -1,0 +1,198 @@
+FFmpeg 9.0: Respect Vulkan decode-image and synchronization requirements
+
+Generic Vulkan format capabilities do not establish support for the same usage
+and creation flags on video-profile-bound images. Omit storage usage on decode
+output and restrict image usage and flags to those reported for the selected
+profile. Require decode and GPU-copy usage while negotiating optional sampling
+support. Consumers must copy output without sampling or mutable plane views
+on the GPU before rendering. Dedicated DPB and DRM modifier allocations are
+unchanged.
+
+Keep 64-bit access flags in execution bookkeeping. Cover previous reads/writes
+and layout transitions when reusing decoder output and reference images, with
+all-command semaphore stages to synchronize uses on other queues.
+
+--- a/libavutil/hwcontext_vulkan.c
++++ b/libavutil/hwcontext_vulkan.c
+@@ -2942,6 +2942,70 @@
+     av_buffer_pool_uninit(&fp->tmp);
+ }
+ 
++// Match decode-image flags to the capabilities of the selected video profile
++static int configure_video_image_flags(AVHWFramesContext *frames) {
++    AVVulkanFramesContext *images = frames->hwctx;
++    VulkanDevicePriv *device = frames->device_ctx->hwctx;
++    FFVulkanFunctions *vk = &device->vkctx.vkfn;
++    VkImageUsageFlags required_usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
++        (images->usage & (VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR |
++            VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR));
++    VkPhysicalDeviceVideoFormatInfoKHR info = {
++        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_FORMAT_INFO_KHR,
++        .pNext = images->create_pnext,
++        .imageUsage = required_usage,
++    };
++    uint32_t count = 0;
++    VkResult result = vk->GetPhysicalDeviceVideoFormatPropertiesKHR(
++        device->p.phys_dev,
++        &info,
++        &count,
++        NULL
++    );
++
++    if (result != VK_SUCCESS || !count)
++        return AVERROR(ENOTSUP);
++
++    VkVideoFormatPropertiesKHR *formats = av_calloc(count, sizeof(*formats));
++    if (!formats)
++        return AVERROR(ENOMEM);
++
++    for (uint32_t index = 0; index < count; index++)
++        formats[index].sType = VK_STRUCTURE_TYPE_VIDEO_FORMAT_PROPERTIES_KHR;
++
++    result = vk->GetPhysicalDeviceVideoFormatPropertiesKHR(
++        device->p.phys_dev,
++        &info,
++        &count,
++        formats
++    );
++    int error = AVERROR(ENOTSUP);
++
++    if (result == VK_SUCCESS) {
++        for (uint32_t index = 0; index < count; index++) {
++            const VkVideoFormatPropertiesKHR *format = &formats[index];
++
++            if (
++                format->format != images->format[0] ||
++                format->imageType != VK_IMAGE_TYPE_2D ||
++                format->imageTiling != images->tiling ||
++                (format->imageUsageFlags & required_usage) != required_usage
++            )
++                continue;
++
++            images->usage = required_usage |
++                (images->usage & format->imageUsageFlags & ~VK_IMAGE_USAGE_STORAGE_BIT);
++            images->img_flags &= format->imageCreateFlags;
++            error = 0;
++            break;
++        }
++    }
++
++    av_free(formats);
++
++    return error;
++}
++
+ static int vulkan_frames_init(AVHWFramesContext *hwfc)
+ {
+     int err;
+@@ -3072,6 +3136,18 @@
+             if (i == pl->profileCount)
+                 hwctx->img_flags |= VK_IMAGE_CREATE_VIDEO_PROFILE_INDEPENDENT_BIT_KHR;
+         }
++    }
++
++    const VkVideoProfileListInfoKHR *decode_profiles = hwctx->create_pnext;
++    if (
++        (hwctx->usage & VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR) &&
++        decode_profiles &&
++        decode_profiles->sType == VK_STRUCTURE_TYPE_VIDEO_PROFILE_LIST_INFO_KHR &&
++        !decode_profiles->pNext && !drm_mod_with_video
++    ) {
++        err = configure_video_image_flags(hwfc);
++        if (err < 0)
++            return err;
+     }
+ 
+     if (!hwctx->lock_frame)
+--- a/libavutil/vulkan.h
++++ b/libavutil/vulkan.h
+@@ -160,7 +160,7 @@
+     uint8_t *frame_locked;
+     unsigned int frame_locked_alloc_size;
+ 
+-    VkAccessFlagBits *access_dst;
++    VkAccessFlagBits2 *access_dst;
+     unsigned int access_dst_alloc;
+ 
+     VkImageLayout *layout_dst;
+--- a/libavutil/vulkan.c
++++ b/libavutil/vulkan.c
+@@ -807,7 +807,7 @@
+     AVBufferRef **buf_deps;
+     VkImageLayout *layout_dst;
+     uint32_t *queue_family_dst;
+-    VkAccessFlagBits *access_dst;
++    VkAccessFlagBits2 *access_dst;
+ 
+     AVHWFramesContext *hwfc = (AVHWFramesContext *)f->hw_frames_ctx->data;
+     AVVulkanFramesContext *vkfc = hwfc->hwctx;
+--- a/libavcodec/vulkan_decode.c
++++ b/libavcodec/vulkan_decode.c
+@@ -573,8 +573,8 @@
+         return err;
+ 
+     err = ff_vk_exec_add_dep_frame(&ctx->s, exec, pic,
+-                                   VK_PIPELINE_STAGE_2_VIDEO_DECODE_BIT_KHR,
+-                                   VK_PIPELINE_STAGE_2_VIDEO_DECODE_BIT_KHR);
++                                   VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
++                                   VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT);
+     if (err < 0)
+         return err;
+ 
+@@ -587,9 +587,9 @@
+     img_bar[nb_img_bar] = (VkImageMemoryBarrier2) {
+         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+         .pNext = NULL,
+-        .srcStageMask = VK_PIPELINE_STAGE_2_VIDEO_DECODE_BIT_KHR,
++        .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+         .dstStageMask = VK_PIPELINE_STAGE_2_VIDEO_DECODE_BIT_KHR,
+-        .srcAccessMask = VK_ACCESS_2_NONE,
++        .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+         .dstAccessMask = VK_ACCESS_2_VIDEO_DECODE_WRITE_BIT_KHR,
+         .oldLayout = vkf->layout[0],
+         .newLayout = (layered_dpb || vp->dpb_frame) ?
+@@ -610,8 +610,8 @@
+     /* Reference for the current image, if existing and not layered */
+     if (vp->dpb_frame) {
+         err = ff_vk_exec_add_dep_frame(&ctx->s, exec, vp->dpb_frame,
+-                                       VK_PIPELINE_STAGE_2_VIDEO_DECODE_BIT_KHR,
+-                                       VK_PIPELINE_STAGE_2_VIDEO_DECODE_BIT_KHR);
++                                       VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
++                                       VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT);
+         if (err < 0)
+             return err;
+     }
+@@ -625,8 +625,8 @@
+             AVFrame *ref = rvp->dpb_frame ? rvp->dpb_frame : ref_frame;
+ 
+             err = ff_vk_exec_add_dep_frame(&ctx->s, exec, ref,
+-                                           VK_PIPELINE_STAGE_2_VIDEO_DECODE_BIT_KHR,
+-                                           VK_PIPELINE_STAGE_2_VIDEO_DECODE_BIT_KHR);
++                                           VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
++                                           VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT);
+             if (err < 0)
+                 return err;
+ 
+@@ -644,9 +644,9 @@
+                 img_bar[nb_img_bar] = (VkImageMemoryBarrier2) {
+                     .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                     .pNext = NULL,
+-                    .srcStageMask = VK_PIPELINE_STAGE_2_VIDEO_DECODE_BIT_KHR,
++                    .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                     .dstStageMask = VK_PIPELINE_STAGE_2_VIDEO_DECODE_BIT_KHR,
+-                    .srcAccessMask = VK_ACCESS_2_NONE,
++                    .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                     .dstAccessMask = VK_ACCESS_2_VIDEO_DECODE_READ_BIT_KHR |
+                                      VK_ACCESS_2_VIDEO_DECODE_WRITE_BIT_KHR,
+                     .oldLayout = rvkf->layout[0],
+@@ -668,8 +668,8 @@
+                vp->view.out[0] != vp->view.ref[0]) {
+         /* Single barrier for a single layered ref */
+         err = ff_vk_exec_add_dep_frame(&ctx->s, exec, ctx->common.layered_frame,
+-                                       VK_PIPELINE_STAGE_2_VIDEO_DECODE_BIT_KHR,
+-                                       VK_PIPELINE_STAGE_2_VIDEO_DECODE_BIT_KHR);
++                                       VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
++                                       VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT);
+         if (err < 0)
+             return err;
+     }

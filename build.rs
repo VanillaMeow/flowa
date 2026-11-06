@@ -67,8 +67,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     generate_ffmpeg_bindings(&libraries)?;
 
-    println!("cargo:rerun-if-changed=native/video/gpu.c");
-    compiler.file("native/video/gpu.c");
+    for source in ["gpu.c", "transfer.c"] {
+        let path = format!("native/video/{source}");
+        println!("cargo:rerun-if-changed={path}");
+        compiler.file(path);
+    }
 
     for header in ["flowa_video.h", "internal.h"] {
         println!("cargo:rerun-if-changed=native/video/{header}");

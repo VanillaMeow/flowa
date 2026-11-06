@@ -72,14 +72,28 @@ The portable executable rebuilt against the pinned FFmpeg 9.0 SDK, passed the
 glibc 2.39/dependency checks, rendered video in the clean Ubuntu software-Vulkan
 runtime, and passed a native NVDEC playback smoke test. These results cover this
 Linux hardware and the tested fixtures. They do not establish Windows, macOS,
-AMD/Intel hardware, or additional codec/profile support. The existing Vulkan Video
-validation issue remains documented in the [video guide](README.md#validation).
+AMD/Intel hardware, or additional codec/profile support.
+
+The portable FFmpeg 9.0 SDK now carries a patch that restricts decode-image usage
+and flags to the selected video profile's capabilities. Vulkan images without
+sampleable plane views use a synchronized GPU copy into sampleable planes. NVDEC's
+existing transfer path is preserved. System builds need the same FFmpeg allocation
+fix or an upstream equivalent; the local 9.0.2-100 package's CUDA 13.0 compatibility
+patch alone does not fix Vulkan image flags. See the
+[video guide](README.md#validation) for decoder-specific validation commands.
+
+The patched SDK passes forced Vulkan H.264 and 10-bit HEVC playback, NVDEC H.264,
+and the existing fallback/recovery tests on this NVIDIA machine with Khronos
+validation and synchronization checks enabled. The patch also fixes 64-bit
+access-mask bookkeeping and synchronization when decoder images are reused.
 
 ## Where video depends on Vulkan
 
 - `build.rs` builds the GPU shim on Linux and Windows and requires libplacebo and
   Vulkan alongside FFmpeg and SDL3. Cargo's `ash` and `pollster` dependencies and
   the current playback modules are enabled on Linux and Windows.
+- `native/video/transfer.c` copies non-mutable Vulkan decode planes into images
+  libplacebo can sample, with timeline synchronization and command-buffer retirement
 - `flowa_video.h` now contains only the GPU ABI, with borrowed FFmpeg frame and
   stream pointers. The Rust media bindings come from a separate FFmpeg-only header.
 - `src/video/gpu.rs` creates a libplacebo Vulkan device, imports it into wgpu-hal,

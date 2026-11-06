@@ -8,7 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     FLOWA_MAX_GLIBC=2.39
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential clang libclang-dev ca-certificates curl pkg-config cmake meson ninja-build nasm \
+        build-essential clang libclang-dev patch ca-certificates curl pkg-config cmake meson ninja-build nasm \
         xz-utils binutils python3-jinja2 libvulkan-dev libffmpeg-nvenc-dev \
         libasound2-dev libpulse-dev libpipewire-0.3-dev \
     && rm -rf /var/lib/apt/lists/*

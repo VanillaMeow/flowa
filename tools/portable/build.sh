@@ -17,7 +17,7 @@ fi
 
 # The source recipes and compiler determine which native cache can be reused
 build_key=$({
-    sha256sum tools/portable/{build.sh,dependencies.sh,Containerfile}
+    sha256sum tools/portable/{build.sh,dependencies.sh,Containerfile,*.patch}
     cc --version
     c++ --version
     ldd --version
@@ -28,7 +28,7 @@ if [[ ${1:-} == --print-native-cache-key ]]; then
     exit 0
 fi
 
-for tool in cc c++ cmake meson ninja nasm pkg-config curl sha256sum tar readelf make; do
+for tool in cc c++ cmake meson ninja nasm pkg-config curl sha256sum tar patch readelf make; do
     if ! command -v "$tool" >/dev/null; then
         printf 'Missing build tool: %s\n' "$tool" >&2
         exit 1

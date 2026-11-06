@@ -177,14 +177,20 @@ impl Drop for Player {
 #[cfg(test)]
 mod tests {
     use std::{
-        sync::mpsc,
+        io::Write,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+            mpsc,
+        },
         time::{Duration, Instant},
     };
 
     use anyhow::{Context, Result, ensure};
+    use ash::vk;
     use eframe::{
         egui_wgpu::{RenderState, RendererOptions, WgpuConfiguration},
-        wgpu,
+        wgpu::{self, hal},
     };
 
     use super::Player;
@@ -192,15 +198,44 @@ mod tests {
     use crate::video::{VideoState, gpu};
 
     #[test]
-    #[ignore = "Requires the FFmpeg backend, a hardware decoder, Vulkan, ffmpeg, and an audio device"]
+    #[ignore = "Requires a hardware decoder, Vulkan validation, ffmpeg, and an audio device"]
     fn native_vulkan_playback_seek_resize_and_reload() -> Result<()> {
-        let _ = env_logger::Builder::from_env(
+        let flags =
+            wgpu::InstanceDescriptor::new_without_display_handle_from_env().flags;
+        ensure!(
+            flags
+                .contains(wgpu::InstanceFlags::VALIDATION | wgpu::InstanceFlags::DEBUG),
+            "Set WGPU_VALIDATION=1 and WGPU_DEBUG=1 for the hardware playback test"
+        );
+
+        let validation_errors = Arc::new(AtomicUsize::new(0));
+        let reported_errors = Arc::clone(&validation_errors);
+        env_logger::Builder::from_env(
             env_logger::Env::default().default_filter_or("info"),
         )
+        .filter_module("wgpu_hal::vulkan::instance", log::LevelFilter::Error)
+        .format(move |buffer, record| {
+            if record.level() == log::Level::Error
+                && record.target() == "wgpu_hal::vulkan::instance"
+            {
+                reported_errors.fetch_add(1, Ordering::Relaxed);
+            }
+
+            writeln!(buffer, "{}: {}", record.level(), record.args())
+        })
         .is_test(true)
-        .try_init();
+        .try_init()
+        .context("Could not monitor Vulkan validation errors")?;
+
         let folder = tempfile::tempdir()?;
         let clip = folder.path().join("test.mp4");
+        let codec =
+            std::env::var("FLOWA_TEST_VIDEO_CODEC").unwrap_or_else(|_| "h264".into());
+        let (encoder, pixel_format) = match codec.as_str() {
+            "h264" => ("libx264", "yuv420p"),
+            "hevc" => ("libx265", "yuv420p10le"),
+            _ => anyhow::bail!("Unsupported playback test codec: {codec}"),
+        };
         let generated = std::process::Command::new("ffmpeg")
             .args([
                 "-hide_banner",
@@ -217,11 +252,11 @@ mod tests {
                 "-t",
                 "6",
                 "-c:v",
-                "libx264",
+                encoder,
                 "-preset",
                 "ultrafast",
                 "-pix_fmt",
-                "yuv420p",
+                pixel_format,
                 "-c:a",
                 "aac",
             ])
@@ -230,6 +265,7 @@ mod tests {
         ensure!(generated.success(), "Could not generate the video fixture");
 
         let graphics = test_graphics()?;
+        require_vulkan_validation(&graphics)?;
         let ctx = egui::Context::default();
         let mut player = Player::new(&graphics, &ctx)?;
         let mut state = VideoState {
@@ -246,6 +282,15 @@ mod tests {
             "Hardware decoding was not selected: {}",
             state.decoder
         );
+
+        if let Ok(expected) = std::env::var("FLOWA_TEST_VIDEO_DECODER") {
+            ensure!(
+                state.decoder == expected,
+                "Expected {expected} hardware decoding, selected {}",
+                state.decoder
+            );
+        }
+
         ensure!(state.duration > 5., "Video duration was not received");
         ensure!(
             player.status.audio.starts_with("sdl3/"),
@@ -302,6 +347,49 @@ mod tests {
         player.render([480, 270])?;
         drop(player);
         graphics.device.poll(wgpu::PollType::wait_indefinitely())?;
+        drop(graphics);
+        ensure!(
+            validation_errors.load(Ordering::Relaxed) == 0,
+            "Vulkan reported validation errors during hardware playback or teardown"
+        );
+
+        Ok(())
+    }
+
+    fn require_vulkan_validation(graphics: &RenderState) -> Result<()> {
+        // SAFETY: The adapter and its instance stay alive throughout the query
+        let adapter = unsafe { graphics.adapter.as_hal::<hal::api::Vulkan>() }
+            .context("Vulkan adapter unavailable")?;
+        let instance = adapter.shared_instance();
+        ensure!(
+            instance.instance_api_version() >= vk::API_VERSION_1_3,
+            "Vulkan 1.3 is required to query active validation tools"
+        );
+        ensure!(
+            instance.extensions().contains(&ash::ext::debug_utils::NAME),
+            "VK_EXT_debug_utils is required to monitor validation errors"
+        );
+
+        let physical_device = adapter.raw_physical_device();
+        let raw_instance = instance.raw_instance();
+        // SAFETY: The physical device belongs to this live instance
+        let count = unsafe {
+            raw_instance.get_physical_device_tool_properties_len(physical_device)
+        }?;
+        let mut tools = vec![vk::PhysicalDeviceToolProperties::default(); count];
+        // SAFETY: Each output structure is initialized with its required sType
+        unsafe {
+            raw_instance
+                .get_physical_device_tool_properties(physical_device, &mut tools)
+        }?;
+        ensure!(
+            tools.iter().any(|tool| {
+                tool.layer_as_c_str() == Ok(c"VK_LAYER_KHRONOS_validation")
+                    && tool.purposes.contains(vk::ToolPurposeFlags::VALIDATION)
+            }),
+            "VK_LAYER_KHRONOS_validation is not active; install it or set VK_LAYER_PATH"
+        );
+
         Ok(())
     }
 

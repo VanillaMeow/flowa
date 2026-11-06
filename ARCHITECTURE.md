@@ -89,6 +89,9 @@ stream snapshots own copied parameters and can outlive the demuxer.
 `video/player/media.rs` couples hardware codecs and displayed hardware frames to
 the Vulkan device owner. The retained C implementation owns libplacebo, frame
 imports, GPU-to-GPU transfers, and in-flight references until timeline completion.
+`native/video/transfer.c` copies Vulkan decode images into sampleable planes when
+direct import is unavailable, without CPU readback. It retires copy command
+buffers after GPU completion.
 The player preserves the existing queues, clocks, seek generations, and fallback
 behavior. Its current presenter still requires Vulkan even for CPU decoding.
 

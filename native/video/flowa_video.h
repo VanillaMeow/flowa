@@ -53,10 +53,7 @@ void flowa_gpu_retire_targets(struct flowa_gpu *gpu);
 void flowa_gpu_reset_frames(struct flowa_gpu *gpu);
 
 // Transfers one FFmpeg device reference to the Rust codec owner
-struct AVBufferRef *flowa_gpu_create_decoder_device(
-    struct flowa_gpu *gpu,
-    int backend
-);
+struct AVBufferRef *flowa_gpu_create_decoder_device(struct flowa_gpu *gpu, int backend);
 int flowa_gpu_render(
     struct flowa_gpu *gpu,
     const struct AVFrame *frame,

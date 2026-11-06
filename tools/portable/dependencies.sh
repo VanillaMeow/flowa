@@ -3,6 +3,7 @@
 
 fetch_source() {
     local name=$1 url=$2 checksum=$3
+    local source_patch=${4:-}
     local archive="$download_dir/${url##*/}"
     local source_dir="$build_dir/sources/$name"
 
@@ -16,6 +17,11 @@ fetch_source() {
     if [[ ! -d $source_dir ]]; then
         mkdir -p "$source_dir.part"
         tar -xf "$archive" -C "$source_dir.part" --strip-components=1 --no-same-owner
+
+        if [[ -n $source_patch ]]; then
+            patch --batch --forward --fuzz=0 --strip=1 --directory="$source_dir.part" < "$source_patch"
+        fi
+
         mv "$source_dir.part" "$source_dir"
     fi
 }
@@ -121,9 +127,11 @@ build_media() {
     fetch_source libplacebo \
         https://codeload.github.com/haasn/libplacebo/tar.gz/refs/tags/v7.360.1 \
         d05fdf90bea2f629eaa2d115e909fd356388ac639e54f77b87a018a6d76224bd
+    # Keep NVDEC compatible with the validated NVIDIA 580 and CUDA 13.0 driver
     fetch_source ffmpeg \
         https://ffmpeg.org/releases/ffmpeg-9.0.tar.xz \
-        7f607a00dd0d28a729d5a4811205812eef01cf6ef6155025febb6f36a9062d52
+        7f607a00dd0d28a729d5a4811205812eef01cf6ef6155025febb6f36a9062d52 \
+        "$project_dir/tools/portable/ffmpeg-vulkan-frames.patch"
 
 
     if [[ ! -f $build_dir/media-complete ]]; then

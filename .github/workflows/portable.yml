@@ -27,7 +27,7 @@ jobs:
       - uses: actions/cache@v6
         with:
           path: .cache/portable-deps
-          key: portable-native-ubuntu-24.04-${{ runner.arch }}-${{ hashFiles('tools/portable/build.sh', 'tools/portable/dependencies.sh', 'tools/portable/Containerfile') }}
+          key: portable-native-ubuntu-24.04-${{ runner.arch }}-${{ hashFiles('tools/portable/build.sh', 'tools/portable/dependencies.sh', 'tools/portable/Containerfile', 'tools/portable/*.patch') }}
 
       - name: Build the single portable executable
         run: just portable
