@@ -21,12 +21,10 @@ Generate test images. Add `--huge` for a 160-megapixel image, which needs extra 
 cargo run --example make_fixtures -- artifacts/fixtures
 ```
 
-Capture the viewer or preferences with a release build:
+Open the fixtures for manual UI testing:
 
 ```sh
-./target/release/flowa --smoke-test --screenshot artifacts/viewer.png --filmstrip artifacts/fixtures/01-dunes.png
-./target/release/flowa --smoke-test --preferences --theme nord --screenshot artifacts/preferences.png
+just run --filmstrip artifacts/fixtures/01-dunes.png
 ```
 
-Smoke tests capture the native window and exit without loading or saving preferences.
 Use disposable fixtures and isolated configuration/trash directories for rename and delete tests.

@@ -38,9 +38,9 @@ pub(crate) fn run(
         return run_once(options, &mut startup);
     }
 
-    if !cfg!(target_os = "linux") {
+    let Some((fallback, fallback_name)) = auto_fallback() else {
         return run_once(options, &mut startup);
-    }
+    };
 
     set_backends(&mut options, Backends::VULKAN);
     let result = run_once(options.clone(), &mut startup);
@@ -54,10 +54,22 @@ pub(crate) fn run(
         return result;
     };
 
-    log::warn!("Vulkan initialization failed: {error}. Retrying with OpenGL");
-    set_backends(&mut options, Backends::GL);
+    log::warn!("Vulkan initialization failed: {error}. Retrying with {fallback_name}");
+    set_backends(&mut options, fallback);
 
     run_once(options, &mut startup)
+}
+
+fn auto_fallback() -> Option<(Backends, &'static str)> {
+    if cfg!(target_os = "linux") {
+        return Some((Backends::GL, "OpenGL"));
+    }
+
+    if cfg!(target_os = "windows") {
+        return Some((Backends::DX12, "DirectX 12"));
+    }
+
+    None
 }
 
 fn preferred_backends(renderer: RendererPreference) -> Option<Backends> {
@@ -94,7 +106,7 @@ fn run_once(options: NativeOptions, startup: &mut Option<Startup>) -> eframe::Re
 }
 
 fn configure_video(options: &mut NativeOptions, renderer: RendererPreference) {
-    #[cfg(all(feature = "video", target_os = "linux"))]
+    #[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
     {
         if !matches!(
             renderer,
@@ -119,7 +131,7 @@ fn configure_video(options: &mut NativeOptions, renderer: RendererPreference) {
 }
 
 fn set_backends(options: &mut NativeOptions, backends: Backends) {
-    if backends == Backends::GL
+    if backends != Backends::VULKAN
         && matches!(options.wgpu_options.wgpu_setup, WgpuSetup::Existing(_))
     {
         options.wgpu_options.wgpu_setup = WgpuSetup::without_display_handle();

@@ -33,7 +33,10 @@ pub fn supported(path: &Path) -> bool {
         .to_string_lossy()
         .to_ascii_lowercase();
     EXTENSIONS.contains(&ext.as_str())
-        || (cfg!(all(feature = "video", target_os = "linux")) && is_video(path))
+        || (cfg!(all(
+            feature = "video",
+            any(target_os = "linux", target_os = "windows")
+        )) && is_video(path))
         || (cfg!(feature = "avif") && ext == "avif")
         || (cfg!(feature = "heif") && matches!(ext.as_str(), "heic" | "heif"))
 }

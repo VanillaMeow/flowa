@@ -175,12 +175,16 @@ fn renderer_preference(
             .color(colors.muted),
     );
 
-    if cfg!(target_os = "linux") && *renderer == RendererPreference::Auto {
-        ui.label(
-            RichText::new("Auto tries Vulkan first, then OpenGL if needed")
-                .small()
-                .color(colors.muted),
-        );
+    if cfg!(any(target_os = "linux", target_os = "windows"))
+        && *renderer == RendererPreference::Auto
+    {
+        let explanation = if cfg!(target_os = "windows") {
+            "Auto tries Vulkan first, then DirectX 12 if needed"
+        } else {
+            "Auto tries Vulkan first, then OpenGL if needed"
+        };
+
+        ui.label(RichText::new(explanation).small().color(colors.muted));
     }
 
     if std::env::var_os("WGPU_BACKEND").is_some() {
@@ -254,7 +258,10 @@ fn about_contents(ui: &mut egui::Ui, colors: Colors, video: &VideoSession) {
         ui.label("HEIC / HEIF");
     }
 
-    if cfg!(all(feature = "video", target_os = "linux")) {
+    if cfg!(all(
+        feature = "video",
+        any(target_os = "linux", target_os = "windows")
+    )) {
         about_video(ui, colors, video);
     }
 

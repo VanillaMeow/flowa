@@ -91,11 +91,7 @@ impl Engine {
     pub fn open(&mut self, path: &Path) -> Result<()> {
         self.stop();
         let shared = Arc::new(Shared::new(self.ctx.clone(), self.volume));
-        let worker = worker::spawn(
-            Arc::clone(&self.gpu.api),
-            path.to_owned(),
-            Arc::clone(&shared),
-        )?;
+        let worker = worker::spawn(path.to_owned(), Arc::clone(&shared))?;
         self.shared = Some(shared);
         self.worker = Some(worker);
         Ok(())

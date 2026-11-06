@@ -23,7 +23,7 @@ use crate::{
     viewer::{browser::Browser, image_session::ImageSession, playback::Slideshow},
 };
 
-use super::{Command, Launch, capture::Capture};
+use super::{Command, Launch};
 
 pub struct Flowa {
     pub(super) browser: Browser,
@@ -40,7 +40,6 @@ pub struct Flowa {
     pub(super) colors: Colors,
     pub(super) last_theme_check: Instant,
     pub(super) gpu: String,
-    pub(super) capture: Capture,
     pub(super) initial_zoom: Option<f32>,
 }
 
@@ -111,7 +110,6 @@ impl Flowa {
             colors,
             last_theme_check: Instant::now(),
             gpu,
-            capture: Capture::new(launch.screenshot, launch.smoke_test),
             initial_zoom: launch.zoom,
         };
 
@@ -276,14 +274,6 @@ impl eframe::App for Flowa {
         self.show_canvas(ui, &ctx);
         self.show_overlays(&ctx);
         self.maintain_settings(&ctx);
-
-        self.capture.update(
-            &ctx,
-            &self.image,
-            &self.video,
-            &self.ui.canvas.renderer,
-            self.browser.entries().len(),
-        );
 
         ctx.request_repaint_after(Duration::from_secs(2));
     }

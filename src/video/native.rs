@@ -1,4 +1,4 @@
-//! Typed FFmpeg/libplacebo and SDL declarations linked by Cargo
+//! Typed Vulkan/libplacebo and SDL declarations linked by Cargo
 
 use std::{
     ffi::{CStr, c_char, c_int, c_void},
@@ -8,8 +8,9 @@ use std::{
 use anyhow::{Result, ensure};
 use ash::vk;
 
+use super::ffmpeg;
+
 pub(super) type Handle = *mut c_void;
-pub(super) type Interrupt = Option<unsafe extern "C" fn(*mut c_void) -> c_int>;
 pub(super) type Logger = Option<unsafe extern "C" fn(c_int, *const c_char)>;
 pub(super) type AudioCallback =
     Option<unsafe extern "C" fn(*mut c_void, Handle, c_int, c_int)>;
@@ -32,38 +33,6 @@ pub(super) struct GpuInfo {
     pub extensions: *const *const c_char,
     pub num_extensions: c_int,
     pub features: *const vk::PhysicalDeviceFeatures2<'static>,
-}
-
-#[derive(Clone, Copy)]
-#[repr(C)]
-pub(super) struct StreamInfo {
-    pub origin: f64,
-    pub duration: f64,
-    pub video_time_base: f64,
-    pub audio_time_base: f64,
-    pub frame_duration: f64,
-    pub rotation: f64,
-    pub has_audio: c_int,
-    pub codec: [c_char; 64],
-}
-
-#[derive(Clone, Copy)]
-#[repr(C)]
-pub(super) struct FrameInfo {
-    pub timestamp: i64,
-    pub width: c_int,
-    pub height: c_int,
-    pub aspect_num: c_int,
-    pub aspect_den: c_int,
-    pub rotation: f64,
-}
-
-#[repr(C)]
-pub(super) struct AudioBlock {
-    pub samples: *mut f32,
-    pub frames: c_int,
-    pub timestamp: i64,
-    pub resample_delay: f64,
 }
 
 #[derive(Default)]
@@ -106,7 +75,7 @@ macro_rules! define_api {
                 let api = Self { $($name: linked::$name,)* };
 
                 // SAFETY: The version query takes no arguments and owns no resources
-                ensure!(unsafe { (api.video_abi_version)() } == 3,
+                ensure!(unsafe { (api.video_abi_version)() } == 4,
                     "Unsupported Flowa FFmpeg shim ABI; rebuild Flowa with Cargo");
                 Ok(Arc::new(api))
             }
@@ -121,26 +90,8 @@ define_api! {
     fn gpu_get_info(gpu: Handle, info: *mut GpuInfo) -> () = "flowa_gpu_get_info";
     fn gpu_retire_targets(gpu: Handle) -> () = "flowa_gpu_retire_targets";
     fn gpu_reset_frames(gpu: Handle) -> () = "flowa_gpu_reset_frames";
-    fn gpu_render(gpu: Handle, frame: Handle, stream: Handle, target: *const Target, error: *mut c_char, size: usize) -> c_int = "flowa_gpu_render";
-    fn media_open(path: *const c_char, interrupt: Interrupt, data: *mut c_void, info: *mut StreamInfo, error: *mut c_char, size: usize) -> Handle = "flowa_media_open";
-    fn media_close(media: Handle) -> () = "flowa_media_close";
-    fn media_copy_stream(media: Handle) -> Handle = "flowa_media_copy_stream";
-    fn stream_free(stream: Handle) -> () = "flowa_stream_free";
-    fn media_read(media: Handle, packet: *mut Handle, kind: *mut c_int, bytes: *mut c_int, error: *mut c_char, size: usize) -> c_int = "flowa_media_read";
-    fn media_seek(media: Handle, timestamp: i64, error: *mut c_char, size: usize) -> c_int = "flowa_media_seek";
-    fn packet_clone(packet: Handle) -> Handle = "flowa_packet_clone";
-    fn packet_free(packet: Handle) -> () = "flowa_packet_free";
-    fn decoder_create(gpu: Handle, stream: Handle, backend: c_int, error: *mut c_char, size: usize) -> Handle = "flowa_decoder_create";
-    fn decoder_free(decoder: Handle) -> () = "flowa_decoder_free";
-    fn decoder_flush(decoder: Handle) -> () = "flowa_decoder_flush";
-    fn decoder_send(decoder: Handle, packet: Handle, error: *mut c_char, size: usize) -> c_int = "flowa_decoder_send";
-    fn decoder_receive(decoder: Handle, frame: *mut Handle, error: *mut c_char, size: usize) -> c_int = "flowa_decoder_receive";
-    fn frame_free(frame: Handle) -> () = "flowa_frame_free";
-    fn frame_get_info(frame: Handle, info: *mut FrameInfo) -> () = "flowa_frame_get_info";
-    fn video_thumbnail(path: *const c_char, interrupt: Interrupt, data: *mut c_void, pixels: *mut u8, max_width: c_int, max_height: c_int, width: *mut c_int, height: *mut c_int, rotation: *mut f64, error: *mut c_char, size: usize) -> c_int = "flowa_video_thumbnail";
-    fn media_audio_send(media: Handle, packet: Handle, error: *mut c_char, size: usize) -> c_int = "flowa_media_audio_send";
-    fn media_audio_receive(media: Handle, block: *mut AudioBlock, error: *mut c_char, size: usize) -> c_int = "flowa_media_audio_receive";
-    fn audio_block_free(samples: *mut f32) -> () = "flowa_audio_block_free";
+    fn gpu_render(gpu: Handle, frame: *const ffmpeg::AVFrame, stream: *const ffmpeg::AVStream, target: *const Target, error: *mut c_char, size: usize) -> c_int = "flowa_gpu_render";
+    fn gpu_create_decoder_device(gpu: Handle, backend: c_int) -> *mut ffmpeg::AVBufferRef = "flowa_gpu_create_decoder_device";
 
     fn sdl_init(flags: u32) -> bool = "SDL_InitSubSystem";
     fn sdl_quit(flags: u32) -> () = "SDL_QuitSubSystem";
@@ -165,15 +116,6 @@ pub(super) fn check(call: impl FnOnce(*mut c_char, usize) -> c_int) -> Result<c_
     let result = call(error.as_mut_ptr(), error.len());
     ensure!(result >= 0, "{}", error_message(&error));
     Ok(result)
-}
-
-pub(super) fn create(
-    call: impl FnOnce(*mut c_char, usize) -> Handle,
-) -> Result<std::ptr::NonNull<c_void>> {
-    let mut error = [0; 768];
-    let pointer = call(error.as_mut_ptr(), error.len());
-    std::ptr::NonNull::new(pointer)
-        .ok_or_else(|| anyhow::anyhow!(error_message(&error)))
 }
 
 fn error_message(error: &[c_char]) -> String {

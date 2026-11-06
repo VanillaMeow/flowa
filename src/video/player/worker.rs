@@ -14,18 +14,12 @@ use super::{
     media::{AudioBlock, Media, Packet, PacketKind, Receive, Sent},
     shared::{BYTE_LIMIT, Shared},
 };
-use crate::video::native::Api;
-
-pub(super) fn spawn(
-    api: Arc<Api>,
-    path: PathBuf,
-    shared: Arc<Shared>,
-) -> Result<JoinHandle<()>> {
+pub(super) fn spawn(path: PathBuf, shared: Arc<Shared>) -> Result<JoinHandle<()>> {
     Ok(thread::Builder::new()
         .name("flowa-demux-audio".into())
         .spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                run(api, &path, &shared)
+                run(&path, &shared)
             }));
             match result {
                 Ok(Err(error)) if !shared.stopped() => {
@@ -37,8 +31,8 @@ pub(super) fn spawn(
         })?)
 }
 
-fn run(api: Arc<Api>, path: &Path, shared: &Shared) -> Result<()> {
-    let mut media = Media::open(api, path, Arc::clone(&shared.interrupt))?;
+fn run(path: &Path, shared: &Shared) -> Result<()> {
+    let mut media = Media::open(path, Arc::clone(&shared.interrupt))?;
     let stream = media.copy_stream()?;
     shared.lock().stream = Some(stream);
     shared.notify();

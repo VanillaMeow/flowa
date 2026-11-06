@@ -96,7 +96,10 @@ fn perform(task: Task, clipboard: &mut Option<arboard::Clipboard>) -> Result<Out
             } else {
                 let mut extensions = catalog::EXTENSIONS.to_vec();
 
-                if cfg!(all(feature = "video", target_os = "linux")) {
+                if cfg!(all(
+                    feature = "video",
+                    any(target_os = "linux", target_os = "windows")
+                )) {
                     extensions.extend_from_slice(catalog::VIDEO_EXTENSIONS);
                 }
 

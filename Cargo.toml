@@ -34,9 +34,11 @@ log = "0.4"
 env_logger = "0.11"
 strum = { version = "0.28", features = ["derive"] }
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
 ash = { version = "0.38", optional = true }
 pollster = { version = "0.4", optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
 zbus = "5"
 
@@ -47,6 +49,7 @@ trash = "5"
 tempfile = "3"
 
 [build-dependencies]
+bindgen = { version = "0.72", default-features = false, features = ["runtime"] }
 cc = "1"
 pkg-config = "0.3"
 

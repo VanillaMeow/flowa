@@ -158,8 +158,6 @@ mod tests {
         let ctx = egui::Context::default();
         let launch = Launch {
             path: None,
-            screenshot: None,
-            smoke_test: true,
             preferences: false,
             filmstrip: false,
             info: false,

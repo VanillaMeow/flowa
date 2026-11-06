@@ -6,17 +6,18 @@ Flowa is one Rust crate. `src/main.rs` handles the native entry point, codec reg
 
 | Folder | Responsibility | Main files |
 | --- | --- | --- |
-| `app/` | Application construction and coordination | `application.rs`, `native.rs`, `command.rs`, `command_handler.rs`, `worker_results.rs`, `launch.rs`, `capture.rs` |
+| `app/` | Application construction and coordination | `application.rs`, `native.rs`, `command.rs`, `command_handler.rs`, `worker_results.rs`, `launch.rs` |
 | `viewer/` | Viewing state and rules | `browser.rs`, `catalog.rs`, `image_session.rs`, `playback.rs`, `transform.rs` |
 | `ui/` | Egui components, styling, input, and drawing | `viewer_ui.rs`, `canvas.rs`, `filmstrip.rs`, `toolbar.rs`, `inspector.rs`, `dialogs.rs`, `preferences.rs`, `keyboard.rs`, `theme.rs`, `icons.rs` |
 | `ui/rendering/` | GPU textures and drawing geometry | `image_renderer.rs`, `icon_cache.rs`, `geometry.rs` |
 | `services/` | Filesystem access, codecs, desktop integration, and background workers | `folder_scan.rs`, `image_decode.rs`, `image_loader/mod.rs`, `image_workers.rs`, `file_actions.rs` |
+| `video/` | FFmpeg media ownership, playback workers, and native GPU presentation | `media/`, `player/`, `gpu.rs`, `native.rs`, `thumbnail.rs` |
 | `settings/` | Configuration values and persistence | `model.rs`, `store.rs` |
 | `utils/` | General helpers with no application, viewer, or UI dependencies | `format.rs`, `filename.rs` |
 
-`app/application.rs` defines `Flowa`, constructs its owned components, coordinates selection changes, and implements the eframe lifecycle. `app/command.rs` defines commands; `app/command_handler.rs` executes them. `app/worker_results.rs` coordinates background results that affect several owners. Development screenshot and smoke-run state lives in `app/capture.rs`.
+`app/application.rs` defines `Flowa`, constructs its owned components, coordinates selection changes, and implements the eframe lifecycle. `app/command.rs` defines commands; `app/command_handler.rs` executes them. `app/worker_results.rs` coordinates background results that affect several owners.
 
-`app/native.rs` creates the native window and configures graphics. The saved renderer preference applies at startup. Auto initializes Vulkan alone on Linux and retries with OpenGL if graphics initialization fails before the app is created. Other platforms use eframe's default selection in Auto. A specific renderer uses only that backend, and an explicit `WGPU_BACKEND` overrides the saved preference. Preferences → Performance offers platform-appropriate choices and shows the active renderer separately. Changes take effect after restarting the app.
+`app/native.rs` creates the native window and configures graphics. The saved renderer preference applies at startup. Auto initializes Vulkan alone on Linux and Windows. If graphics initialization fails before the app is created, it retries OpenGL on Linux or DX12 on Windows. Other platforms use eframe's default selection in Auto. A specific renderer uses only that backend, and an explicit `WGPU_BACKEND` overrides the saved preference. Preferences → Performance offers platform-appropriate choices and shows the active renderer separately. Changes take effect after restarting the app.
 
 Launch options remain owned by startup until the graphics context is ready, so a failed attempt cannot start image workers or consume those options. Errors after app creation do not trigger a restart.
 
@@ -71,6 +72,29 @@ During navigation, the canvas retains only the previous preview texture and its 
 Decoded RGBA frames are shared through `Arc`. They are not copied just to send them between workers. The tile worker crops and downsamples visible regions, and a separate thumbnail worker loads visible filmstrip entries. Both have bounded request and result queues. They check the active generation before and after expensive work.
 
 GPU resources are created and evicted on the UI thread. The image renderer retains one preview texture and a bounded set of detailed tile textures. The filmstrip owns its separate bounded thumbnail cache. Each component uploads at most four completed results per UI pass. Native file dialogs, exports, trash, renames, and clipboard transfers run on a separate action worker. That worker retains clipboard ownership across requests for X11.
+
+## Video ownership
+
+`video/media/` owns FFmpeg demuxing, stream snapshots, packets, codecs, audio
+resampling, decoded frames, and bounded poster extraction. It calls bindings
+generated from the same SDK headers used to compile and link the native GPU shim.
+Input owners retain stable interruption callbacks through close. Codec owners
+retain stable hardware-format callback storage through codec-worker shutdown.
+
+CPU frames have a checked transferable type that rejects hardware pixel formats.
+The software worker owns its codec and transfers CPU frame ownership without a
+rendering-device dependency. Audio blocks use Rust-owned sample buffers. Immutable
+stream snapshots own copied parameters and can outlive the demuxer.
+
+`video/player/media.rs` couples hardware codecs and displayed hardware frames to
+the Vulkan device owner. The retained C implementation owns libplacebo, frame
+imports, GPU-to-GPU transfers, and in-flight references until timeline completion.
+The player preserves the existing queues, clocks, seek generations, and fallback
+behavior. Its current presenter still requires Vulkan even for CPU decoding.
+
+The shared Vulkan path is enabled in source for Linux and Windows; only Linux
+has native runtime validation. Metal presentation and additional renderer paths
+remain in the [backend roadmap](native/video/BACKENDS.md).
 
 ## Coordinate system
 

@@ -12,7 +12,7 @@ use super::{
 };
 use crate::video::{gpu::NativeGpu, native};
 
-// Variant order Matches the native decoder candidate indices
+// Variant order matches the native device candidate indices
 #[derive(Clone, Copy, IntoStaticStr, VariantArray)]
 #[strum(serialize_all = "lowercase")]
 enum Backend {
@@ -20,6 +20,12 @@ enum Backend {
     Vulkan,
     Vaapi,
     Software,
+}
+
+impl Backend {
+    fn available(self) -> bool {
+        !matches!(self, Self::Vaapi) || cfg!(target_os = "linux")
+    }
 }
 
 enum Codec {
@@ -244,12 +250,15 @@ impl Decoder {
         while let Some(&backend) = Backend::VARIANTS.get(self.candidate) {
             let index = self.candidate;
             self.candidate += 1;
+
+            if !backend.available() {
+                continue;
+            }
+
             let codec = match backend {
-                Backend::Software => SoftwareDecoder::new(
-                    Arc::clone(&self.gpu),
-                    Arc::clone(&self.stream),
-                )
-                .map(Codec::Software),
+                Backend::Software => {
+                    SoftwareDecoder::new(Arc::clone(&self.stream)).map(Codec::Software)
+                }
                 _ => HardwareCodec::new(&self.gpu, &self.stream, index as i32)
                     .map(Codec::Hardware),
             };
@@ -269,9 +278,17 @@ impl Decoder {
             }
         }
 
+        let candidates: Vec<&'static str> = Backend::VARIANTS
+            .iter()
+            .copied()
+            .filter(|backend| backend.available())
+            .map(Into::into)
+            .collect();
+
         bail!(
-            "Video decoding is unavailable for {}. Tried NVDEC, Vulkan Video, VA-API, and software decoding",
-            native::string(&self.stream.info.codec)
+            "Video decoding is unavailable for {}. Tried {}",
+            native::string(&self.stream.info.codec),
+            candidates.join(", ")
         )
     }
 

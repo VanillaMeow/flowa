@@ -27,11 +27,7 @@ fn main() -> anyhow::Result<()> {
     let theme_override = cli.theme;
     let launch = cli.into_launch();
 
-    let config_path = if launch.smoke_test {
-        None
-    } else {
-        settings::SettingsStore::config_path()
-    };
+    let config_path = settings::SettingsStore::config_path();
 
     let mut settings = if let Some(path) = config_path.as_ref().filter(|p| p.exists()) {
         settings::SettingsStore::load(path).unwrap_or_else(|error| {

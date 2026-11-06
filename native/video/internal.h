@@ -1,4 +1,4 @@
-// FFmpeg and libplacebo structures remain private to the interoperability shim
+// GPU structures shared by the native Vulkan helpers
 #pragma once
 
 #include "flowa_video.h"
@@ -10,7 +10,6 @@
 #include <libavutil/pixdesc.h>
 #include <libplacebo/renderer.h>
 #include <libplacebo/vulkan.h>
-#include <libswresample/swresample.h>
 #include <stdbool.h>
 
 struct gpu_flight {
@@ -41,27 +40,6 @@ struct flowa_gpu {
     void (*logger)(int, const char *);
 };
 
-struct flowa_media {
-    AVFormatContext *format;
-    AVCodecContext *audio;
-    SwrContext *resampler;
-    int video_stream;
-    int audio_stream;
-};
-
-// An immutable snapshot avoids sharing the demuxer's mutable stream context
-struct flowa_stream {
-    AVFormatContext *container;
-    AVStream *video;
-};
-
-struct flowa_decoder {
-    AVCodecContext *codec;
-    enum AVPixelFormat format;
-};
-
-int video_error(char *error, size_t size, const char *format, ...);
-int video_av_error(char *error, size_t size, const char *message, int code);
 void video_gpu_clear_targets(struct flowa_gpu *gpu);
 void video_gpu_collect(struct flowa_gpu *gpu, bool finish);
 AVBufferRef *video_gpu_frame_pool(struct flowa_gpu *gpu, const AVFrame *source);

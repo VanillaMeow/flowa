@@ -1,4 +1,4 @@
-//! Compiles the C shim and links system or portable media dependencies
+//! Generates FFmpeg bindings and links system or portable media dependencies
 
 use std::{env, error::Error, path::PathBuf, process::Command};
 
@@ -15,20 +15,34 @@ const MEDIA_LIBRARIES: &[(&str, &str)] = &[
 fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-changed=build.rs");
 
+    let target_os = env::var("CARGO_CFG_TARGET_OS")?;
+
     if env::var_os("CARGO_FEATURE_VIDEO").is_none()
-        || env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("linux")
+        || !matches!(target_os.as_str(), "linux" | "windows")
     {
         return Ok(());
     }
 
     let static_media = env::var_os("CARGO_FEATURE_STATIC_VIDEO").is_some();
+
+    if static_media && target_os != "linux" {
+        return Err(
+            "The static-video packaging profile currently supports Linux only".into(),
+        );
+    }
+
     let mut compiler = cc::Build::new();
+    compiler.std("c11").pic(true);
+
+    if target_os == "windows" {
+        compiler.define("_CRT_SECURE_NO_WARNINGS", None);
+    } else {
+        compiler.define("_POSIX_C_SOURCE", "200809L");
+    }
+
     compiler
-        .std("c11")
-        .define("_POSIX_C_SOURCE", "200809L")
-        .pic(true)
-        .flag("-Werror=implicit-function-declaration")
-        .flag("-Wno-unused-parameter");
+        .flag_if_supported("-Werror=implicit-function-declaration")
+        .flag_if_supported("-Wno-unused-parameter");
 
     let mut libraries = Vec::new();
     for &(name, version) in MEDIA_LIBRARIES {
@@ -39,8 +53,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             .probe(name)
             .map_err(|error| {
                 format!(
-                    "Video support requires {name} >= {version}. Install the media SDK \
-                 listed in BUILDING.md, or use just portable.\n{error}"
+                    "Video support requires {name} >= {version}. Configure the media SDK \
+                 listed in BUILDING.md.\n{error}"
                 )
             })?;
 
@@ -51,11 +65,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         libraries.push(library);
     }
 
-    for source in ["gpu.c", "decode.c", "media.c", "thumbnail.c"] {
-        let path = format!("native/video/{source}");
-        println!("cargo:rerun-if-changed={path}");
-        compiler.file(path);
-    }
+    generate_ffmpeg_bindings(&libraries)?;
+
+    println!("cargo:rerun-if-changed=native/video/gpu.c");
+    compiler.file("native/video/gpu.c");
 
     for header in ["flowa_video.h", "internal.h"] {
         println!("cargo:rerun-if-changed=native/video/{header}");
@@ -66,6 +79,41 @@ fn main() -> Result<(), Box<dyn Error>> {
     if static_media {
         link_static_media(&libraries);
     }
+
+    Ok(())
+}
+
+fn generate_ffmpeg_bindings(
+    libraries: &[pkg_config::Library],
+) -> Result<(), Box<dyn Error>> {
+    let mut bindings = bindgen::Builder::default()
+        .header("native/video/ffmpeg.h")
+        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
+        .allowlist_function("av.*|swr_.*|sws_.*")
+        .allowlist_type("AV.*|SwrContext|SwsContext|SwsFlags")
+        .allowlist_var("FLOWA_AVERROR_.*|AV_TIME_BASE|AVSEEK_FLAG_BACKWARD|AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX|FF_THREAD_.*|SWS_.*")
+        .allowlist_var("AV_PIX_FMT_FLAG_HWACCEL")
+        .prepend_enum_name(false)
+        .derive_default(true)
+        .generate_comments(false)
+        .layout_tests(false);
+
+    for library in libraries.iter().take(5) {
+        for include in &library.include_paths {
+            bindings = bindings.clang_arg(format!("-I{}", include.display()));
+        }
+
+        for (name, value) in &library.defines {
+            let definition = value.as_ref().map_or_else(
+                || format!("-D{name}"),
+                |value| format!("-D{name}={value}"),
+            );
+            bindings = bindings.clang_arg(definition);
+        }
+    }
+
+    let output = PathBuf::from(env::var("OUT_DIR")?).join("ffmpeg.rs");
+    bindings.generate()?.write_to_file(output)?;
 
     Ok(())
 }

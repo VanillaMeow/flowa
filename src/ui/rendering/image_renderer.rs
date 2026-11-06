@@ -108,14 +108,6 @@ impl ImageRenderer {
         })
     }
 
-    pub fn tile_count(&self) -> usize {
-        self.tiles.len()
-    }
-
-    pub fn has_pending_tiles(&self) -> bool {
-        !self.pending_tiles.is_empty()
-    }
-
     pub fn sync_frame(&mut self, ctx: &egui::Context, image: &ImageSession) {
         if self.preview_frame == image.playback.frame_index {
             return;

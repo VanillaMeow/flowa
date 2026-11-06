@@ -1,18 +1,24 @@
 # Video backend
 
 FFmpeg 9 decodes video, libplacebo renders into wgpu textures, and SDL3 plays audio.
-Rust owns playback, seeking, queues, and frame lifetimes. The C shim handles native
-contexts, FFmpeg structure access, and GPU interoperability.
+Rust owns playback, seeking, queues, FFmpeg contexts, resampling, poster extraction,
+and frame lifetimes. Bindings are generated from the linked FFmpeg SDK. The C shim
+handles the shared Vulkan device, libplacebo rendering, and GPU interoperability.
+
+Linux hardware playback is validated. Windows Vulkan source and build preparation
+are present, but native Windows build and hardware validation are still pending.
+macOS VideoToolbox/Metal playback remains planned work in [BACKENDS.md](BACKENDS.md).
 
 ## Build
 
-Use `just build`. Cargo compiles the shim and links the installed media libraries.
+Use `just build`. Cargo generates FFmpeg bindings, compiles the GPU shim, and links
+the installed media libraries. Binding generation needs Clang/libclang.
 `just portable` statically links the media stack into one executable.
 See [BUILDING.md](../../BUILDING.md) for dependencies and commands.
 
 ## Decoding and fallback
 
-Decoder selection tries NVDEC, Vulkan Video, VA-API, then FFmpeg software decoding.
+Decoder selection tries NVDEC, Vulkan Video, VA-API on Linux, then FFmpeg software decoding.
 Hardware candidates must return hardware frames. Failed candidates replay a
 bounded set of initial packets into the next decoder. Software decoding runs on a
 dedicated worker with bounded packet and frame channels and two codec threads.
@@ -26,10 +32,13 @@ report an error rather than attempting renderer recovery.
 Vulkan and VA-API frames are imported into the renderer. NVDEC uses a GPU-to-GPU
 copy into Vulkan memory. Timeline semaphores synchronize video textures with wgpu.
 Seeking keeps the displayed frame until its replacement is ready.
+Seeking also clears a latched FFmpeg interruption error so an aborted read from a
+superseded seek cannot poison the next playback generation.
 
 Software frames upload into reusable libplacebo plane textures. They use the same
 color conversion, SDR output, and tone mapping as hardware frames. CPU fallback
-still requires the Linux Vulkan renderer; it does not enable OpenGL playback.
+still requires the Vulkan presenter; it does not enable OpenGL or DX12 playback.
+CPU frames and their worker no longer retain or require a Vulkan device owner.
 
 Output is SDR RGBA with libplacebo tone mapping. Subtitles, track selection, and
 end-to-end HDR display output are not implemented.
@@ -51,7 +60,7 @@ remain limited to four per UI frame. There is no disk cache.
 Thumbnails use libswscale matrix and range conversion. HDR thumbnails do not yet
 receive the playback renderer's HDR-to-SDR tone mapping.
 
-See [rendering backend work](BACKENDS.md) for OpenGL, Metal, and DX12.
+See [the backend roadmap](BACKENDS.md) for Windows, Metal, OpenGL, and DX12.
 
 ## Validation
 
@@ -72,6 +81,7 @@ Additional focused tests:
 cargo test unsupported_hardware_falls_back_to_software -- --ignored --nocapture
 cargo test hardware_failure_recovers_with_software_frames -- --ignored --nocapture
 cargo test video_posters_handle -- --ignored --nocapture
+cargo test seek_recovers_after_an_interrupted_avio_read -- --ignored --nocapture
 ```
 
 The fallback test uses raw video with no hardware decoder configuration and checks
@@ -85,7 +95,5 @@ On GTX 1050 Ti / NVIDIA 580.178.04, NVDEC passes validation. Vulkan H.264 playba
 works but FFmpeg's frame pool triggers `VUID-VkImageCreateInfo-pNext-06811` for
 unsupported mutable-image flags. This remains unresolved.
 
-`just test-portable` checks the single executable in a clean Ubuntu runtime with
-no hardware decoder. It verifies startup, CPU decoder selection, SDL audio, and
-rendered video pixels through software Vulkan. Actual hardware playback is covered
-by the test above.
+`just portable` checks the executable's shared dependencies, RPATH, and glibc
+baseline during the build. Use the Rust tests above for playback validation.

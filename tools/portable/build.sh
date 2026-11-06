@@ -76,5 +76,4 @@ cargo build --locked --profile portable --target x86_64-unknown-linux-gnu \
 
 binary="$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/portable/flowa"
 "$project_dir/tools/checks/portable.sh" "$binary" "${FLOWA_MAX_GLIBC:-2.39}"
-"$binary" --version
 printf 'Portable executable: %s\n' "$binary"

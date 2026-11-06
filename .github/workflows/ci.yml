@@ -1,16 +1,10 @@
 name: Check
-on: [push, pull_request]
+
+on:
+  push:
+  pull_request:
+
 jobs:
-  formatting:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends uncrustify
-      - uses: extractions/setup-just@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - run: just check-format
   linux-images:
     runs-on: ubuntu-24.04
     steps:
@@ -19,16 +13,20 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - uses: extractions/setup-just@v4
+
       - run: sudo apt-get update && sudo apt-get install -y libwayland-dev libxkbcommon-dev libdav1d-dev libheif-dev libclang-dev
       # The portable workflow builds video with the pinned FFmpeg 9 SDK
-      - run: just check-rust --no-default-features --features avif,heif
-      - run: just test --no-default-features --features avif,heif
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets --no-default-features --features avif,heif -- -D warnings
+      - run: cargo check --locked --no-default-features
+      - run: cargo test --locked --no-default-features --features avif,heif
+
   windows-core:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+
       - run: cargo test --locked --no-default-features
       - run: cargo build --locked --release --no-default-features

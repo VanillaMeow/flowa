@@ -4,8 +4,9 @@ Run `just` to list commands.
 
 ## Local build
 
-Requires Rust 1.99+, Just, a C compiler, and pkg-config. Linux video builds need
-FFmpeg 9+, libplacebo 7.360+, SDL3, and Vulkan headers. AVIF and HEIC support need
+Requires Rust 1.99+, Just, a C compiler, and pkg-config. Video binding generation
+also requires Clang/libclang. Linux video builds need FFmpeg 9+, libplacebo 7.360+,
+SDL3, and Vulkan headers. AVIF and HEIC support need
 dav1d and libheif 1.17+ with an HEVC decoder.
 
 On Arch Linux:
@@ -22,8 +23,8 @@ just build
 ./target/release/flowa /path/to/file
 ```
 
-Cargo compiles the C video shim automatically. Local builds use system media
-libraries. For CPU-specific optimization:
+Cargo generates FFmpeg bindings from the installed SDK and compiles the C GPU
+shim automatically. Local builds use system media libraries. For CPU-specific optimization:
 
 ```sh
 RUSTFLAGS="-C target-cpu=native" just build
@@ -40,6 +41,35 @@ On Windows, use that command with Rust MSVC and the Visual Studio C++ build tool
 
 Linux file dialogs and trash operations need a working desktop portal and D-Bus.
 
+## Windows Vulkan build preparation
+
+The video source path is enabled for Windows, with Vulkan as the primary GUI and
+video renderer. Native Windows compilation, packaging, and GPU playback have not
+yet been validated. This is not a completed Windows release milestone.
+
+Use an x64 MSVC developer environment with Rust, Clang/libclang, pkg-config, and
+an SDK containing FFmpeg 9+, libplacebo 7.360+, SDL3 3.2+, and Vulkan headers.
+The SDK must provide matching headers, MSVC-compatible import libraries, runtime
+DLLs, and `.pc` files with valid include and library paths. Configure
+`PKG_CONFIG_PATH` for that SDK and `LIBCLANG_PATH` if libclang is outside its normal
+search path. Put runtime DLLs on `PATH` or alongside the executable.
+
+Build the video path without requiring the optional AVIF/HEIF SDKs:
+
+```sh
+cargo build --locked --release --no-default-features --features video
+```
+
+FFmpeg must be built with the intended hardware paths. NVDEC needs the compatible
+NVIDIA driver and CUDA/Vulkan interoperability; Vulkan Video needs the matching
+driver and codec capabilities. VA-API is skipped on Windows. Run the native tests
+from the [video guide](native/video/README.md#validation) on Windows hardware before
+declaring any GPU/codec combination supported.
+
+Auto tries Vulkan first and retries DX12 for GUI startup if necessary. Video on a
+DX12 renderer remains planned work. `static-video` currently supports Linux only;
+Windows DLL assembly and deployment remain part of native validation and packaging.
+
 ## Portable Linux build
 
 Requires Just and Podman or Docker. The container supplies Rust and the native SDK;
@@ -47,7 +77,6 @@ Ubuntu 24.04's system FFmpeg is too old for a local video build.
 
 ```sh
 just portable
-just test-portable
 ```
 
 Output: `target/x86_64-unknown-linux-gnu/portable/flowa`
@@ -60,6 +89,7 @@ requires Vulkan, including when decoding on the CPU.
 Sources are checksum-verified and cached in `.cache/portable-deps`. Builds use two
 jobs by default; override with `CARGO_BUILD_JOBS`. Portable builds always use the
 generic x86-64 CPU baseline. `CONTAINER_ENGINE=docker` selects Docker explicitly.
+The build checks the executable's shared dependencies, RPATH, and glibc baseline.
 
 `just portable-native` runs the same build on an already prepared Linux host.
 The required SDK packages are listed in `tools/portable/Containerfile`.
@@ -69,14 +99,11 @@ The required SDK packages are listed in `tools/portable/Containerfile`.
 | Command | Action |
 | --- | --- |
 | `just fmt` | Format Rust and C |
-| `just check` | Check formatting and run Rust and C analysis |
+| `just check` | Check Rust formatting, run Clippy, and check the minimal feature build |
 | `just test` | Run ordinary tests |
-| `just configure-c` | Generate clangd's compilation database |
-| `just test-portable` | Check executable dependencies and run a clean-runtime test |
 
-C tools: Uncrustify, clang-tidy, and clangd. On Arch, install `uncrustify clang`;
-on Debian/Ubuntu, install `uncrustify clang clang-tidy clangd`.
-`UNCRUSTIFY`, `CLANG`, and `CLANG_TIDY` can select alternate executables.
+Install Uncrustify to format C with `just fmt`. `UNCRUSTIFY` can select an alternate
+executable. Cargo compiles the C shim during video builds.
 
 C formatting follows `uncrustify.cfg`. For editor formatting, pass the buffer to
 `uncrustify -q -c /path/to/flowa/uncrustify.cfg -l C`. Clangd's built-in formatter

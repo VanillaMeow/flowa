@@ -1,12 +1,16 @@
 //! Video sessions with an optional native Vulkan playback backend
 
-#[cfg(all(feature = "video", target_os = "linux"))]
+#[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
+mod ffmpeg;
+#[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
 pub(crate) mod gpu;
-#[cfg(all(feature = "video", target_os = "linux"))]
+#[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
+mod media;
+#[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
 mod native;
-#[cfg(all(feature = "video", target_os = "linux"))]
+#[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
 mod player;
-#[cfg(all(feature = "video", target_os = "linux"))]
+#[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
 mod thumbnail;
 
 use std::{path::Path, time::Duration};
@@ -19,12 +23,15 @@ pub(crate) fn thumbnail(
     generation: &std::sync::atomic::AtomicU64,
     expected: u64,
 ) -> Result<egui::ColorImage> {
-    #[cfg(all(feature = "video", target_os = "linux"))]
+    #[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
     {
         thumbnail::extract(path, generation, expected)
     }
 
-    #[cfg(not(all(feature = "video", target_os = "linux")))]
+    #[cfg(not(all(
+        feature = "video",
+        any(target_os = "linux", target_os = "windows")
+    )))]
     {
         let _ = (path, generation, expected);
         bail!("This build does not support video thumbnails")
@@ -91,7 +98,7 @@ impl Default for VideoState {
 pub(crate) struct VideoSession {
     pub state: VideoState,
     pub texture: Option<egui::TextureId>,
-    #[cfg(all(feature = "video", target_os = "linux"))]
+    #[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
     player: Option<player::Player>,
     unavailable: Option<String>,
 }
@@ -99,7 +106,7 @@ pub(crate) struct VideoSession {
 impl VideoSession {
     /// Initializes playback only after the application's compatible device exists
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        #[cfg(all(feature = "video", target_os = "linux"))]
+        #[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
         if let Some(graphics) = &cc.wgpu_render_state {
             return match player::Player::new(graphics, &cc.egui_ctx) {
                 Ok(player) => Self {
@@ -135,7 +142,7 @@ impl VideoSession {
             ..Default::default()
         };
 
-        #[cfg(all(feature = "video", target_os = "linux"))]
+        #[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
         if let Some(player) = &mut self.player {
             if let Err(error) = player.load(path) {
                 self.fail(error);
@@ -158,7 +165,7 @@ impl VideoSession {
 
     /// Stops playback before the browser changes its selection
     pub fn close(&mut self) {
-        #[cfg(all(feature = "video", target_os = "linux"))]
+        #[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
         if self.state.active
             && let Some(player) = &mut self.player
         {
@@ -174,7 +181,7 @@ impl VideoSession {
 
     /// Advances playback and prepares a frame without waiting for GPU completion
     pub fn poll(&mut self, ctx: &egui::Context) {
-        #[cfg(all(feature = "video", target_os = "linux"))]
+        #[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
         if let Some(player) = &mut self.player {
             player.poll(&mut self.state);
 
@@ -190,12 +197,18 @@ impl VideoSession {
             && (!self.state.paused || self.state.seeking)
             && self.state.error.is_none()
         {
-            #[cfg(all(feature = "video", target_os = "linux"))]
+            #[cfg(all(
+                feature = "video",
+                any(target_os = "linux", target_os = "windows")
+            ))]
             let delay = self
                 .player
                 .as_ref()
                 .map_or(Duration::from_millis(16), player::Player::repaint_after);
-            #[cfg(not(all(feature = "video", target_os = "linux")))]
+            #[cfg(not(all(
+                feature = "video",
+                any(target_os = "linux", target_os = "windows")
+            )))]
             let delay = Duration::from_millis(16);
             ctx.request_repaint_after(delay);
         }
@@ -203,12 +216,15 @@ impl VideoSession {
 
     /// Reports whether this window has an initialized Vulkan playback backend
     pub fn available(&self) -> bool {
-        #[cfg(all(feature = "video", target_os = "linux"))]
+        #[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
         {
             self.player.is_some()
         }
 
-        #[cfg(not(all(feature = "video", target_os = "linux")))]
+        #[cfg(not(all(
+            feature = "video",
+            any(target_os = "linux", target_os = "windows")
+        )))]
         {
             false
         }
@@ -248,7 +264,7 @@ impl VideoSession {
             bail!("Playback control must be finite");
         }
 
-        #[cfg(all(feature = "video", target_os = "linux"))]
+        #[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
         if let Some(player) = &mut self.player {
             return player.command(command);
         }
@@ -257,7 +273,7 @@ impl VideoSession {
         bail!("Video backend unavailable")
     }
 
-    #[cfg(all(feature = "video", target_os = "linux"))]
+    #[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
     fn fail(&mut self, error: anyhow::Error) {
         log::error!("Video playback: {error:#}");
         self.state.loading = false;

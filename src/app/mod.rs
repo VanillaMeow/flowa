@@ -1,7 +1,6 @@
 //! Application construction and coordination
 
 mod application;
-mod capture;
 mod command;
 mod command_handler;
 mod launch;

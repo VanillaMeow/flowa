@@ -1,8 +1,6 @@
 //! Small CPU posters with cancellation and a deadline for blocking media I/O
 
 use std::{
-    ffi::{CString, c_void},
-    os::unix::ffi::OsStrExt,
     path::Path,
     sync::atomic::{AtomicU64, Ordering},
     time::{Duration, Instant},
@@ -11,7 +9,7 @@ use std::{
 use anyhow::{Context, Result, ensure};
 use image::DynamicImage;
 
-use super::native::{self, Api};
+use super::media;
 
 struct Cancellation<'a> {
     generation: &'a AtomicU64,
@@ -26,58 +24,28 @@ impl Cancellation<'_> {
     }
 }
 
-unsafe extern "C" fn interrupted(data: *mut c_void) -> i32 {
-    // SAFETY: The synchronous native call retains this borrowed cancellation object
-    let cancellation = unsafe { &*data.cast::<Cancellation<'_>>() };
-    i32::from(cancellation.cancelled())
-}
-
 pub(super) fn extract(
     path: &Path,
     generation: &AtomicU64,
     expected: u64,
 ) -> Result<egui::ColorImage> {
-    let api = Api::load()?;
-    let path = CString::new(path.as_os_str().as_bytes())?;
-    let mut cancellation = Cancellation {
+    let cancellation = Cancellation {
         generation,
         expected,
         deadline: Instant::now() + Duration::from_secs(3),
     };
     ensure!(!cancellation.cancelled(), "Thumbnail request was cancelled");
 
-    let mut pixels = vec![0_u8; 192 * 128 * 4];
-    let mut width = 0;
-    let mut height = 0;
-    let mut rotation = 0.0;
-
-    // SAFETY: Output storage fits the maximum dimensions and all borrows last through extraction
-    native::check(|error, size| unsafe {
-        (api.video_thumbnail)(
-            path.as_ptr(),
-            Some(interrupted),
-            (&raw mut cancellation).cast(),
-            pixels.as_mut_ptr(),
-            192,
-            128,
-            &mut width,
-            &mut height,
-            &mut rotation,
-            error,
-            size,
-        )
-    })?;
+    let poster = media::extract_poster(path, || cancellation.cancelled(), [192, 128])?;
     ensure!(!cancellation.cancelled(), "Thumbnail request was cancelled");
     ensure!(
-        (1..=192).contains(&width) && (1..=128).contains(&height),
+        (1..=192).contains(&poster.width) && (1..=128).contains(&poster.height),
         "Invalid video thumbnail dimensions"
     );
-    pixels.truncate(width as usize * height as usize * 4);
-
-    let image = image::RgbaImage::from_raw(width as u32, height as u32, pixels)
+    let image = image::RgbaImage::from_raw(poster.width, poster.height, poster.pixels)
         .context("Invalid video thumbnail pixels")?;
     let image = DynamicImage::ImageRgba8(image);
-    let quarter_turns = (-rotation / 90.0).round() as i32;
+    let quarter_turns = (-poster.rotation / 90.0).round() as i32;
     let image = match quarter_turns.rem_euclid(4) {
         1 => image.rotate90(),
         2 => image.rotate180(),
@@ -116,7 +84,7 @@ mod tests {
     fn video_posters_handle_delayed_frames_aspect_rotation_and_invalid_files()
     -> Result<()> {
         let folder = tempfile::tempdir()?;
-        let clip = folder.path().join("poster.mp4");
+        let clip = folder.path().join("poster-ž-日本語.mp4");
         let rotated = folder.path().join("rotated.mp4");
         let generated = std::process::Command::new("ffmpeg")
             .args([

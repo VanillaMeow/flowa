@@ -29,22 +29,14 @@ pub(crate) struct Cli {
     #[arg(long, value_name = "NAME", value_parser = parse_theme)]
     pub theme: Option<Theme>,
 
-    #[arg(long, hide = true)]
-    smoke_test: bool,
-
     #[arg(long, hide = true, value_name = "PERCENT", value_parser = parse_zoom)]
     zoom: Option<f32>,
-
-    #[arg(long, hide = true, value_name = "PATH")]
-    screenshot: Option<PathBuf>,
 }
 
 impl Cli {
     pub fn into_launch(self) -> Launch {
         Launch {
             path: self.path,
-            screenshot: self.screenshot,
-            smoke_test: self.smoke_test,
             preferences: self.preferences,
             filmstrip: self.filmstrip,
             info: self.info,

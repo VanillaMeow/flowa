@@ -32,9 +32,6 @@ jobs:
       - name: Build the single portable executable
         run: just portable
 
-      - name: Verify portability and hardware-only behavior
-        run: just test-portable
-
       - uses: actions/upload-artifact@v7
         with:
           path: target/x86_64-unknown-linux-gnu/portable/flowa

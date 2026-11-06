@@ -2,9 +2,64 @@
 #include "internal.h"
 
 #include <libplacebo/utils/libav.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+static int video_error(
+    char *error,
+    size_t size,
+    const char *format,
+    ...
+) {
+    va_list arguments;
+    va_start(
+        arguments,
+        format
+    );
+    vsnprintf(
+        error,
+        size,
+        format,
+        arguments
+    );
+    va_end(
+        arguments
+    );
+
+    return -1;
+}
+
+struct AVBufferRef *flowa_gpu_create_decoder_device(
+    struct flowa_gpu *gpu,
+    int backend
+) {
+    AVBufferRef *device = NULL;
+
+    if (backend == 1)
+        return gpu->video_queue && gpu->av_device ? av_buffer_ref(gpu->av_device)
+                                                  : NULL;
+
+    if (backend == 0 && gpu->av_device)
+        av_hwdevice_ctx_create_derived(
+            &device,
+            AV_HWDEVICE_TYPE_CUDA,
+            gpu->av_device,
+            0
+        );
+
+    if (backend == 2 && gpu->render_node[0])
+        av_hwdevice_ctx_create(
+            &device,
+            AV_HWDEVICE_TYPE_VAAPI,
+            gpu->render_node,
+            NULL,
+            0
+        );
+
+    return device;
+}
 
 static void gpu_log(void *userdata, enum pl_log_level level, const char *message) {
     struct flowa_gpu *gpu = userdata;
@@ -358,8 +413,8 @@ error:
 
 int flowa_gpu_render(
     struct flowa_gpu *gpu,
-    const struct flowa_frame *frame,
-    const struct flowa_stream *stream,
+    const struct AVFrame *frame,
+    const struct AVStream *stream,
     const struct flowa_video_target *target,
     char *error,
     size_t error_size
@@ -437,7 +492,7 @@ int flowa_gpu_render(
             "Cannot map the video frame into the Vulkan renderer"
         );
     }
-    pl_frame_copy_stream_props(&input, stream->video);
+    pl_frame_copy_stream_props(&input, stream);
 
     struct gpu_flight *flight = calloc(1, sizeof(*flight));
     if (!flight) {
