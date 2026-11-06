@@ -10,7 +10,10 @@ use super::{
     shared::{BYTE_LIMIT, PACKET_LIMIT, Shared},
     software::SoftwareDecoder,
 };
-use crate::video::{gpu::NativeGpu, native};
+use crate::{
+    settings::VideoDecoder,
+    video::{gpu::NativeGpu, media::DeviceRef, native},
+};
 
 // Variant order matches the native device candidate indices
 #[derive(Clone, Copy, IntoStaticStr, VariantArray)]
@@ -26,6 +29,49 @@ impl Backend {
     fn available(self) -> bool {
         !matches!(self, Self::Vaapi) || cfg!(target_os = "linux")
     }
+
+    fn candidates(preference: VideoDecoder) -> &'static [Self] {
+        match preference {
+            VideoDecoder::Auto => Self::VARIANTS,
+            VideoDecoder::Nvdec => &[Self::Nvdec, Self::Software],
+            VideoDecoder::Vulkan => &[Self::Vulkan, Self::Software],
+            VideoDecoder::Vaapi => &[Self::Vaapi, Self::Software],
+            VideoDecoder::Software => &[Self::Software],
+        }
+    }
+
+    fn preference(self) -> VideoDecoder {
+        match self {
+            Self::Nvdec => VideoDecoder::Nvdec,
+            Self::Vulkan => VideoDecoder::Vulkan,
+            Self::Vaapi => VideoDecoder::Vaapi,
+            Self::Software => VideoDecoder::Software,
+        }
+    }
+}
+
+pub(super) fn available_decoders(gpu: &NativeGpu) -> Vec<VideoDecoder> {
+    let mut decoders = vec![VideoDecoder::Auto];
+
+    for &backend in Backend::VARIANTS {
+        if matches!(backend, Backend::Software) || !backend.available() {
+            continue;
+        }
+
+        // SAFETY: The probe owns its temporary reference and borrows the live GPU
+        let device = unsafe {
+            DeviceRef::from_raw((gpu.api.gpu_create_decoder_device)(
+                gpu.handle.as_ptr(),
+                backend as i32,
+            ))
+        };
+        if device.is_ok() {
+            decoders.push(backend.preference());
+        }
+    }
+
+    decoders.push(VideoDecoder::Software);
+    decoders
 }
 
 enum Codec {
@@ -67,6 +113,7 @@ pub(super) struct Decoder {
     gpu: Arc<NativeGpu>,
     stream: Arc<Stream>,
     candidate: usize,
+    candidates: &'static [Backend],
     backend: Option<Backend>,
     pub selected: Option<&'static str>,
     probe: Vec<Packet>,
@@ -79,12 +126,17 @@ pub(super) struct Decoder {
 }
 
 impl Decoder {
-    pub fn new(gpu: Arc<NativeGpu>, stream: Arc<Stream>) -> Self {
+    pub fn new(
+        gpu: Arc<NativeGpu>,
+        stream: Arc<Stream>,
+        preference: VideoDecoder,
+    ) -> Self {
         Self {
             codec: None,
             gpu,
             stream,
             candidate: 0,
+            candidates: Backend::candidates(preference),
             backend: None,
             selected: None,
             probe: Vec::new(),
@@ -118,7 +170,8 @@ impl Decoder {
         self.clear_probe();
         self.probing = true;
         self.selected = None;
-        self.candidate = Backend::Software as usize;
+        self.candidates = &[Backend::Software];
+        self.candidate = 0;
         self.open_next()
     }
 
@@ -247,8 +300,7 @@ impl Decoder {
         self.codec = None;
         self.unsent = None;
 
-        while let Some(&backend) = Backend::VARIANTS.get(self.candidate) {
-            let index = self.candidate;
+        while let Some(&backend) = self.candidates.get(self.candidate) {
             self.candidate += 1;
 
             if !backend.available() {
@@ -259,7 +311,7 @@ impl Decoder {
                 Backend::Software => {
                     SoftwareDecoder::new(Arc::clone(&self.stream)).map(Codec::Software)
                 }
-                _ => HardwareCodec::new(&self.gpu, &self.stream, index as i32)
+                _ => HardwareCodec::new(&self.gpu, &self.stream, backend as i32)
                     .map(Codec::Hardware),
             };
             match codec {
@@ -278,7 +330,8 @@ impl Decoder {
             }
         }
 
-        let candidates: Vec<&'static str> = Backend::VARIANTS
+        let candidates: Vec<&'static str> = self
+            .candidates
             .iter()
             .copied()
             .filter(|backend| backend.available())
@@ -302,6 +355,7 @@ impl Decoder {
 #[cfg(test)]
 mod tests {
     use super::Backend;
+    use crate::settings::VideoDecoder;
     use strum::VariantArray;
 
     #[test]
@@ -310,5 +364,22 @@ mod tests {
             Backend::VARIANTS.iter().copied().map(Into::into).collect();
 
         assert_eq!(names, ["nvdec", "vulkan", "vaapi", "software"]);
+    }
+
+    #[test]
+    fn an_explicit_decoder_only_falls_back_to_software() {
+        for (preference, expected) in [
+            (VideoDecoder::Nvdec, vec!["nvdec", "software"]),
+            (VideoDecoder::Vulkan, vec!["vulkan", "software"]),
+            (VideoDecoder::Vaapi, vec!["vaapi", "software"]),
+            (VideoDecoder::Software, vec!["software"]),
+        ] {
+            let names: Vec<&'static str> = Backend::candidates(preference)
+                .iter()
+                .copied()
+                .map(Into::into)
+                .collect();
+            assert_eq!(names, expected);
+        }
     }
 }

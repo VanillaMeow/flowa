@@ -22,7 +22,8 @@ and hardware validation are pending. The macOS path remains planned work.
 
 The UI already offers Vulkan, OpenGL, Metal, and DX12 preferences on applicable
 platforms. Still-image support and renderer initialization do not establish video
-support. Linux startup currently retries OpenGL if Vulkan initialization fails.
+support. Linux startup retries OpenGL if Vulkan initialization fails. A saved
+renderer selection that fails before the app opens is reset to Auto and retried.
 
 ## Primary architecture
 

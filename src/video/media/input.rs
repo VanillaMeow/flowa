@@ -13,7 +13,7 @@ use std::{
 use anyhow::{Result, ensure};
 
 use super::{
-    AudioBlock, Packet, PacketKind, Receive, Sent, Stream, StreamInfo,
+    AudioBlock, AudioStreamInfo, Packet, PacketKind, Receive, Sent, Stream, StreamInfo,
     audio::AudioDecoder, check, ffi, path_string, rational, stream_rotation,
 };
 
@@ -167,14 +167,17 @@ impl<'a> Input<'a> {
                 ptr::null_mut(),
             )
         };
-        let mut codec = [0; 64];
-        let name = unsafe {
-            CStr::from_ptr(ffi::avcodec_get_name((*video.codecpar).codec_id))
-        };
-
-        for (destination, &source) in codec.iter_mut().take(63).zip(name.to_bytes()) {
-            *destination = source as std::ffi::c_char;
-        }
+        let codec = codec_name(unsafe { (*video.codecpar).codec_id });
+        let audio = audio_index.map(|index| {
+            // SAFETY: The input owns the selected stream and its codec parameters
+            let parameters = unsafe { &*self.stream(index).codecpar };
+            AudioStreamInfo {
+                codec: codec_name(parameters.codec_id),
+                channels: parameters.ch_layout.nb_channels.max(0) as u32,
+                sample_rate: parameters.sample_rate.max(0) as u32,
+                bit_rate: parameters.bit_rate.max(0) as u64,
+            }
+        });
 
         let video_time_base = rational(video.time_base);
         let mut duration = if format.duration == i64::MIN {
@@ -203,10 +206,20 @@ impl<'a> Input<'a> {
                 1.0 / 30.0
             },
             rotation: stream_rotation(video).unwrap_or(0.0),
-            has_audio: i32::from(audio_index.is_some()),
+            audio,
             codec,
         }
     }
+}
+
+fn codec_name(id: ffi::AVCodecID) -> [std::ffi::c_char; 64] {
+    let mut codec = [0; 64];
+    // SAFETY: FFmpeg returns a static NUL-terminated codec name
+    let name = unsafe { CStr::from_ptr(ffi::avcodec_get_name(id)) };
+    for (destination, &source) in codec.iter_mut().take(63).zip(name.to_bytes()) {
+        *destination = source as std::ffi::c_char;
+    }
+    codec
 }
 
 impl Drop for Input<'_> {

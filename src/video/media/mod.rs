@@ -23,6 +23,14 @@ pub(super) use poster::extract_poster;
 pub(super) use stream::Stream;
 
 #[derive(Clone, Copy)]
+pub(super) struct AudioStreamInfo {
+    pub codec: [std::ffi::c_char; 64],
+    pub channels: u32,
+    pub sample_rate: u32,
+    pub bit_rate: u64,
+}
+
+#[derive(Clone, Copy)]
 pub(super) struct StreamInfo {
     pub origin: f64,
     pub duration: f64,
@@ -30,7 +38,7 @@ pub(super) struct StreamInfo {
     pub audio_time_base: f64,
     pub frame_duration: f64,
     pub rotation: f64,
-    pub has_audio: i32,
+    pub audio: Option<AudioStreamInfo>,
     pub codec: [std::ffi::c_char; 64],
 }
 

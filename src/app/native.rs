@@ -4,7 +4,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use eframe::{NativeOptions, egui_wgpu::WgpuSetup, wgpu::Backends};
 
-use crate::settings::{RendererPreference, Settings};
+use crate::settings::{RendererPreference, Settings, SettingsStore};
 
 use super::{Flowa, Launch};
 
@@ -19,7 +19,8 @@ pub(crate) fn run(
     config_path: Option<PathBuf>,
     launch: Launch,
 ) -> eframe::Result {
-    let mut options = native_options(settings.window_size);
+    let window_size = settings.window_size;
+    let mut options = native_options(window_size);
     let renderer = settings.renderer;
 
     configure_video(&mut options, renderer);
@@ -35,7 +36,18 @@ pub(crate) fn run(
 
     if let Some(backends) = preferred_backends(renderer) {
         set_backends(&mut options, backends);
-        return run_once(options, &mut startup);
+        let result = run_once(options, &mut startup);
+        if startup.is_none() || !matches!(&result, Err(eframe::Error::Wgpu(_))) {
+            return result;
+        }
+
+        log::warn!(
+            "{} initialization failed; retrying with Auto",
+            renderer.as_ref()
+        );
+        reset_renderer(&mut startup);
+        options = native_options(window_size);
+        configure_video(&mut options, RendererPreference::Auto);
     }
 
     let Some((fallback, fallback_name)) = auto_fallback() else {
@@ -58,6 +70,18 @@ pub(crate) fn run(
     set_backends(&mut options, fallback);
 
     run_once(options, &mut startup)
+}
+
+fn reset_renderer(startup: &mut Option<Startup>) {
+    let Some(startup) = startup else {
+        return;
+    };
+    startup.settings.renderer = RendererPreference::Auto;
+    if let Some(path) = &startup.config_path
+        && let Err(error) = SettingsStore::save(&startup.settings, path)
+    {
+        log::warn!("Could not save renderer recovery preference: {error:#}");
+    }
 }
 
 fn auto_fallback() -> Option<(Backends, &'static str)> {
@@ -178,5 +202,44 @@ fn app_icon() -> egui::IconData {
         rgba: pixmap.take(),
         width: 128,
         height: 128,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_renderer_selection_is_reset_and_persisted() -> anyhow::Result<()> {
+        let folder = tempfile::tempdir()?;
+        let path = folder.path().join("settings.json");
+        let settings = Settings {
+            renderer: RendererPreference::OpenGl,
+            memory_mb: 512,
+            ..Default::default()
+        };
+        SettingsStore::save(&settings, &path)?;
+        let mut startup = Some(Startup {
+            settings,
+            config_path: Some(path.clone()),
+            launch: Launch {
+                path: None,
+                preferences: false,
+                filmstrip: false,
+                info: false,
+                zoom: None,
+            },
+        });
+
+        reset_renderer(&mut startup);
+
+        let saved = SettingsStore::load(&path)?;
+        assert_eq!(saved.renderer, RendererPreference::Auto);
+        assert_eq!(saved.memory_mb, 512);
+        assert_eq!(
+            startup.as_ref().map(|startup| startup.settings.renderer),
+            Some(RendererPreference::Auto)
+        );
+        Ok(())
     }
 }

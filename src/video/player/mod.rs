@@ -101,7 +101,16 @@ impl Player {
             Command::TogglePause => self.engine.toggle_pause(),
             Command::Seek(seconds) => self.engine.seek(seconds),
             Command::Volume(volume) => self.engine.set_volume(volume),
+            Command::Decoder(preference) => {
+                self.engine.set_decoder(preference)?;
+                self.needs_redraw = true;
+                Ok(())
+            }
         }
+    }
+
+    pub fn available_decoders(&self) -> Vec<crate::settings::VideoDecoder> {
+        decoder::available_decoders(&self.gpu)
     }
 
     pub fn poll(&mut self, state: &mut VideoState) {
@@ -118,6 +127,9 @@ impl Player {
             state.loading = false;
             self.displayed = None;
         } else {
+            if self.status.error.is_some() {
+                state.error = None;
+            }
             state.loading = status.loading;
         }
 
@@ -141,6 +153,8 @@ impl Player {
         state.duration = status.duration;
         state.volume = status.volume;
         state.size = status.size;
+        state.codec.clone_from(&status.codec);
+        state.audio.clone_from(&status.audio_info);
         self.needs_redraw |= status.frame_serial != self.status.frame_serial;
         self.status = status;
     }
@@ -194,6 +208,7 @@ mod tests {
     };
 
     use super::Player;
+    use crate::settings::VideoDecoder;
     use crate::video::Command;
     use crate::video::{VideoState, gpu};
 
@@ -248,7 +263,7 @@ mod tests {
                 "-f",
                 "lavfi",
                 "-i",
-                "anullsrc=r=48000:cl=stereo",
+                "anullsrc=r=44100:cl=mono",
                 "-t",
                 "6",
                 "-c:v",
@@ -268,6 +283,14 @@ mod tests {
         require_vulkan_validation(&graphics)?;
         let ctx = egui::Context::default();
         let mut player = Player::new(&graphics, &ctx)?;
+        if let Ok(expected) = std::env::var("FLOWA_TEST_VIDEO_DECODER") {
+            let preference = hardware_preference(&expected)?;
+            ensure!(
+                player.available_decoders().contains(&preference),
+                "The selected decoder device is unavailable"
+            );
+            player.command(Command::Decoder(preference))?;
+        }
         let mut state = VideoState {
             active: true,
             loading: true,
@@ -293,9 +316,21 @@ mod tests {
 
         ensure!(state.duration > 5., "Video duration was not received");
         ensure!(
+            state.codec == codec,
+            "Incorrect video codec: {}",
+            state.codec
+        );
+        ensure!(
             player.status.audio.starts_with("sdl3/"),
             "SDL3 audio output was not selected"
         );
+        let audio = state
+            .audio
+            .clone()
+            .context("Audio metadata was not received")?;
+        ensure!(audio.codec == "aac", "Incorrect audio codec");
+        ensure!(audio.channels == 1, "Source channel count was lost");
+        ensure!(audio.sample_rate == 44100, "Source sample rate was lost");
         let initial_frame = assert_video_pixels(&player)?;
 
         player.command(Command::TogglePause)?;
@@ -308,6 +343,33 @@ mod tests {
         player.render([320, 180])?;
         graphics.queue.submit([]);
         assert_video_pixels(&player)?;
+
+        let hardware_name = state.decoder.clone();
+        let hardware = hardware_preference(&hardware_name)?;
+        let paused_position = state.position;
+        for (preference, expected) in [
+            (VideoDecoder::Software, "software"),
+            (hardware, hardware_name.as_str()),
+        ] {
+            player.command(Command::Decoder(preference))?;
+            pump(&mut player, &mut state, |state| {
+                state.decoder == expected && !state.seeking
+            })?;
+            ensure!(state.paused, "Switching decoder resumed paused playback");
+            ensure!(
+                (state.position - paused_position).abs() < 0.15,
+                "Switching decoder lost the playback position"
+            );
+            ensure!(
+                state.codec == codec,
+                "Switching decoder lost codec metadata"
+            );
+            ensure!(
+                state.audio.as_ref() == Some(&audio),
+                "Switching lost audio metadata"
+            );
+            assert_video_pixels(&player)?;
+        }
 
         player.command(Command::Volume(25.0))?;
         pump(&mut player, &mut state, |state| {
@@ -391,6 +453,15 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    fn hardware_preference(name: &str) -> Result<VideoDecoder> {
+        match name {
+            "nvdec" => Ok(VideoDecoder::Nvdec),
+            "vulkan" => Ok(VideoDecoder::Vulkan),
+            "vaapi" => Ok(VideoDecoder::Vaapi),
+            _ => anyhow::bail!("Unsupported hardware decoder: {name}"),
+        }
     }
 
     fn test_graphics() -> Result<RenderState> {

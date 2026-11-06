@@ -138,7 +138,7 @@ fn apply_seek(media: &mut Media, shared: &Shared) -> Result<bool> {
 }
 
 fn finish_input(media: &mut Media, shared: &Shared, generation: u64) -> Result<()> {
-    if media.info.has_audio != 0 {
+    if media.info.audio.is_some() {
         feed_audio(media, None, shared, generation)?;
     }
 

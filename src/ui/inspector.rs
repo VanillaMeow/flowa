@@ -107,11 +107,46 @@ fn video_details(ui: &mut egui::Ui, video: &VideoState, colors: Colors) {
         detail(ui, "DURATION", &format::media_time(video.duration), colors);
     }
 
+    if !video.codec.is_empty() {
+        detail(ui, "VIDEO CODEC", video.codec_description(), colors);
+        audio_details(ui, video, colors);
+    }
+
     detail(ui, "DECODER", &video.decoder_description(), colors);
     detail(ui, "RENDERER", "Vulkan · libplacebo / wgpu", colors);
 
     if let Some(error) = &video.error {
         detail(ui, "PLAYBACK ERROR", error, colors);
+    }
+}
+
+fn audio_details(ui: &mut egui::Ui, video: &VideoState, colors: Colors) {
+    let Some(audio) = &video.audio else {
+        detail(ui, "AUDIO", "No audio track", colors);
+        return;
+    };
+    detail(ui, "AUDIO CODEC", &audio.codec.to_uppercase(), colors);
+    let channels = match audio.channels {
+        1 => "Mono".into(),
+        2 => "Stereo".into(),
+        count => format!("{count} channels"),
+    };
+    detail(ui, "AUDIO CHANNELS", &channels, colors);
+    if audio.sample_rate > 0 {
+        detail(
+            ui,
+            "SAMPLE RATE",
+            &format!("{} Hz", audio.sample_rate),
+            colors,
+        );
+    }
+    if audio.bit_rate > 0 {
+        detail(
+            ui,
+            "AUDIO BITRATE",
+            &format!("{} kb/s", audio.bit_rate / 1000),
+            colors,
+        );
     }
 }
 

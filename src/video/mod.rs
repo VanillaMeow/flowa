@@ -15,6 +15,7 @@ mod thumbnail;
 
 use std::{path::Path, time::Duration};
 
+use crate::settings::VideoDecoder;
 use anyhow::{Result, bail};
 
 /// Extracts filmstrip pixels without requiring an initialized playback device
@@ -38,6 +39,15 @@ pub(crate) fn thumbnail(
     }
 }
 
+/// Source audio properties before playback resampling
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AudioInfo {
+    pub codec: String,
+    pub channels: u32,
+    pub sample_rate: u32,
+    pub bit_rate: u64,
+}
+
 /// Playback properties reported by the FFmpeg player
 ///
 /// Times are seconds, volume is a percentage, and size includes display aspect ratio
@@ -51,10 +61,24 @@ pub(crate) struct VideoState {
     pub volume: f64,
     pub size: [u32; 2],
     pub decoder: String,
+    pub codec: String,
+    pub audio: Option<AudioInfo>,
     pub error: Option<String>,
 }
 
 impl VideoState {
+    pub fn codec_description(&self) -> &str {
+        match self.codec.as_str() {
+            "h264" => "H.264 / AVC",
+            "hevc" => "H.265 / HEVC",
+            "av1" => "AV1",
+            "vp9" => "VP9",
+            "vp8" => "VP8",
+            "mpeg4" => "MPEG-4",
+            other => other,
+        }
+    }
+
     /// Controls become interactive after loading finishes without a playback error
     pub fn ready(&self) -> bool {
         self.active && !self.loading && self.error.is_none()
@@ -70,7 +94,13 @@ impl VideoState {
             return "Software decoding · CPU".into();
         }
 
-        format!("Hardware decoding · {}", self.decoder)
+        let name = match self.decoder.as_str() {
+            "nvdec" => "NVDEC",
+            "vulkan" => "Vulkan",
+            "vaapi" => "VA-API",
+            other => other,
+        };
+        format!("Hardware decoding · {name}")
     }
 }
 
@@ -86,6 +116,8 @@ impl Default for VideoState {
             volume: 100.,
             size: [0; 2],
             decoder: String::new(),
+            codec: String::new(),
+            audio: None,
             error: None,
         }
     }
@@ -101,6 +133,7 @@ pub(crate) struct VideoSession {
     #[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
     player: Option<player::Player>,
     unavailable: Option<String>,
+    decoders: Vec<VideoDecoder>,
 }
 
 impl VideoSession {
@@ -110,6 +143,7 @@ impl VideoSession {
         if let Some(graphics) = &cc.wgpu_render_state {
             return match player::Player::new(graphics, &cc.egui_ctx) {
                 Ok(player) => Self {
+                    decoders: player.available_decoders(),
                     player: Some(player),
                     ..Default::default()
                 },
@@ -237,6 +271,28 @@ impl VideoSession {
             .unwrap_or("Video playback needs the optional Linux Vulkan backend")
     }
 
+    pub fn available_decoders(&self) -> &[VideoDecoder] {
+        &self.decoders
+    }
+
+    pub fn set_decoder(&mut self, preference: VideoDecoder) -> Result<()> {
+        #[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
+        {
+            self.command(Command::Decoder(preference))?;
+            self.state.error = None;
+            Ok(())
+        }
+
+        #[cfg(not(all(
+            feature = "video",
+            any(target_os = "linux", target_os = "windows")
+        )))]
+        {
+            let _ = preference;
+            bail!("Video backend unavailable")
+        }
+    }
+
     /// Changes pause state while preserving the current frame
     pub fn toggle_play(&mut self) -> Result<()> {
         self.command(Command::TogglePause)
@@ -287,6 +343,8 @@ pub(super) enum Command {
     TogglePause,
     Seek(f64),
     Volume(f64),
+    #[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
+    Decoder(VideoDecoder),
 }
 
 fn seek_position(seconds: f64, duration: f64) -> Result<f64> {

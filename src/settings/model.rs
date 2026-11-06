@@ -138,6 +138,20 @@ impl RendererPreference {
     ];
 }
 
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, AsRefStr,
+)]
+pub enum VideoDecoder {
+    #[default]
+    Auto,
+    #[strum(to_string = "NVDEC")]
+    Nvdec,
+    Vulkan,
+    #[strum(to_string = "VA-API")]
+    Vaapi,
+    Software,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -163,6 +177,7 @@ pub struct Settings {
     pub slideshow_seconds: f32,
     pub nearest: bool,
     pub renderer: RendererPreference,
+    pub video_decoder: VideoDecoder,
     pub memory_mb: u64,
 
     pub recent: Vec<PathBuf>,
@@ -192,6 +207,7 @@ impl Default for Settings {
             slideshow_seconds: 5.0,
             nearest: false,
             renderer: RendererPreference::Auto,
+            video_decoder: VideoDecoder::Auto,
             memory_mb: 1024,
             recent: Vec::new(),
             reopen_last: false,

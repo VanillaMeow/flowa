@@ -65,6 +65,12 @@ impl Flowa {
             Self::create(cc.egui_ctx.clone(), settings, config_path, launch, gpu);
         if video_device {
             app.video = VideoSession::new(cc);
+            if app.video.available()
+                && let Err(error) =
+                    app.video.set_decoder(app.settings.values.video_decoder)
+            {
+                app.ui.dialogs.notify(format!("{error:#}"), true);
+            }
         }
 
         app
@@ -393,6 +399,7 @@ impl Flowa {
     fn show_overlays(&mut self, ctx: &egui::Context) {
         let old_nearest = self.settings.values.nearest;
         let old_memory = self.settings.values.memory_mb;
+        let old_decoder = self.settings.values.video_decoder;
         let changed = self.ui.preferences.show(
             ctx,
             &mut self.settings.values,
@@ -403,6 +410,13 @@ impl Flowa {
 
         if changed {
             self.refresh_theme(ctx);
+
+            if old_decoder != self.settings.values.video_decoder
+                && let Err(error) =
+                    self.video.set_decoder(self.settings.values.video_decoder)
+            {
+                self.ui.dialogs.notify(format!("{error:#}"), true);
+            }
 
             if old_memory != self.settings.values.memory_mb {
                 self.loader

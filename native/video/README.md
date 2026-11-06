@@ -19,6 +19,12 @@ See [BUILDING.md](../../BUILDING.md) for dependencies and commands.
 ## Decoding and fallback
 
 Decoder selection tries NVDEC, Vulkan Video, VA-API on Linux, then FFmpeg software decoding.
+Preferences → Performance → Video decoder selects Auto, an available hardware
+backend, or Software. A hardware selection falls back to software for unsupported
+codecs. Switching decoders preserves position and pause state on seekable videos;
+other videos use the saved choice when reopened. After a playback error, selecting
+another decoder reopens the stream. File details reports video and audio codecs,
+the source audio channel count, sample rate, bitrate, and active video decoder.
 Hardware candidates must return hardware frames. Failed candidates replay a
 bounded set of initial packets into the next decoder. Software decoding runs on a
 dedicated worker with bounded packet and frame channels and two codec threads.

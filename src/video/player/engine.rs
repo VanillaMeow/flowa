@@ -1,13 +1,13 @@
 //! Rust playback lifecycle, controls, frame scheduling, and ownership of the media worker
 
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, atomic::Ordering},
     thread::JoinHandle,
     time::Instant,
 };
 
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 
 use super::{
     audio::AudioOutput,
@@ -16,7 +16,8 @@ use super::{
     shared::{Seek, Shared},
     worker,
 };
-use crate::video::{gpu::NativeGpu, native};
+use crate::settings::VideoDecoder;
+use crate::video::{AudioInfo, gpu::NativeGpu, native};
 
 pub(super) struct Snapshot {
     pub position: f64,
@@ -29,7 +30,9 @@ pub(super) struct Snapshot {
     pub paused: bool,
     pub size: [u32; 2],
     pub decoder: String,
+    pub codec: String,
     pub audio: String,
+    pub audio_info: Option<AudioInfo>,
     pub error: Option<String>,
 }
 
@@ -46,7 +49,9 @@ impl Default for Snapshot {
             paused: false,
             size: [0; 2],
             decoder: String::new(),
+            codec: String::new(),
             audio: String::new(),
+            audio_info: None,
             error: None,
         }
     }
@@ -57,12 +62,20 @@ struct TimedFrame {
     position: f64,
 }
 
+struct Resume {
+    position: f64,
+    paused: bool,
+}
+
 pub(super) struct Engine {
     gpu: Arc<NativeGpu>,
     ctx: egui::Context,
     shared: Option<Arc<Shared>>,
     worker: Option<JoinHandle<()>>,
     decoder: Option<Decoder>,
+    decoder_preference: VideoDecoder,
+    path: Option<PathBuf>,
+    resume: Option<Resume>,
     current: Option<TimedFrame>,
     pending: Option<TimedFrame>,
     applied_generation: u64,
@@ -79,6 +92,9 @@ impl Engine {
             shared: None,
             worker: None,
             decoder: None,
+            decoder_preference: VideoDecoder::Auto,
+            path: None,
+            resume: None,
             current: None,
             pending: None,
             applied_generation: 0,
@@ -94,10 +110,13 @@ impl Engine {
         let worker = worker::spawn(path.to_owned(), Arc::clone(&shared))?;
         self.shared = Some(shared);
         self.worker = Some(worker);
+        self.path = Some(path.to_owned());
         Ok(())
     }
 
     pub fn stop(&mut self) {
+        self.path = None;
+        self.resume = None;
         let Some(shared) = self.shared.take() else {
             return;
         };
@@ -194,6 +213,52 @@ impl Engine {
         Ok(())
     }
 
+    pub fn set_decoder(&mut self, preference: VideoDecoder) -> Result<()> {
+        let failed = self
+            .shared
+            .as_ref()
+            .is_some_and(|shared| shared.stopped() || shared.lock().error.is_some());
+        if self.decoder_preference == preference && !failed {
+            return Ok(());
+        }
+        self.decoder_preference = preference;
+
+        let Some(shared) = self.shared.as_ref().map(Arc::clone) else {
+            return Ok(());
+        };
+        if failed {
+            return self.reopen(&shared);
+        }
+        let stream = shared.lock().stream.as_ref().map(Arc::clone);
+        let Some(stream) = stream.filter(|_| self.decoder.is_some()) else {
+            return Ok(());
+        };
+
+        let position = shared.lock().position(Instant::now())?;
+        self.seek(position).context(
+            "Decoder preference saved; reopen this video to switch its decoder",
+        )?;
+        self.decoder = Some(Decoder::new(Arc::clone(&self.gpu), stream, preference));
+        self.pending = None;
+        Ok(())
+    }
+
+    fn reopen(&mut self, shared: &Shared) -> Result<()> {
+        let path = self.path.clone().context("No video is open")?;
+        let resume = {
+            let mut state = shared.lock();
+            Resume {
+                position: state.position(Instant::now()).unwrap_or_else(|_| {
+                    self.current.as_ref().map_or(0., |frame| frame.position)
+                }),
+                paused: state.paused,
+            }
+        };
+        self.open(&path)?;
+        self.resume = Some(resume);
+        Ok(())
+    }
+
     pub fn poll(&mut self) -> Snapshot {
         let Some(shared) = self.shared.as_ref().map(Arc::clone) else {
             return Snapshot {
@@ -267,7 +332,16 @@ impl Engine {
             return Ok(false);
         };
 
-        if stream.info.has_audio != 0 && state.audio.is_none() {
+        if let Some(resume) = self.resume.take() {
+            state.paused = resume.paused;
+            drop(state);
+            if stream.info.duration > 0. {
+                self.seek(resume.position)?;
+            }
+            return Ok(false);
+        }
+
+        if stream.info.audio.is_some() && state.audio.is_none() {
             state.audio =
                 Some(AudioOutput::open(Arc::clone(&self.gpu.api), state.volume)?);
             shared.notify();
@@ -275,8 +349,11 @@ impl Engine {
 
         if self.decoder.is_none() {
             self.last_pts = -stream.info.frame_duration;
-            self.decoder =
-                Some(Decoder::new(Arc::clone(&self.gpu), Arc::clone(&stream)));
+            self.decoder = Some(Decoder::new(
+                Arc::clone(&self.gpu),
+                Arc::clone(&stream),
+                self.decoder_preference,
+            ));
         }
         if state.seeking {
             return Ok(false);
@@ -426,10 +503,17 @@ impl Engine {
                 .and_then(|decoder| decoder.selected)
                 .unwrap_or_default()
                 .into(),
+            codec: info.map_or_else(String::new, |info| native::string(&info.codec)),
             audio: state
                 .audio
                 .as_ref()
                 .map_or_else(String::new, |audio| audio.name.clone()),
+            audio_info: info.and_then(|info| info.audio).map(|audio| AudioInfo {
+                codec: native::string(&audio.codec),
+                channels: audio.channels,
+                sample_rate: audio.sample_rate,
+                bit_rate: audio.bit_rate,
+            }),
             error: state.error.clone(),
         })
     }
@@ -501,6 +585,13 @@ mod tests {
             state.decoder != "software",
             "A hardware decoder is required for this test"
         );
+        let hardware = match state.decoder.as_str() {
+            "nvdec" => VideoDecoder::Nvdec,
+            "vulkan" => VideoDecoder::Vulkan,
+            "vaapi" => VideoDecoder::Vaapi,
+            name => anyhow::bail!("Unexpected decoder: {name}"),
+        };
+        let hardware_name = state.decoder.clone();
         player.command(crate::video::Command::TogglePause)?;
         let position = state.position;
         let shared = player
@@ -526,6 +617,23 @@ mod tests {
             "Recovery lost the playback position"
         );
         ensure!(state.size == [320, 180], "Recovery lost frame dimensions");
+
+        // A terminal import failure stops the demux worker and latches the UI error
+        shared.fail("Injected frame import failure");
+        player.poll(&mut state);
+        ensure!(state.error.is_some(), "Failure was not reported");
+        ensure!(shared.stopped(), "The failed worker was not stopped");
+
+        player.command(crate::video::Command::Decoder(hardware))?;
+        pump(&mut player, &mut state, |state| {
+            state.decoder == hardware_name && !state.seeking
+        })?;
+        ensure!(state.paused, "Reopening changed pause state");
+        ensure!(
+            (state.position - position).abs() < 0.15,
+            "Reopening lost the playback position"
+        );
+        ensure!(state.audio.is_none(), "A silent clip reported audio");
         player.stop();
         Ok(())
     }

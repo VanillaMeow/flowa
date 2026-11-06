@@ -3,7 +3,9 @@
 mod model {
     use anyhow::Result;
 
-    use crate::settings::{Canvas, RendererPreference, Settings, SortOrder, Theme};
+    use crate::settings::{
+        Canvas, RendererPreference, Settings, SortOrder, Theme, VideoDecoder,
+    };
 
     #[test]
     fn old_preferences_get_new_defaults() -> Result<()> {
@@ -12,6 +14,7 @@ mod model {
         assert!(!s.checkerboard);
         assert!(s.compact_video_controls);
         assert_eq!(s.renderer, RendererPreference::Auto);
+        assert_eq!(s.video_decoder, VideoDecoder::Auto);
         Ok(())
     }
 
@@ -30,6 +33,7 @@ mod model {
             canvas: Canvas::Dark,
             sort: SortOrder::Modified,
             renderer: RendererPreference::OpenGl,
+            video_decoder: VideoDecoder::Nvdec,
             ..Default::default()
         };
         let saved = serde_json::to_value(&settings)?;
@@ -40,6 +44,7 @@ mod model {
         assert_eq!(saved["canvas"], "Dark");
         assert_eq!(saved["sort"], "Modified");
         assert_eq!(saved["renderer"], "OpenGl");
+        assert_eq!(saved["video_decoder"], "Nvdec");
         Ok(())
     }
 }
@@ -49,7 +54,9 @@ mod store {
 
     use anyhow::Result;
 
-    use crate::settings::{Accent, RendererPreference, Settings, SettingsStore, Theme};
+    use crate::settings::{
+        Accent, RendererPreference, Settings, SettingsStore, Theme, VideoDecoder,
+    };
 
     #[test]
     fn persisting_changed_settings_preserves_user_preferences() -> Result<()> {
@@ -59,6 +66,7 @@ mod store {
             theme: Theme::Sweet,
             compact_video_controls: false,
             checkerboard: true,
+            video_decoder: VideoDecoder::Vulkan,
             renderer: RendererPreference::SUPPORTED
                 .last()
                 .copied()
@@ -76,6 +84,7 @@ mod store {
         assert!(!loaded.compact_video_controls);
         assert_eq!(loaded.accent, Accent::Rose);
         assert_eq!(loaded.renderer, store.values.renderer);
+        assert_eq!(loaded.video_decoder, VideoDecoder::Vulkan);
         assert!(loaded.checkerboard);
         assert_eq!(loaded.recent, vec![PathBuf::from("picture.png")]);
         Ok(())

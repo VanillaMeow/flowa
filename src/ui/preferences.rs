@@ -3,7 +3,9 @@
 use egui::{Color32, RichText, vec2};
 use strum::VariantArray;
 
-use crate::settings::{Accent, Canvas, RendererPreference, Settings, Theme};
+use crate::settings::{
+    Accent, Canvas, RendererPreference, Settings, Theme, VideoDecoder,
+};
 use crate::video::VideoSession;
 
 use super::{
@@ -99,9 +101,9 @@ fn preference_tab(
     match tab {
         0 => appearance(ui, settings, colors),
         1 => viewing(ui, settings),
-        2 => performance(ui, settings, colors, gpu),
+        2 => performance(ui, settings, colors, gpu, video),
         3 => shortcuts(ui),
-        _ => about(ui, colors, video),
+        _ => about(ui, colors),
     }
 }
 
@@ -141,7 +143,13 @@ fn viewing(ui: &mut egui::Ui, settings: &mut Settings) {
     }
 }
 
-fn performance(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors, gpu: &str) {
+fn performance(
+    ui: &mut egui::Ui,
+    settings: &mut Settings,
+    colors: Colors,
+    gpu: &str,
+    video: &VideoSession,
+) {
     ui.label("Decoded image memory limit");
     ui.add(
         egui::Slider::new(&mut settings.memory_mb, 128..=4096)
@@ -151,11 +159,50 @@ fn performance(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors, gpu: 
     .on_hover_text("Applies to the next image opened");
 
     ui.add_space(20.);
+    video_decoder(ui, &mut settings.video_decoder, video, colors);
+
+    ui.add_space(20.);
     renderer_preference(ui, &mut settings.renderer, colors);
 
     ui.add_space(16.);
     ui.label(RichText::new("Active renderer").color(colors.muted));
     ui.label(gpu);
+}
+
+fn video_decoder(
+    ui: &mut egui::Ui,
+    selected: &mut VideoDecoder,
+    video: &VideoSession,
+    colors: Colors,
+) {
+    ui.label("Video decoder");
+    let label = if video.available() && !video.available_decoders().contains(selected) {
+        format!("{} (unavailable)", selected.as_ref())
+    } else {
+        selected.as_ref().to_owned()
+    };
+    ui.add_enabled_ui(video.available(), |ui| {
+        egui::ComboBox::from_id_salt("video_decoder")
+            .selected_text(label)
+            .show_ui(ui, |ui| decoder_choices(ui, selected, video));
+    });
+
+    let explanation = if video.available() {
+        "Unsupported codecs fall back to software decoding"
+    } else {
+        video.unavailable_reason()
+    };
+    ui.label(RichText::new(explanation).small().color(colors.muted));
+}
+
+fn decoder_choices(
+    ui: &mut egui::Ui,
+    selected: &mut VideoDecoder,
+    video: &VideoSession,
+) {
+    for &choice in video.available_decoders() {
+        ui.selectable_value(selected, choice, choice.as_ref());
+    }
 }
 
 fn renderer_preference(
@@ -231,11 +278,11 @@ fn shortcut_rows(ui: &mut egui::Ui) {
     }
 }
 
-fn about(ui: &mut egui::Ui, colors: Colors, video: &VideoSession) {
-    ui.vertical_centered(|ui| about_contents(ui, colors, video));
+fn about(ui: &mut egui::Ui, colors: Colors) {
+    ui.vertical_centered(|ui| about_contents(ui, colors));
 }
 
-fn about_contents(ui: &mut egui::Ui, colors: Colors, video: &VideoSession) {
+fn about_contents(ui: &mut egui::Ui, colors: Colors) {
     icons::logo(ui, 52., colors.accent);
     ui.heading("flowa");
 
@@ -262,32 +309,18 @@ fn about_contents(ui: &mut egui::Ui, colors: Colors, video: &VideoSession) {
         feature = "video",
         any(target_os = "linux", target_os = "windows")
     )) {
-        about_video(ui, colors, video);
+        about_video(ui);
     }
 
     ui.add_space(12.);
     icon_licenses(ui);
 }
 
-fn about_video(ui: &mut egui::Ui, colors: Colors, video: &VideoSession) {
+fn about_video(ui: &mut egui::Ui) {
     ui.add_space(18.);
     ui.label(RichText::new("Video").strong());
     ui.label("MP4 · MKV · WebM · MOV · AVI · MPEG · M2TS / MTS · TS · OGV");
     ui.label("FFmpeg decoding · Vulkan rendering · SDL3 audio");
-    ui.label("Hardware decoding with automatic software fallback");
-    ui.add_space(8.);
-
-    let status = if video.available() {
-        "Video backend is ready · Vulkan"
-    } else {
-        "Video playback is unavailable"
-    };
-    ui.label(RichText::new(status).color(colors.muted));
-
-    if !video.available() {
-        ui.add(egui::Label::new(video.unavailable_reason()).wrap());
-    }
-
     ui.add_space(8.);
     ui.horizontal_wrapped(|ui| {
         ui.hyperlink_to("libplacebo", "https://libplacebo.org");
