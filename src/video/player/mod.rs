@@ -10,15 +10,16 @@ use eframe::{
 };
 
 use super::{
-    Command,
+    PlayerCommand,
     gpu::{self, NativeGpu},
+    native,
 };
 
 mod audio;
 mod clock;
 mod decoder;
 mod engine;
-mod media;
+mod frame;
 mod rendering;
 mod service;
 mod shared;
@@ -28,7 +29,7 @@ mod worker;
 use engine::{Engine, Snapshot};
 pub(super) use service::Player;
 
-const SLOT_COUNT: usize = 3;
+const SLOT_COUNT: usize = native::FLOWA_VIDEO_SLOTS as usize;
 
 #[derive(Clone)]
 struct Target {
@@ -36,8 +37,10 @@ struct Target {
     id: egui::TextureId,
 }
 
-/// Owns one video player and retires native resources before wgpu targets
-struct Playback {
+/// Couples the decode engine with its ring of presentation textures
+///
+/// Native resources are retired before the wgpu targets they reference
+struct Pipeline {
     gpu: Arc<NativeGpu>,
     engine: Engine,
     graphics: RenderState,
@@ -53,7 +56,7 @@ struct Playback {
     retired: Vec<Target>,
 }
 
-impl Playback {
+impl Pipeline {
     pub fn new(graphics: &RenderState, ctx: &egui::Context) -> Result<Self> {
         let gpu = gpu::for_device(&graphics.device)?;
         let guard = unsafe { graphics.device.as_hal::<hal::api::Vulkan>() }
@@ -101,12 +104,12 @@ impl Playback {
         self.needs_redraw = false;
     }
 
-    pub fn command(&mut self, command: Command) -> Result<()> {
+    pub fn command(&mut self, command: PlayerCommand) -> Result<()> {
         match command {
-            Command::TogglePause => self.engine.toggle_pause(),
-            Command::Seek(seconds) => self.engine.seek(seconds),
-            Command::Volume(volume) => self.engine.set_volume(volume),
-            Command::Decoder(preference) => {
+            PlayerCommand::TogglePause => self.engine.toggle_pause(),
+            PlayerCommand::Seek(seconds) => self.engine.seek(seconds),
+            PlayerCommand::Volume(volume) => self.engine.set_volume(volume),
+            PlayerCommand::Decoder(preference) => {
                 self.engine.set_decoder(preference)?;
                 self.needs_redraw = true;
                 Ok(())
@@ -121,7 +124,7 @@ impl Playback {
     }
 }
 
-impl Drop for Playback {
+impl Drop for Pipeline {
     fn drop(&mut self) {
         self.engine.stop();
 
@@ -132,7 +135,7 @@ impl Drop for Playback {
         }
 
         // The player is gone, so retire GPU wrappers directly before destroying its textures
-        unsafe { (self.gpu.api.gpu_retire_targets)(self.gpu.handle.as_ptr()) };
+        unsafe { native::flowa_gpu_retire_targets(self.gpu.handle.as_ptr()) };
         if let Err(error) = self
             .graphics
             .device

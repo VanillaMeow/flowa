@@ -27,7 +27,10 @@ mod image_decode {
     use anyhow::Result;
     use image::RgbaImage;
 
-    use crate::services::image_decode::{decode, export};
+    use crate::{
+        services::image_decode::{decode, export},
+        viewer::transform::View,
+    };
 
     #[test]
     fn static_decode_and_export_preserve_alpha_and_apply_rotation() -> Result<()> {
@@ -48,7 +51,13 @@ mod image_decode {
             (true, false, [5, 2, 4, 1, 3, 0]),
             (false, true, [0, 3, 1, 4, 2, 5]),
         ] {
-            export(&loaded.frames[0].pixels, &output, 1, flip_x, flip_y)?;
+            let view = View {
+                rotation: 1,
+                flip_x,
+                flip_y,
+                ..View::default()
+            };
+            export(&loaded.frames[0].pixels, &output, &view)?;
             let result = image::open(&output)?.into_rgba8();
             assert_eq!(result.dimensions(), (2, 3));
             let expected: Vec<_> = expected

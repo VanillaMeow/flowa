@@ -1,6 +1,11 @@
 //! Theme palettes, color mapping, and egui styling
 
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{Mutex, PoisonError},
+    time::SystemTime,
+};
 
 use egui::{Color32, CornerRadius, FontId, Stroke, TextStyle, Visuals};
 
@@ -37,6 +42,11 @@ pub struct Colors {
 
 fn rgb(c: [u8; 3]) -> Color32 {
     Color32::from_rgb(c[0], c[1], c[2])
+}
+
+/// Whether a background needs light text and markings
+pub fn is_dark(color: Color32) -> bool {
+    u32::from(color.r()) + u32::from(color.g()) + u32::from(color.b()) < 384
 }
 
 fn mix(a: Color32, b: Color32, amount: f32) -> Color32 {
@@ -87,7 +97,7 @@ impl Palette {
                 .unwrap_or_else(|| mix(panel, text, 0.065)),
             muted: mix(panel, text, self.muted_mix),
             border: mix(panel, text, self.border_mix),
-            dark: panel.r() < 128,
+            dark: is_dark(panel),
         }
     }
 }
@@ -234,8 +244,41 @@ pub fn kde_config_path() -> Option<PathBuf> {
     Some(base.join("kdeglobals"))
 }
 
+/// Reads the KDE palette, parsing kdeglobals again only after it changes
+///
+/// Theme previews ask for System colors every frame, so this must stay cheap
 fn kde_colors() -> Option<Colors> {
-    parse_kde_colors(&std::fs::read_to_string(kde_config_path()?).ok()?)
+    struct Cached {
+        path: PathBuf,
+        modified: Option<SystemTime>,
+        colors: Option<Colors>,
+    }
+
+    static CACHE: Mutex<Option<Cached>> = Mutex::new(None);
+
+    let path = kde_config_path()?;
+    let modified = std::fs::metadata(&path)
+        .and_then(|metadata| metadata.modified())
+        .ok();
+    let mut cache = CACHE.lock().unwrap_or_else(PoisonError::into_inner);
+
+    if let Some(cached) = cache.as_ref()
+        && cached.path == path
+        && cached.modified == modified
+    {
+        return cached.colors;
+    }
+
+    let colors = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|input| parse_kde_colors(&input));
+    *cache = Some(Cached {
+        path,
+        modified,
+        colors,
+    });
+
+    colors
 }
 
 fn parse_kde_colors(input: &str) -> Option<Colors> {
@@ -274,7 +317,7 @@ fn parse_kde_colors(input: &str) -> Option<Colors> {
         border: mix(panel, text, 0.16),
         accent: get("Colors:Selection", "BackgroundNormal")
             .unwrap_or(Color32::from_rgb(137, 161, 235)),
-        dark: panel.r() as u16 + (panel.g() as u16) + (panel.b() as u16) < 384,
+        dark: is_dark(panel),
     })
 }
 

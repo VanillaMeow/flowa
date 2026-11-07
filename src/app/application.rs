@@ -20,10 +20,16 @@ use crate::{
         toolbar::{self, ToolbarState},
     },
     video::VideoSession,
-    viewer::{browser::Browser, image_session::ImageSession, playback::Slideshow},
+    viewer::{
+        browser::Browser, catalog::is_video, image_session::ImageSession,
+        playback::Slideshow,
+    },
 };
 
 use super::{Command, Launch};
+
+/// How often the System theme is re-read and changed settings are saved
+const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(2);
 
 pub struct Flowa {
     pub(super) browser: Browser,
@@ -40,7 +46,10 @@ pub struct Flowa {
     pub(super) colors: Colors,
     pub(super) last_theme_check: Instant,
     pub(super) gpu: String,
+    /// The `--zoom` percentage, applied to the first file shown
     pub(super) initial_zoom: Option<f32>,
+    /// The last file sent as a hover preload, so hovering does not resend it every frame
+    pub(super) preload_hint: Option<PathBuf>,
 }
 
 impl Flowa {
@@ -63,8 +72,10 @@ impl Flowa {
 
         let mut app =
             Self::create(cc.egui_ctx.clone(), settings, config_path, launch, gpu);
+
         if video_device {
             app.video = VideoSession::new(cc);
+
             if app.video.available()
                 && let Err(error) =
                     app.video.set_decoder(app.settings.values.video_decoder)
@@ -86,27 +97,26 @@ impl Flowa {
         settings.filmstrip |= launch.filmstrip;
         settings.info |= launch.info;
 
-        let colors = theme::colors(
-            settings.theme,
-            settings.accent,
-            ctx.system_theme().unwrap_or(egui::Theme::Dark) == egui::Theme::Dark,
-        );
+        let colors = current_colors(&settings, &ctx);
         theme::apply(&ctx, colors);
         ctx.set_zoom_factor(settings.ui_scale);
 
-        let path = launch.path.or_else(|| {
-            if settings.reopen_last {
-                settings.recent.first().cloned()
-            } else {
-                None
-            }
-        });
+        // Older preferences have no last viewed file, only the recent list
+        let reopen = settings
+            .reopen_last
+            .then(|| {
+                settings
+                    .last_viewed
+                    .clone()
+                    .or_else(|| settings.recent.first().cloned())
+            })
+            .flatten();
 
         let mut app = Self {
             browser: Browser::new(),
             image: ImageSession::new(),
             video: VideoSession::default(),
-            ui: ViewerUi::new(ctx.clone(), settings.nearest, launch.preferences),
+            ui: ViewerUi::new(ctx.clone(), &settings, launch.preferences),
             settings: SettingsStore::new(settings, config_path),
             scanner: FolderScanner::new(),
             loader: Loader::new(ctx.clone()),
@@ -117,31 +127,36 @@ impl Flowa {
             last_theme_check: Instant::now(),
             gpu,
             initial_zoom: launch.zoom,
+            preload_hint: None,
         };
 
-        if let Some(path) = path {
+        if let Some(path) = launch.path {
+            app.open(path, &ctx);
+        } else if let Some(path) = reopen {
             app.open_path(path, &ctx);
         }
 
         app
     }
 
+    /// Opens a file or folder the user chose and records it as recent
+    pub(super) fn open(&mut self, path: PathBuf, ctx: &egui::Context) {
+        self.settings.values.remember(path.clone());
+        self.open_path(path, ctx);
+    }
+
+    /// Scans a folder, or a file's folder, and selects the file once the scan completes
     pub(super) fn open_path(&mut self, path: PathBuf, ctx: &egui::Context) {
-        self.video.close();
-        self.ui.video_controls.reset();
-        self.image.begin_load();
-        self.loader.cancel(self.image.generation());
-        self.ui
-            .canvas
-            .reset(self.image.generation(), self.settings.values.remember_view);
+        // Folder changes and refreshes may have replaced files behind cached decodes
+        self.loader.invalidate();
+        self.begin_image_load();
 
         let generation = self.browser.begin_scan();
         self.scanner.request(path, generation, ctx);
     }
 
     pub(super) fn clear_image(&mut self) {
-        self.video.close();
-        self.ui.video_controls.reset();
+        self.close_video();
         self.image.clear();
         self.loader.cancel(self.image.generation());
         self.ui.canvas.clear(self.image.generation());
@@ -153,34 +168,54 @@ impl Flowa {
             return;
         };
 
+        let generation = self.begin_image_load();
+        self.ui.filmstrip.reveal_selection();
+        self.apply_initial_zoom(ctx);
+
+        if is_video(&path) {
+            self.image.loading = false;
+            self.video.open(&path);
+            self.slideshow.active = false;
+        } else {
+            self.loader.request(LoadRequest {
+                generation,
+                path,
+                budget: self.settings.values.memory_budget(),
+            });
+        }
+
+        self.update_title(ctx);
+        ctx.request_repaint();
+    }
+
+    /// Stops the current video and image load and keeps a preview for the transition
+    fn begin_image_load(&mut self) -> u64 {
         let generation = self.image.begin_load();
-        self.video.close();
-        self.ui.video_controls.reset();
+
+        self.close_video();
         self.loader.cancel(generation);
         self.ui
             .canvas
             .reset(generation, self.settings.values.remember_view);
-        self.ui.filmstrip.reveal_selection();
+        self.preload_hint = None;
 
-        self.settings.values.remember(path.clone());
+        generation
+    }
 
-        if crate::viewer::catalog::is_video(&path) {
-            self.image.loading = false;
-            self.video.open(&path);
-            self.slideshow.active = false;
-            self.update_title(ctx);
-            ctx.request_repaint();
+    fn close_video(&mut self) {
+        self.video.close();
+        self.ui.video_controls.reset();
+    }
+
+    fn apply_initial_zoom(&mut self, ctx: &egui::Context) {
+        let Some(percent) = self.initial_zoom.take() else {
             return;
-        }
+        };
 
-        self.loader.request(LoadRequest {
-            generation,
-            path,
-            budget: self.settings.values.memory_mb * 1024 * 1024,
-        });
-
-        self.update_title(ctx);
-        ctx.request_repaint();
+        // A percentage counts physical pixels, while egui zoom is in logical points
+        let view = &mut self.ui.canvas.view;
+        view.fit = false;
+        view.zoom = percent / 100.0 / ctx.pixels_per_point();
     }
 
     pub(super) fn navigate(&mut self, delta: isize, ctx: &egui::Context) {
@@ -195,7 +230,7 @@ impl Flowa {
             .restart(self.settings.values.slideshow_seconds);
     }
 
-    pub(super) fn preload_image(&self, index: usize) {
+    pub(super) fn preload_image(&mut self, index: usize) {
         if index == self.browser.index() {
             return;
         }
@@ -204,9 +239,12 @@ impl Flowa {
             return;
         };
 
-        if !crate::viewer::catalog::is_video(&entry.path) {
-            self.loader.preload(entry.path.clone());
+        if is_video(&entry.path) || self.preload_hint.as_ref() == Some(&entry.path) {
+            return;
         }
+
+        self.preload_hint = Some(entry.path.clone());
+        self.loader.preload(entry.path.clone());
     }
 
     pub(super) fn preload_neighbors(&self) {
@@ -221,7 +259,7 @@ impl Flowa {
                     .next(delta, self.settings.values.wrap_navigation)
             })
             .filter_map(|index| self.browser.entries().get(index))
-            .filter(|entry| !crate::viewer::catalog::is_video(&entry.path))
+            .filter(|entry| !is_video(&entry.path))
             .map(|entry| entry.path.clone())
             .collect();
 
@@ -236,6 +274,10 @@ impl Flowa {
             .unwrap_or_else(|| "flowa".into());
 
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
+    }
+
+    pub(super) fn notify_error(&mut self, error: &anyhow::Error) {
+        self.ui.dialogs.notify(format!("{error:#}"), true);
     }
 
     fn toolbar_state(&self) -> ToolbarState<'_> {
@@ -254,21 +296,22 @@ impl Flowa {
     }
 
     fn refresh_theme(&mut self, ctx: &egui::Context) {
-        self.colors = theme::colors(
-            self.settings.values.theme,
-            self.settings.values.accent,
-            ctx.system_theme().unwrap_or(egui::Theme::Dark) == egui::Theme::Dark,
-        );
-
+        self.colors = current_colors(&self.settings.values, ctx);
         theme::apply(ctx, self.colors);
         self.last_theme_check = Instant::now();
     }
 
     fn persist(&mut self) {
         if let Err(error) = self.settings.persist() {
-            self.ui.dialogs.notify(format!("{error:#}"), true);
+            self.notify_error(&error);
         }
     }
+}
+
+fn current_colors(settings: &Settings, ctx: &egui::Context) -> Colors {
+    let system_dark =
+        ctx.system_theme().unwrap_or(egui::Theme::Dark) == egui::Theme::Dark;
+    theme::colors(settings.theme, settings.accent, system_dark)
 }
 
 impl eframe::App for Flowa {
@@ -278,13 +321,16 @@ impl eframe::App for Flowa {
         self.update_session(&ctx);
         self.show_viewer_controls(ui, &ctx);
         self.show_canvas(ui, &ctx);
-        self.show_overlays(&ctx);
+        self.show_preferences(&ctx);
+        self.show_dialogs(&ctx);
         self.maintain_settings(&ctx);
 
-        ctx.request_repaint_after(Duration::from_secs(2));
+        ctx.request_repaint_after(MAINTENANCE_INTERVAL);
     }
 
     fn on_exit(&mut self) {
+        self.settings.values.last_viewed =
+            self.browser.current().map(|entry| entry.path.clone());
         self.persist();
     }
 }
@@ -396,11 +442,13 @@ impl Flowa {
         self.handle_commands(commands, ctx);
     }
 
-    fn show_overlays(&mut self, ctx: &egui::Context) {
-        let old_nearest = self.settings.values.nearest;
-        let old_memory = self.settings.values.memory_mb;
-        let old_decoder = self.settings.values.video_decoder;
-        let changed = self.ui.preferences.show(
+    fn show_preferences(&mut self, ctx: &egui::Context) {
+        if !self.ui.preferences.open {
+            return;
+        }
+
+        let previous = self.settings.values.clone();
+        self.ui.preferences.show(
             ctx,
             &mut self.settings.values,
             self.colors,
@@ -408,32 +456,40 @@ impl Flowa {
             &self.video,
         );
 
-        if changed {
-            self.refresh_theme(ctx);
+        if self.settings.values != previous {
+            self.apply_preference_changes(&previous, ctx);
+        }
+    }
 
-            if old_decoder != self.settings.values.video_decoder
-                && let Err(error) =
-                    self.video.set_decoder(self.settings.values.video_decoder)
-            {
-                self.ui.dialogs.notify(format!("{error:#}"), true);
-            }
+    /// Pushes edited preferences into the components that cache them
+    fn apply_preference_changes(&mut self, previous: &Settings, ctx: &egui::Context) {
+        self.refresh_theme(ctx);
 
-            if old_memory != self.settings.values.memory_mb {
-                self.loader
-                    .set_budget(self.settings.values.memory_mb * 1024 * 1024);
-            }
-
-            self.preload_neighbors();
-
-            if old_nearest != self.settings.values.nearest {
-                self.ui.canvas.renderer.set_sampling(
-                    ctx,
-                    &self.image,
-                    self.settings.values.nearest,
-                );
-            }
+        let decoder = self.settings.values.video_decoder;
+        if decoder != previous.video_decoder
+            && let Err(error) = self.video.set_decoder(decoder)
+        {
+            self.notify_error(&error);
         }
 
+        if self.settings.values.memory_mb != previous.memory_mb {
+            let budget = self.settings.values.memory_budget();
+            self.loader.set_budget(budget);
+            self.ui.filmstrip.set_budget(budget);
+        }
+
+        let nearest = self.settings.values.nearest;
+        if nearest != previous.nearest {
+            self.ui
+                .canvas
+                .renderer
+                .set_sampling(ctx, &self.image, nearest);
+        }
+
+        self.preload_neighbors();
+    }
+
+    fn show_dialogs(&mut self, ctx: &egui::Context) {
         let mut commands = Vec::new();
 
         self.ui.dialogs.show(ctx, self.colors, &mut commands);
@@ -442,7 +498,7 @@ impl Flowa {
     }
 
     fn maintain_settings(&mut self, ctx: &egui::Context) {
-        if self.last_theme_check.elapsed() > Duration::from_secs(2)
+        if self.last_theme_check.elapsed() > MAINTENANCE_INTERVAL
             && self.settings.values.theme == Theme::System
         {
             self.refresh_theme(ctx);

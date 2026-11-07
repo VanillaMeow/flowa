@@ -43,7 +43,7 @@ Toolbar, status, context-menu, and inspector rendering remain functions with exp
 
 Components collect commands in a local vector; `Flowa` applies them after each panel releases its borrows, before drawing dependent panels. Navigation, sorting, view commands, file operations, and window toggles use the same handlers regardless of their input source. Continuous canvas dragging and pointer zoom update the canvas's own view directly.
 
-Rename/trash confirmations carry the path captured when the dialog opened. The command handler dispatches native work through the `services::file_actions::Task` channel. UI commands are synchronous and do not use a separate message bus.
+Rename/trash confirmations carry the path captured when the dialog opened. The command handler dispatches native work through the `services::file_actions::Task` channel; each task sets the busy status that its result clears. Opening the containing folder launches the file manager directly without waiting. UI commands are synchronous and do not use a separate message bus.
 
 ## Control icons
 
@@ -65,7 +65,7 @@ Folder scanning runs outside the event loop and returns generation-tagged catalo
 
 `services/image_loader/mod.rs` also preloads the next and previous images after a selection finishes loading. Hovering a thumbnail or navigation button puts that image ahead of queued neighbors. Selected loads have priority, and a click on an image being preloaded adopts the running decode. A codec call already in progress finishes before the worker handles another image.
 
-The loader retains at most four decoded images in CPU memory, within 64 MiB or one-sixteenth of the configured image limit, whichever is smaller. Header checks restrict speculative decoding to static JPEG, PNG, WebP, BMP, and QOI images that fit a conservative working-memory estimate. The worker evicts cached images to reserve that estimate before decoding. Codec internals can use additional temporary memory, so this is not a process-wide RAM limit. Cached images include source pixels, previews, and thumbnails in their accounting. File size and modification time validate cache hits; refreshes, folder changes, renames, and deletions invalidate speculative work.
+The loader retains at most four decoded images in CPU memory, within a quarter of the configured image limit and at most 512 MiB. Header checks restrict speculative decoding to static JPEG, PNG, WebP, BMP, and QOI images. Each candidate needs two estimates: the pixels, preview, and thumbnail it will keep must fit the cache, and its peak decoding memory must fit the image limit. The worker evicts cached images to make room for the retained size before decoding. Codec internals can use additional temporary memory, so this is not a process-wide RAM limit. File size and modification time validate cache hits. Changing the selection keeps cached and in-flight preloads; refreshes, folder changes, renames, and deletions invalidate them.
 
 During navigation, the canvas retains only the previous preview texture and its view transform. This frozen preview is separate from the selected image and cannot be copied or exported. The loading indicator waits 150 ms and fades in over 100 ms. The new image appears as soon as it is available, with no minimum indicator duration or image fade.
 
@@ -78,6 +78,15 @@ GPU resources are created and evicted on the UI thread. The image renderer retai
 `video/media/` owns FFmpeg demuxing, stream snapshots, packets, codecs, audio
 resampling, decoded frames, and bounded poster extraction. It calls bindings
 generated from the same SDK headers used to compile and link the native GPU shim.
+`video/native.rs` holds bindings for the shim and SDL3 audio, generated from
+`native/video/bindings.h`, so struct layouts and decoder backend values come from
+the C headers rather than hand-written mirrors.
+
+`build.rs` sets the `video_playback` cfg when the `video` feature targets Linux or
+Windows. Without it, `video/unsupported.rs` supplies an uninhabited player, so
+`VideoSession` has one implementation that reports playback as unavailable.
+A video with an audio track still plays, silently and timed by the wall clock, when
+no audio output device can be opened.
 Input owners retain stable interruption callbacks through close. Codec owners
 retain stable hardware-format callback storage through codec-worker shutdown.
 
@@ -107,7 +116,9 @@ Each tile has a source rectangle and a texture. The renderer calculates visible 
 
 ## Persistence and file operations
 
-Settings use a version-tolerant serde model with field defaults and validated ranges. Saves write a temporary sibling before replacing the preferences file. The app persists changed settings on a two-second interval and on exit.
+Settings use a version-tolerant serde model with field defaults and validated ranges. The ranges are constants in `settings/model.rs` shared with the preference controls. Saves write a temporary sibling before replacing the preferences file. The app persists changed settings on a two-second interval and on exit.
+
+The recent list holds files and folders opened explicitly, through dialogs, drag and drop, the command line, or the welcome screen. Browsing within a folder does not change it. The file on screen at exit is saved separately so "Reopen the last image" returns to it.
 
 Rotation and flips never modify the original file. Exports encode a temporary sibling and replace the chosen destination after success. The source path cannot be selected as the export destination. Renames reject path traversal, Windows reserved names, and existing destinations. Deletion always requires an in-app confirmation and uses the system trash.
 

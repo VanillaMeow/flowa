@@ -4,7 +4,7 @@ use std::{ffi::CStr, path::Path};
 
 use anyhow::{Result, ensure};
 
-use super::ffmpeg as ffi;
+use super::{AudioInfo, ffmpeg as ffi};
 
 mod audio;
 mod codec;
@@ -15,20 +15,12 @@ mod poster;
 mod stream;
 
 pub(super) use audio::AudioBlock;
-pub(super) use codec::{Codec, DeviceRef};
-pub(super) use frame::{CpuFrame, DecodedFrame, FrameInfo};
+pub(super) use codec::{Codec, DeviceRef, Threads};
+pub(super) use frame::{AvFrame, CpuFrame, FrameInfo};
 pub(super) use input::{InterruptFlags, Media};
 pub(super) use packet::{Packet, PacketKind};
 pub(super) use poster::extract_poster;
 pub(super) use stream::Stream;
-
-#[derive(Clone, Copy)]
-pub(super) struct AudioStreamInfo {
-    pub codec: [std::ffi::c_char; 64],
-    pub channels: u32,
-    pub sample_rate: u32,
-    pub bit_rate: u64,
-}
 
 #[derive(Clone, Copy)]
 pub(super) struct StreamInfo {
@@ -38,8 +30,8 @@ pub(super) struct StreamInfo {
     pub audio_time_base: f64,
     pub frame_duration: f64,
     pub rotation: f64,
-    pub audio: Option<AudioStreamInfo>,
-    pub codec: [std::ffi::c_char; 64],
+    pub audio: Option<AudioInfo>,
+    pub codec: &'static str,
 }
 
 pub(super) enum Receive<T> {

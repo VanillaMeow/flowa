@@ -11,9 +11,16 @@ use anyhow::{Result, ensure};
 
 use super::{
     audio::{BYTES_PER_SECOND, CHANNELS, RATE},
-    media::{AudioBlock, Media, Packet, PacketKind, Receive, Sent},
     shared::{BYTE_LIMIT, Shared},
 };
+use crate::video::media::{AudioBlock, Media, Packet, PacketKind, Receive, Sent};
+
+/// Largest block of audio or inserted silence queued under one lock
+const AUDIO_CHUNK_FRAMES: usize = 4096;
+
+static SILENCE: [f32; AUDIO_CHUNK_FRAMES * CHANNELS] =
+    [0.0; AUDIO_CHUNK_FRAMES * CHANNELS];
+
 pub(super) fn spawn(path: PathBuf, shared: Arc<Shared>) -> Result<JoinHandle<()>> {
     Ok(thread::Builder::new()
         .name("flowa-demux-audio".into())
@@ -75,9 +82,10 @@ fn run(path: &Path, shared: &Shared) -> Result<()> {
             PacketKind::Video => {
                 queue_video(packet, shared, generation)?;
             }
-            PacketKind::Audio => {
+            PacketKind::Audio if !shared.lock().audio_disabled => {
                 feed_audio(&mut media, Some(&packet), shared, generation)?;
             }
+            PacketKind::Audio => {}
             PacketKind::Other => {}
         }
     }
@@ -219,13 +227,13 @@ fn queue_block(
     let samples = &block.samples()[skip * CHANNELS..];
 
     // Bound silence insertion while preserving files whose audio starts after video
-    let silence = [0.0; 4096 * CHANNELS];
     while !samples.is_empty() && position - previous > 0.01 {
-        let gap = ((position - previous) * RATE as f64).min(4096.0) as usize;
+        let gap = ((position - previous) * RATE as f64).min(AUDIO_CHUNK_FRAMES as f64)
+            as usize;
         if gap == 0 {
             break;
         }
-        if !put_audio(shared, &silence[..gap * CHANNELS], previous, generation)? {
+        if !put_audio(shared, &SILENCE[..gap * CHANNELS], previous, generation)? {
             return Ok(false);
         }
         previous += gap as f64 / RATE as f64;
@@ -240,11 +248,16 @@ fn put_audio(
     mut position: f64,
     generation: u64,
 ) -> Result<bool> {
-    for chunk in samples.chunks(4096 * CHANNELS) {
+    for chunk in samples.chunks(AUDIO_CHUNK_FRAMES * CHANNELS) {
         let mut state = shared.lock();
         loop {
             if shared.stopped() || generation != state.generation {
                 return Ok(false);
+            }
+
+            // Without an output device the clock runs from wall time, so samples are dropped
+            if state.audio_disabled {
+                return Ok(true);
             }
 
             // Startup allows delayed video decoders to receive enough packets to produce a frame

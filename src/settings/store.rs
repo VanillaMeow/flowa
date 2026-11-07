@@ -12,7 +12,8 @@ use crate::settings::Settings;
 pub(crate) struct SettingsStore {
     pub values: Settings,
     path: Option<PathBuf>,
-    saved: String,
+    /// The values last written to disk, so unchanged settings are not rewritten
+    saved: Settings,
     last_save: Instant,
 }
 
@@ -46,7 +47,7 @@ impl SettingsStore {
 
     pub fn new(values: Settings, path: Option<PathBuf>) -> Self {
         Self {
-            saved: serde_json::to_string(&values).unwrap_or_default(),
+            saved: values.clone(),
             values,
             path,
             last_save: Instant::now(),
@@ -59,13 +60,12 @@ impl SettingsStore {
 
     pub fn persist(&mut self) -> Result<()> {
         self.last_save = Instant::now();
-        let snapshot = serde_json::to_string(&self.values)?;
 
-        if snapshot != self.saved
+        if self.values != self.saved
             && let Some(path) = &self.path
         {
             Self::save(&self.values, path)?;
-            self.saved = snapshot;
+            self.saved = self.values.clone();
         }
 
         Ok(())

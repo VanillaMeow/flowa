@@ -4,11 +4,11 @@ use std::{ptr, ptr::NonNull};
 
 use anyhow::{Context, Result, ensure};
 
-use super::{Codec, Packet, Receive, Sent, StreamInfo, check, ffi, timestamp};
+use super::{Codec, Packet, Receive, Sent, StreamInfo, Threads, check, ffi, timestamp};
 
 const RATE: i32 = 48_000;
 const CHANNELS: usize = 2;
-const MAX_FRAMES: i32 = 480_000;
+const MAX_RESAMPLED_FRAMES: i32 = 480_000;
 
 pub(super) struct AudioDecoder {
     codec: Codec,
@@ -17,7 +17,7 @@ pub(super) struct AudioDecoder {
 
 impl AudioDecoder {
     pub fn open(stream: &ffi::AVStream) -> Result<Self> {
-        let codec = Codec::software_stream(stream)?;
+        let codec = Codec::software_stream(stream, Threads::Single)?;
         let mut stereo = ffi::AVChannelLayout::default();
         let mut resampler = ptr::null_mut();
 
@@ -93,7 +93,7 @@ impl AudioDecoder {
             ffi::swr_get_out_samples(self.resampler.as_ptr(), data.nb_samples)
         };
         ensure!(
-            (1..=MAX_FRAMES).contains(&capacity),
+            (1..=MAX_RESAMPLED_FRAMES).contains(&capacity),
             "Invalid resampled audio capacity"
         );
 

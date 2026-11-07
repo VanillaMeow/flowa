@@ -13,7 +13,7 @@ use std::{
 use anyhow::{Result, ensure};
 
 use super::{
-    AudioBlock, AudioStreamInfo, Packet, PacketKind, Receive, Sent, Stream, StreamInfo,
+    AudioBlock, AudioInfo, Packet, PacketKind, Receive, Sent, Stream, StreamInfo,
     audio::AudioDecoder, check, ffi, path_string, rational, stream_rotation,
 };
 
@@ -171,7 +171,7 @@ impl<'a> Input<'a> {
         let audio = audio_index.map(|index| {
             // SAFETY: The input owns the selected stream and its codec parameters
             let parameters = unsafe { &*self.stream(index).codecpar };
-            AudioStreamInfo {
+            AudioInfo {
                 codec: codec_name(parameters.codec_id),
                 channels: parameters.ch_layout.nb_channels.max(0) as u32,
                 sample_rate: parameters.sample_rate.max(0) as u32,
@@ -212,14 +212,11 @@ impl<'a> Input<'a> {
     }
 }
 
-fn codec_name(id: ffi::AVCodecID) -> [std::ffi::c_char; 64] {
-    let mut codec = [0; 64];
-    // SAFETY: FFmpeg returns a static NUL-terminated codec name
-    let name = unsafe { CStr::from_ptr(ffi::avcodec_get_name(id)) };
-    for (destination, &source) in codec.iter_mut().take(63).zip(name.to_bytes()) {
-        *destination = source as std::ffi::c_char;
-    }
-    codec
+fn codec_name(id: ffi::AVCodecID) -> &'static str {
+    // SAFETY: FFmpeg returns a static NUL-terminated name for every codec ID
+    unsafe { CStr::from_ptr(ffi::avcodec_get_name(id)) }
+        .to_str()
+        .unwrap_or("unknown")
 }
 
 impl Drop for Input<'_> {

@@ -290,7 +290,7 @@ mod filmstrip {
             (vec2(-60., 0.), egui::MouseWheelSource::Trackpad),
         ] {
             let ctx = egui::Context::default();
-            let mut strip = Filmstrip::new(ctx.clone());
+            let mut strip = Filmstrip::new(ctx.clone(), 256 * 1024 * 1024);
             frame(&ctx, &mut strip, &browser, Vec::new());
             let initial = frame(&ctx, &mut strip, &browser, Vec::new());
 

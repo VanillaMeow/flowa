@@ -2,7 +2,7 @@
 
 use egui::{Color32, Pos2, Response, Sense, Ui, Vec2, vec2};
 
-use super::rendering::icon_cache;
+use super::{rendering::icon_cache, theme};
 
 pub const LICENSE: &str = include_str!("../../assets/icons/lucide/LICENSE");
 
@@ -122,18 +122,17 @@ pub fn swatch(ui: &mut Ui, color: Color32, selected: bool, label: &str) -> Respo
     );
 
     if selected {
-        let luminance =
-            u32::from(color.r()) + u32::from(color.g()) + u32::from(color.b());
+        let check = if theme::is_dark(color) {
+            Color32::WHITE
+        } else {
+            Color32::from_rgb(20, 22, 30)
+        };
         paint(
             ui.painter(),
             Icon::Check,
             response.rect.center(),
             17.,
-            if luminance > 400 {
-                Color32::from_rgb(20, 22, 30)
-            } else {
-                Color32::WHITE
-            },
+            check,
         );
     }
 

@@ -4,10 +4,10 @@ use anyhow::{Context, Result, ensure};
 use ash::vk;
 use eframe::wgpu::{self, hal};
 
-use super::{Playback, SLOT_COUNT, Target};
-use crate::video::native::Target as NativeTarget;
+use super::{Pipeline, SLOT_COUNT, Target};
+use crate::video::native;
 
-impl Playback {
+impl Pipeline {
     /// Reuses the last frame unless FFmpeg produces a new frame or the target size changes
     pub fn render(&mut self, size: [u32; 2]) -> Result<Option<egui::TextureId>> {
         if size.contains(&0) || self.status.frame_serial == 0 {
@@ -70,7 +70,7 @@ impl Playback {
         // The native renderer borrows the image until it signals the next even value
         let texture = unsafe { target.texture.as_hal::<hal::api::Vulkan>() }
             .context("Vulkan texture unavailable")?;
-        let frame = NativeTarget {
+        let frame = native::flowa_video_target {
             image: unsafe { texture.raw_handle() },
             width: self.size[0],
             height: self.size[1],
@@ -168,7 +168,7 @@ impl Playback {
         }
 
         // Retire native image views before wgpu destroys the images they reference
-        unsafe { (self.gpu.api.gpu_retire_targets)(self.gpu.handle.as_ptr()) };
+        unsafe { native::flowa_gpu_retire_targets(self.gpu.handle.as_ptr()) };
         // Wgpu retains submitted resources until completion; the UI frees egui registrations
         // only after receiving the replacement frame and these retired targets
         self.retired.append(&mut self.targets);

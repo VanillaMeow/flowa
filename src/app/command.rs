@@ -19,7 +19,7 @@ pub(crate) enum Command {
     CopyImage,
     CopyPath,
     Export,
-    Reveal(PathBuf),
+    Reveal,
     RequestRename,
     RequestTrash,
     ConfirmRename { path: PathBuf, name: String },

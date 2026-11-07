@@ -1,29 +1,46 @@
 //! Preferences window, tabs, and shortcut reference
 
 use egui::{Color32, RichText, vec2};
-use strum::VariantArray;
+use strum::{AsRefStr, VariantArray};
 
-use crate::settings::{
-    Accent, Canvas, RendererPreference, Settings, Theme, VideoDecoder,
+use crate::{
+    settings::{
+        Accent, CHECKER_CONTRAST, CHECKER_SIZE, Canvas, MEMORY_MB, RendererPreference,
+        SLIDESHOW_SECONDS, Settings, Theme, UI_SCALE, VideoDecoder,
+    },
+    video::VideoSession,
 };
-use crate::video::VideoSession;
 
 use super::{
     actions, icons,
     theme::{self, Colors},
 };
 
+#[derive(Clone, Copy, Default, PartialEq, Eq, AsRefStr, VariantArray)]
+enum Tab {
+    #[default]
+    Appearance,
+    Viewing,
+    Performance,
+    Shortcuts,
+    About,
+}
+
 #[derive(Default)]
 pub struct PreferencesWindow {
     pub open: bool,
-    tab: usize,
+    tab: Tab,
 }
 
 impl PreferencesWindow {
     pub fn new(open: bool) -> Self {
-        Self { open, tab: 0 }
+        Self {
+            open,
+            tab: Tab::default(),
+        }
     }
 
+    /// Edits settings in place; the caller compares them to detect changes
     pub fn show(
         &mut self,
         ctx: &egui::Context,
@@ -31,12 +48,11 @@ impl PreferencesWindow {
         colors: Colors,
         gpu: &str,
         video: &VideoSession,
-    ) -> bool {
+    ) {
         if !self.open {
-            return false;
+            return;
         }
 
-        let before = serde_json::to_string(settings).unwrap_or_default();
         let default_position =
             (ctx.viewport_rect().center() - vec2(330., 310.)).max(egui::pos2(12., 12.));
 
@@ -75,35 +91,31 @@ impl PreferencesWindow {
                         preference_tab(ui, self.tab, settings, colors, gpu, video)
                     });
             });
-
-        before != serde_json::to_string(settings).unwrap_or_default()
     }
 }
 
-fn preference_tabs(ui: &mut egui::Ui, tab: &mut usize) {
-    let tabs = ["Appearance", "Viewing", "Performance", "Shortcuts", "About"];
-
+fn preference_tabs(ui: &mut egui::Ui, selected: &mut Tab) {
     ui.horizontal(|ui| {
-        for (index, label) in tabs.iter().enumerate() {
-            ui.selectable_value(tab, index, *label);
+        for &tab in Tab::VARIANTS {
+            ui.selectable_value(selected, tab, tab.as_ref());
         }
     });
 }
 
 fn preference_tab(
     ui: &mut egui::Ui,
-    tab: usize,
+    tab: Tab,
     settings: &mut Settings,
     colors: Colors,
     gpu: &str,
     video: &VideoSession,
 ) {
     match tab {
-        0 => appearance(ui, settings, colors),
-        1 => viewing(ui, settings),
-        2 => performance(ui, settings, colors, gpu, video),
-        3 => shortcuts(ui),
-        _ => about(ui, colors),
+        Tab::Appearance => appearance(ui, settings, colors),
+        Tab::Viewing => viewing(ui, settings),
+        Tab::Performance => performance(ui, settings, colors, gpu, video),
+        Tab::Shortcuts => shortcuts(ui),
+        Tab::About => about(ui, colors),
     }
 }
 
@@ -113,7 +125,7 @@ fn viewing(ui: &mut egui::Ui, settings: &mut Settings) {
         &mut settings.compact_video_controls,
         "Compact video controls",
     );
-    ui.checkbox(&mut settings.info, "Show image details");
+    ui.checkbox(&mut settings.info, "Show file details");
     ui.checkbox(&mut settings.fit_small, "Enlarge small images when fitting");
     ui.checkbox(
         &mut settings.remember_view,
@@ -132,13 +144,14 @@ fn viewing(ui: &mut egui::Ui, settings: &mut Settings) {
     ui.add_space(16.);
     ui.label("Slideshow interval");
     ui.add(
-        egui::Slider::new(&mut settings.slideshow_seconds, 1.0..=60.0)
+        egui::Slider::new(&mut settings.slideshow_seconds, SLIDESHOW_SECONDS)
+            .logarithmic(true)
             .suffix(" seconds"),
     );
 
     ui.add_space(16.);
 
-    if ui.button("Clear recent images").clicked() {
+    if ui.button("Clear recent files and folders").clicked() {
         settings.recent.clear();
     }
 }
@@ -152,9 +165,9 @@ fn performance(
 ) {
     ui.label("Decoded image memory limit");
     ui.add(
-        egui::Slider::new(&mut settings.memory_mb, 128..=4096)
+        egui::Slider::new(&mut settings.memory_mb, MEMORY_MB)
             .logarithmic(true)
-            .suffix(" MB"),
+            .suffix(" MiB"),
     )
     .on_hover_text("Applies to the next image opened");
 
@@ -217,7 +230,7 @@ fn renderer_preference(
         .show_ui(ui, |ui| renderer_choices(ui, renderer));
 
     ui.label(
-        RichText::new("Changes apply after restarting Flowa")
+        RichText::new("Changes apply after restarting flowa")
             .small()
             .color(colors.muted),
     );
@@ -305,10 +318,7 @@ fn about_contents(ui: &mut egui::Ui, colors: Colors) {
         ui.label("HEIC / HEIF");
     }
 
-    if cfg!(all(
-        feature = "video",
-        any(target_os = "linux", target_os = "windows")
-    )) {
+    if cfg!(video_playback) {
         about_video(ui);
     }
 
@@ -375,15 +385,15 @@ fn appearance(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors) {
 
 fn interface_scale(ui: &mut egui::Ui, scale: &mut f32) {
     ui.label("Interface size");
-    let enter = ui.input(|input| input.key_pressed(egui::Key::Enter));
     let response = ui.add(
-        egui::Slider::new(scale, 0.8..=1.75)
+        egui::Slider::new(scale, UI_SCALE)
             .step_by(0.05)
             .suffix("×")
             .update_while_editing(false),
     );
 
-    let finished = response.drag_stopped() || (response.lost_focus() && enter);
+    // Rescaling mid-drag would move the slider under the pointer, so wait for release
+    let finished = response.drag_stopped() || response.changed() && !response.dragged();
 
     if finished {
         ui.ctx().set_zoom_factor(*scale);
@@ -445,9 +455,9 @@ fn theme_card(
 }
 
 fn accent_picker(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors) {
+    let theme_accent = theme::colors(settings.theme, Accent::Theme, colors.dark).accent;
+
     for &accent in Accent::VARIANTS {
-        let theme_accent =
-            theme::colors(settings.theme, Accent::Theme, colors.dark).accent;
         let color = theme::accent_color(accent, theme_accent);
         let selected = settings.accent == accent;
 
@@ -484,11 +494,11 @@ fn checkerboard_controls(ui: &mut egui::Ui, settings: &mut Settings) {
 
     ui.horizontal(|ui| {
         ui.add(
-            egui::Slider::new(&mut settings.checker_size, 4.0..=40.0)
+            egui::Slider::new(&mut settings.checker_size, CHECKER_SIZE)
                 .text("Square size"),
         );
         ui.add(
-            egui::Slider::new(&mut settings.checker_contrast, 0.02..=0.3)
+            egui::Slider::new(&mut settings.checker_contrast, CHECKER_CONTRAST)
                 .text("Contrast"),
         );
     });

@@ -171,6 +171,7 @@ pub const RENAME: Action =
     Action::new("Rename…", Command::RequestRename, &[key(Key::F2)]);
 pub const TRASH: Action =
     Action::new("Move to trash…", Command::RequestTrash, &[key(Key::Delete)]);
+pub const REVEAL: Action = Action::new("Open containing folder", Command::Reveal, &[]);
 
 pub const NAVIGATION: &[Action] = &[PREVIOUS, NEXT, FIRST, LAST];
 

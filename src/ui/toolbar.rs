@@ -174,15 +174,7 @@ fn file_menu(ui: &mut egui::Ui, state: &ToolbarState<'_>, commands: &mut Vec<Com
     ui.separator();
     file_actions(ui, state, commands);
 
-    let can_reveal = state.browser.current().is_some() && state.busy.is_none();
-    if ui
-        .add_enabled(can_reveal, egui::Button::new("Show folder in file manager"))
-        .clicked()
-        && let Some(entry) = state.browser.current()
-    {
-        commands.push(Command::Reveal(entry.path.clone()));
-        ui.close();
-    }
+    actions::REVEAL.menu(ui, state.browser.current().is_some(), commands);
 
     ui.separator();
     actions::PREFERENCES.menu(ui, true, commands);

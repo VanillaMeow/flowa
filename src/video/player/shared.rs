@@ -11,8 +11,8 @@ use anyhow::{Result, ensure};
 use super::{
     audio::{AudioOutput, BYTES_PER_SECOND},
     clock::{AudioTiming, Clock},
-    media::{InterruptFlags, Packet, Stream},
 };
+use crate::video::media::{InterruptFlags, Packet, Stream};
 
 pub(super) const PACKET_LIMIT: usize = 96;
 pub(super) const BYTE_LIMIT: usize = 32 * 1024 * 1024;
@@ -61,7 +61,8 @@ pub(super) struct Seek {
     pub generation: u64,
 }
 
-pub(super) struct Playback {
+/// Playback state shared by the UI-side engine and the demux worker
+pub(super) struct PlaybackState {
     pub stream: Option<Arc<Stream>>,
     pub packets: PacketQueue,
     pub eof: bool,
@@ -74,11 +75,13 @@ pub(super) struct Playback {
     pub ended: bool,
     pub clock: Clock,
     pub audio: Option<AudioOutput>,
+    /// Set when no output device could be opened; playback then continues silently
+    pub audio_disabled: bool,
     pub volume: f64,
     pub error: Option<String>,
 }
 
-impl Playback {
+impl PlaybackState {
     pub fn new(volume: f64) -> Self {
         Self {
             stream: None,
@@ -93,6 +96,7 @@ impl Playback {
             ended: false,
             clock: Clock::default(),
             audio: None,
+            audio_disabled: false,
             volume,
             error: None,
         }
@@ -116,7 +120,7 @@ impl Playback {
 }
 
 pub(super) struct Shared {
-    state: Mutex<Playback>,
+    state: Mutex<PlaybackState>,
     changed: Condvar,
     pub interrupt: Arc<InterruptFlags>,
     ctx: egui::Context,
@@ -125,14 +129,14 @@ pub(super) struct Shared {
 impl Shared {
     pub fn new(ctx: egui::Context, volume: f64) -> Self {
         Self {
-            state: Mutex::new(Playback::new(volume)),
+            state: Mutex::new(PlaybackState::new(volume)),
             changed: Condvar::new(),
             interrupt: Arc::new(InterruptFlags::default()),
             ctx,
         }
     }
 
-    pub fn lock(&self) -> MutexGuard<'_, Playback> {
+    pub fn lock(&self) -> MutexGuard<'_, PlaybackState> {
         self.state.lock().unwrap_or_else(|poisoned| {
             let mut state = poisoned.into_inner();
             state.error.get_or_insert_with(|| {
@@ -145,8 +149,8 @@ impl Shared {
 
     pub fn wait<'guard>(
         &self,
-        guard: MutexGuard<'guard, Playback>,
-    ) -> MutexGuard<'guard, Playback> {
+        guard: MutexGuard<'guard, PlaybackState>,
+    ) -> MutexGuard<'guard, PlaybackState> {
         self.changed
             .wait_timeout(guard, Duration::from_millis(10))
             .unwrap_or_else(|poisoned| poisoned.into_inner())

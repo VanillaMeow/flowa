@@ -15,12 +15,12 @@ pub(in crate::video) struct FrameInfo {
     pub rotation: f64,
 }
 
-/// Owns a frame reference without making hardware frames transferable between threads
-pub(in crate::video) struct DecodedFrame {
+/// Owns one `AVFrame` reference without making hardware frames transferable between threads
+pub(in crate::video) struct AvFrame {
     handle: NonNull<ffi::AVFrame>,
 }
 
-impl DecodedFrame {
+impl AvFrame {
     pub(super) fn allocate() -> Result<Self> {
         // SAFETY: The newly allocated frame has one owner and is freed by Drop
         let handle = NonNull::new(unsafe { ffi::av_frame_alloc() })
@@ -66,7 +66,7 @@ impl DecodedFrame {
     }
 }
 
-impl Drop for DecodedFrame {
+impl Drop for AvFrame {
     fn drop(&mut self) {
         let mut handle = self.raw();
 
@@ -75,13 +75,13 @@ impl Drop for DecodedFrame {
     }
 }
 
-pub(in crate::video) struct CpuFrame(DecodedFrame);
+pub(in crate::video) struct CpuFrame(AvFrame);
 
 // SAFETY: Construction rejects hardware storage and transfers one owned software frame
 unsafe impl Send for CpuFrame {}
 
 impl CpuFrame {
-    pub fn new(frame: DecodedFrame) -> Result<Self> {
+    pub fn new(frame: AvFrame) -> Result<Self> {
         let data = frame.data();
 
         // SAFETY: FFmpeg returns a static descriptor for a supported frame format
@@ -98,7 +98,7 @@ impl CpuFrame {
         Ok(Self(frame))
     }
 
-    pub fn into_frame(self) -> DecodedFrame {
+    pub fn into_frame(self) -> AvFrame {
         self.0
     }
 }
@@ -109,7 +109,7 @@ mod tests {
 
     #[test]
     fn cpu_channel_rejects_hardware_formats() -> Result<()> {
-        let frame = DecodedFrame::allocate()?;
+        let frame = AvFrame::allocate()?;
 
         // SAFETY: This unshared, empty frame owns no buffers and only its format is changed
         unsafe { (*frame.raw()).format = ffi::AV_PIX_FMT_CUDA };
@@ -120,7 +120,7 @@ mod tests {
 
     #[test]
     fn cpu_frame_transfers_its_buffer_without_a_gpu_owner() -> Result<()> {
-        let frame = DecodedFrame::allocate()?;
+        let frame = AvFrame::allocate()?;
 
         // SAFETY: This private frame is initialized before allocation and remains exclusively owned
         unsafe {

@@ -68,7 +68,7 @@ mod tests {
     use crate::settings::Theme;
 
     #[test]
-    fn theme_names_keep_their_case_and_spacing_rules() {
+    fn theme_names_ignore_case_and_spacing() {
         for (input, expected) in [
             ("Sweet", Theme::Sweet),
             ("sWeEt", Theme::Sweet),
@@ -77,11 +77,11 @@ mod tests {
             ("HighContrast", Theme::HighContrast),
             ("System / Qt", Theme::System),
             ("SYSTEM/QT", Theme::System),
+            ("system", Theme::System),
         ] {
             assert_eq!(parse_theme(input), Ok(expected));
         }
 
         assert_eq!(parse_theme("missing"), Err("Unknown theme: missing".into()));
-        assert!(parse_theme("System").is_err());
     }
 }

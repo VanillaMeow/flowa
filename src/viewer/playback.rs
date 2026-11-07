@@ -22,7 +22,8 @@ impl Animation {
     pub fn start(&mut self, frames: &[DecodedFrame], now: Instant) {
         self.frame_index = 0;
         self.playing = true;
-        self.deadline = now + frames[0].delay;
+        self.deadline =
+            now + frames.first().map_or(Duration::ZERO, |frame| frame.delay);
     }
 
     pub fn toggle(&mut self, now: Instant) {

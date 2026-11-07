@@ -5,13 +5,13 @@ use std::{path::Path, ptr, ptr::NonNull};
 use anyhow::{Context, Result, ensure};
 
 use super::{
-    Codec, DecodedFrame, Receive, Sent, check, dimensions, ffi,
+    AvFrame, Codec, Receive, Sent, Threads, check, dimensions, ffi,
     input::{Input, Probe},
     rational, stream_rotation,
 };
 
-const PACKET_LIMIT: usize = 512;
-const BYTE_LIMIT: usize = 32 * 1024 * 1024;
+const POSTER_PACKET_LIMIT: usize = 512;
+const POSTER_BYTE_LIMIT: usize = 32 * 1024 * 1024;
 
 pub(in crate::video) struct Poster {
     pub pixels: Vec<u8>,
@@ -34,7 +34,7 @@ pub(in crate::video) fn extract_poster(
     let mut input = Input::open(path, &cancelled, Probe::Poster)?;
     let index = input.best_stream(ffi::AVMEDIA_TYPE_VIDEO)?;
     let stream = input.stream(index);
-    let mut codec = Codec::software_stream(stream)?;
+    let mut codec = Codec::software_stream(stream, Threads::Single)?;
     let stream_rotation = stream_rotation(stream).unwrap_or(0.0);
     let time_base = rational(stream.time_base);
 
@@ -83,7 +83,7 @@ fn decode(
     stream_index: usize,
     codec: &mut Codec,
     cancelled: &impl Fn() -> bool,
-) -> Result<DecodedFrame> {
+) -> Result<AvFrame> {
     let mut packets = 0;
     let mut bytes = 0_usize;
     let mut draining = false;
@@ -104,7 +104,7 @@ fn decode(
             "No delayed video frame was decoded for the thumbnail"
         );
         ensure!(
-            packets < PACKET_LIMIT && bytes < BYTE_LIMIT,
+            packets < POSTER_PACKET_LIMIT && bytes < POSTER_BYTE_LIMIT,
             "Thumbnail decoding exceeded its packet budget"
         );
 
@@ -120,7 +120,7 @@ fn decode(
         packets += 1;
         bytes = bytes.saturating_add(packet.bytes);
         ensure!(
-            bytes <= BYTE_LIMIT,
+            bytes <= POSTER_BYTE_LIMIT,
             "Thumbnail decoding exceeded its byte budget"
         );
 
@@ -168,7 +168,7 @@ fn scaled_size(
 }
 
 fn scale(
-    frame: &DecodedFrame,
+    frame: &AvFrame,
     aspect: ffi::AVRational,
     maximum: [u32; 2],
 ) -> Result<Poster> {

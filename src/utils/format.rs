@@ -16,14 +16,16 @@ pub fn media_time(seconds: f64) -> String {
     format!("{minutes}:{:02}", seconds % 60)
 }
 
+/// Formats sizes with binary (IEC) units, matching how the memory limit is measured
 pub fn file_size(bytes: u64) -> String {
-    if bytes < 1024 {
-        format!("{bytes} B")
-    } else if bytes < 1024 * 1024 {
-        format!("{:.1} KB", bytes as f64 / 1024.0)
-    } else if bytes < 1024 * 1024 * 1024 {
-        format!("{:.1} MB", bytes as f64 / 1048576.0)
-    } else {
-        format!("{:.2} GB", bytes as f64 / 1073741824.0)
+    const KIB: u64 = 1024;
+    const MIB: u64 = KIB * 1024;
+    const GIB: u64 = MIB * 1024;
+
+    match bytes {
+        0..KIB => format!("{bytes} B"),
+        KIB..MIB => format!("{:.1} KiB", bytes as f64 / KIB as f64),
+        MIB..GIB => format!("{:.1} MiB", bytes as f64 / MIB as f64),
+        _ => format!("{:.2} GiB", bytes as f64 / GIB as f64),
     }
 }

@@ -18,7 +18,7 @@ impl Flowa {
 
             match outcome {
                 Ok(outcome) => self.apply_outcome(outcome, ctx),
-                Err(error) => self.ui.dialogs.notify(format!("{error:#}"), true),
+                Err(error) => self.notify_error(&error),
             }
         }
     }
@@ -44,7 +44,7 @@ impl Flowa {
                 }
                 Err(error) => {
                     self.image.loading = false;
-                    self.ui.dialogs.notify(format!("{error:#}"), true);
+                    self.notify_error(&error);
                 }
             }
         }
@@ -68,11 +68,6 @@ impl Flowa {
                     self.ui.filmstrip.cache(entry.path.clone(), Some(thumbnail));
                 }
 
-                if let Some(percent) = self.initial_zoom.take() {
-                    self.ui.canvas.view.fit = false;
-                    self.ui.canvas.view.zoom = percent / 100.0 / ctx.pixels_per_point();
-                }
-
                 self.slideshow
                     .restart(self.settings.values.slideshow_seconds);
                 self.preload_neighbors();
@@ -82,18 +77,18 @@ impl Flowa {
 
     fn apply_outcome(&mut self, outcome: Outcome, ctx: &egui::Context) {
         match outcome {
-            Outcome::Picked(Some(path)) => self.open_path(path, ctx),
-            Outcome::Picked(None) | Outcome::Revealed => {}
+            Outcome::Picked(path) => self.open(path, ctx),
+            Outcome::Cancelled => {}
             Outcome::Copied => self.ui.dialogs.notify("Image copied", false),
             Outcome::Exported => self.ui.dialogs.notify("Copy exported", false),
             Outcome::Renamed { old, new } => {
                 self.loader.invalidate();
-                self.settings.values.recent.retain(|path| *path != old);
+                self.settings.values.rename_recent(&old, &new);
 
-                let entry = match folder_scan::entry_from_path(new.clone()) {
+                let entry = match folder_scan::entry_from_path(new) {
                     Ok(entry) => entry,
                     Err(error) => {
-                        self.ui.dialogs.notify(format!("{error:#}"), true);
+                        self.notify_error(&error);
                         return;
                     }
                 };
@@ -106,7 +101,6 @@ impl Flowa {
                 );
                 self.ui.filmstrip.remove(&old);
                 self.ui.filmstrip.reveal_selection();
-                self.settings.values.remember(new);
                 self.update_title(ctx);
                 self.ui.dialogs.notify("Image renamed", false);
 
@@ -116,7 +110,7 @@ impl Flowa {
             }
             Outcome::Trashed(path) => {
                 self.loader.invalidate();
-                self.settings.values.recent.retain(|recent| *recent != path);
+                self.settings.values.forget(&path);
                 self.ui.filmstrip.remove(&path);
 
                 if let Some(index) = self.browser.remove(&path) {
@@ -173,7 +167,7 @@ mod tests {
             launch,
             "Test".into(),
         );
-        app.open_path(directory.path().join("0.png"), &ctx);
+        app.open(directory.path().join("0.png").canonicalize()?, &ctx);
         let deadline = Instant::now() + Duration::from_secs(3);
         while app.browser.entries().is_empty() {
             app.poll_catalog(&ctx);

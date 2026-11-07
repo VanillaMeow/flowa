@@ -10,19 +10,21 @@ use std::{
 use anyhow::{Result, ensure};
 use eframe::egui_wgpu::RenderState;
 
-use super::{Playback, Snapshot, Target, audio::AudioRuntime, decoder};
+use super::{Pipeline, Snapshot, Target, audio::AudioRuntime, decoder};
 use crate::{
     settings::VideoDecoder,
     video::{
-        Command, VideoState,
+        PlayerCommand, VideoState,
         gpu::{self, NativeGpu},
     },
 };
 
 #[derive(Default)]
 struct Requests {
+    /// A new file (or `None` to stop), tagged with the UI's epoch
     source: Option<(u64, Option<PathBuf>)>,
-    commands: Vec<Command>,
+    commands: Vec<PlayerCommand>,
+    /// A requested playback step, optionally with the target texture size
     tick: Option<Option<[u32; 2]>>,
     shutdown: bool,
 }
@@ -60,17 +62,21 @@ impl Requests {
         self.source = Some((epoch, path));
         self.tick = self.tick.map(|_| None);
         self.commands.retain(|command| {
-            matches!(command, Command::Volume(_) | Command::Decoder(_))
+            matches!(
+                command,
+                PlayerCommand::Volume(_) | PlayerCommand::Decoder(_)
+            )
         });
     }
 
-    fn command(&mut self, command: Command) {
+    /// Keeps only the latest command of each kind; two queued toggles cancel out
+    fn command(&mut self, command: PlayerCommand) {
         let previous = self.commands.iter().position(|queued| {
             std::mem::discriminant(queued) == std::mem::discriminant(&command)
         });
         if let Some(index) = previous {
             self.commands.remove(index);
-            if matches!(command, Command::TogglePause) {
+            if matches!(command, PlayerCommand::TogglePause) {
                 return;
             }
         }
@@ -125,7 +131,7 @@ impl Drop for PlaybackClaim {
 
 enum Driver {
     Background(Worker),
-    Inline(Box<Playback>),
+    Inline(Box<Pipeline>),
 }
 
 /// The UI reads completed frames without waiting for decoding or shader compilation
@@ -149,7 +155,7 @@ impl Player {
     pub fn new(graphics: &RenderState, ctx: &egui::Context) -> Result<Self> {
         let gpu = gpu::for_device(&graphics.device)?;
         let claim = PlaybackClaim::new(Arc::clone(&gpu))?;
-        let audio = AudioRuntime::new(Arc::clone(&gpu.api))
+        let audio = AudioRuntime::new()
             .inspect_err(|error| {
                 log::warn!("Audio initialization: {error:#}");
             })
@@ -175,7 +181,7 @@ impl Player {
             log::info!(
                 "Video playback uses the UI thread: no separate graphics queue available"
             );
-            Driver::Inline(Box::new(Playback::new(graphics, ctx)?))
+            Driver::Inline(Box::new(Pipeline::new(graphics, ctx)?))
         };
 
         Ok(Self {
@@ -210,8 +216,11 @@ impl Player {
         self.target = None;
         self.requested_size = None;
         self.status = Snapshot {
-            loading: path.is_some(),
-            volume: self.status.volume,
+            video: VideoState {
+                loading: path.is_some(),
+                volume: self.status.video.volume,
+                ..VideoState::default()
+            },
             ..Snapshot::default()
         };
         match &mut self.driver {
@@ -229,7 +238,7 @@ impl Player {
         Ok(())
     }
 
-    pub fn command(&mut self, command: Command) -> Result<()> {
+    pub fn command(&mut self, command: PlayerCommand) -> Result<()> {
         match &mut self.driver {
             Driver::Background(worker) => {
                 worker.mailbox.update(|requests| requests.command(command))
@@ -252,7 +261,7 @@ impl Player {
                 }
                 Err(mpsc::TryRecvError::Empty) => None,
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    self.status.error =
+                    self.status.video.error =
                         Some("The video playback worker stopped unexpectedly".into());
                     None
                 }
@@ -310,42 +319,46 @@ impl Player {
             return;
         }
 
-        let status = self.status.clone();
-        if let Some(error) = &status.error {
-            if state.error.as_ref() != Some(error) {
-                log::error!("Video playback: {error}");
-            }
-            state.error = Some(error.clone());
-            state.loading = false;
+        self.log_changes(state);
+
+        let video = &self.status.video;
+        *state = VideoState {
+            active: true,
+            loading: video.loading && video.error.is_none(),
+            ..video.clone()
+        };
+
+        if state.error.is_some() {
             self.displayed = None;
-        } else {
-            state.error = None;
-            state.loading = status.loading;
+        }
+    }
+
+    fn log_changes(&mut self, previous: &VideoState) {
+        let video = &self.status.video;
+
+        if let Some(error) = &video.error
+            && previous.error.as_ref() != Some(error)
+        {
+            log::error!("Video playback: {error}");
         }
 
-        let decoder = &status.decoder;
-        if !decoder.is_empty() && state.decoder != *decoder {
-            if decoder == "software" {
-                log::info!("Video decoder: software (CPU frames uploaded to GPU)");
-            } else {
-                log::info!("Video decoder: {decoder} (GPU-resident frames)");
+        match video.decoder {
+            Some(decoder) if previous.decoder != video.decoder => {
+                let frames = if decoder == VideoDecoder::Software {
+                    "CPU frames uploaded to GPU"
+                } else {
+                    "GPU-resident frames"
+                };
+                log::info!("Video decoder: {} ({frames})", decoder.as_ref());
             }
-            state.decoder = decoder.clone();
+            _ => {}
         }
-        let audio = &status.audio;
-        if *audio != self.audio_name && !audio.is_empty() {
-            log::info!("Audio output: {audio}");
-        }
-        self.audio_name.clone_from(audio);
 
-        state.paused = status.paused;
-        state.seeking = status.seeking;
-        state.position = status.position;
-        state.duration = status.duration;
-        state.volume = status.volume;
-        state.size = status.size;
-        state.codec.clone_from(&status.codec);
-        state.audio.clone_from(&status.audio_info);
+        let output = &self.status.audio_output;
+        if !output.is_empty() && *output != self.audio_name {
+            log::info!("Audio output: {output}");
+        }
+        self.audio_name.clone_from(output);
     }
 
     pub fn repaint_after(&self) -> Duration {
@@ -365,6 +378,7 @@ impl Player {
     }
 }
 
+/// How long the UI may sleep before the next frame is due, kept within 1–100 ms
 fn delay(status: &Snapshot) -> Duration {
     let seconds = status.next_frame_delay;
     Duration::from_secs_f64(if seconds.is_finite() {
@@ -374,7 +388,7 @@ fn delay(status: &Snapshot) -> Duration {
     })
 }
 
-fn completion(playback: &mut Playback, epoch: u64) -> Completed {
+fn completion(playback: &mut Pipeline, epoch: u64) -> Completed {
     Completed {
         epoch,
         status: playback.status.clone(),
@@ -395,7 +409,7 @@ fn run(
     results: mpsc::SyncSender<Completed>,
 ) -> Vec<Target> {
     // Construct the engine here so hardware frame pointers never cross threads
-    let mut playback = match Playback::new(&graphics, &ctx) {
+    let mut playback = match Pipeline::new(&graphics, &ctx) {
         Ok(playback) => playback,
         Err(error) => {
             log::error!("Could not start video playback: {error:#}");
@@ -425,7 +439,7 @@ fn run(
         let changed = !work.commands.is_empty();
 
         for command in work.commands {
-            if matches!(command, Command::Decoder(_)) {
+            if matches!(command, PlayerCommand::Decoder(_)) {
                 failure = None;
             }
             if let Err(error) = playback.command(command) {
@@ -442,30 +456,29 @@ fn run(
 
         let previous_serial = playback.status.frame_serial;
         let previous_displayed = playback.displayed;
-        let previous_error = playback.status.error.clone();
+        let previous_error = playback.status.video.error.clone();
         playback.poll();
         if failure.is_none()
-            && playback.status.error.is_none()
+            && playback.status.video.error.is_none()
             && playback.status.frame_serial > 0
         {
-            let size = size.unwrap_or(playback.status.size);
+            let size = size.unwrap_or(playback.status.video.size);
             if let Err(error) = playback.render(size) {
                 failure = Some(error);
             }
         }
 
+        let video = &mut playback.status.video;
         if let Some(error) = &failure {
-            playback.status.error = Some(format!("{error:#}"));
+            video.error = Some(format!("{error:#}"));
         }
 
         let notify = changed
             || previous_serial != playback.status.frame_serial
             || previous_displayed != playback.displayed
-            || previous_error != playback.status.error;
-        let active = playback.status.error.is_none()
-            && (playback.status.loading
-                || playback.status.seeking
-                || !playback.status.paused);
+            || previous_error != video.error;
+        let active =
+            video.error.is_none() && (video.loading || video.seeking || !video.paused);
         let next = delay(&playback.status);
 
         if results.send(completion(&mut playback, epoch)).is_err() {
@@ -540,8 +553,7 @@ mod tests {
 
     use super::{Completed, Driver, Mailbox, Player, Requests, Snapshot, Worker};
     use crate::settings::VideoDecoder;
-    use crate::video::Command;
-    use crate::video::{VideoState, gpu};
+    use crate::video::{PlayerCommand, VideoState, gpu};
 
     #[test]
     fn a_stalled_worker_keeps_ui_requests_bounded_and_nonblocking() -> Result<()> {
@@ -580,9 +592,9 @@ mod tests {
         for index in 0..1000 {
             worker.mailbox.update(|requests| {
                 requests.replace_source(index, Some("latest.mp4".into()));
-                requests.command(Command::Seek(index as f64));
-                requests.command(Command::Volume(25.0));
-                requests.command(Command::Decoder(VideoDecoder::Vulkan));
+                requests.command(PlayerCommand::Seek(index as f64));
+                requests.command(PlayerCommand::Volume(25.0));
+                requests.command(PlayerCommand::Decoder(VideoDecoder::Vulkan));
             });
             worker.request_tick(Some([320, 180]));
             assert!(matches!(
@@ -617,20 +629,20 @@ mod tests {
     #[test]
     fn replacing_a_file_discards_old_controls_and_preserves_preferences() {
         let mut requests = Requests::default();
-        requests.command(Command::TogglePause);
-        requests.command(Command::Seek(12.0));
-        requests.command(Command::Volume(30.0));
-        requests.command(Command::Decoder(VideoDecoder::Nvdec));
+        requests.command(PlayerCommand::TogglePause);
+        requests.command(PlayerCommand::Seek(12.0));
+        requests.command(PlayerCommand::Volume(30.0));
+        requests.command(PlayerCommand::Decoder(VideoDecoder::Nvdec));
         requests.replace_source(2, Some("other.mp4".into()));
 
         assert_eq!(requests.commands.len(), 2);
-        assert!(matches!(requests.commands[0], Command::Volume(30.0)));
+        assert!(matches!(requests.commands[0], PlayerCommand::Volume(30.0)));
         assert!(matches!(
             requests.commands[1],
-            Command::Decoder(VideoDecoder::Nvdec)
+            PlayerCommand::Decoder(VideoDecoder::Nvdec)
         ));
-        requests.command(Command::TogglePause);
-        requests.command(Command::TogglePause);
+        requests.command(PlayerCommand::TogglePause);
+        requests.command(PlayerCommand::TogglePause);
         assert_eq!(requests.commands.len(), 2);
     }
 
@@ -715,7 +727,7 @@ mod tests {
                 player.available_decoders().contains(&preference),
                 "The selected decoder device is unavailable"
             );
-            player.command(Command::Decoder(preference))?;
+            player.command(PlayerCommand::Decoder(preference))?;
         }
         let mut state = VideoState {
             active: true,
@@ -737,17 +749,17 @@ mod tests {
         pump(&mut player, &mut state, |state| {
             state.position > 0.25 && state.size == [640, 360]
         })?;
-        ensure!(
-            !state.decoder.is_empty() && state.decoder != "software",
-            "Hardware decoding was not selected: {}",
-            state.decoder
-        );
+        let hardware = state
+            .decoder
+            .filter(|decoder| *decoder != VideoDecoder::Software)
+            .with_context(|| {
+                format!("Hardware decoding was not selected: {:?}", state.decoder)
+            })?;
 
         if let Ok(expected) = std::env::var("FLOWA_TEST_VIDEO_DECODER") {
             ensure!(
-                state.decoder == expected,
-                "Expected {expected} hardware decoding, selected {}",
-                state.decoder
+                hardware == hardware_preference(&expected)?,
+                "Expected {expected} hardware decoding, selected {hardware:?}"
             );
         }
 
@@ -758,21 +770,18 @@ mod tests {
             state.codec
         );
         ensure!(
-            player.status.audio.starts_with("sdl3/"),
+            player.status.audio_output.starts_with("sdl3/"),
             "SDL3 audio output was not selected"
         );
-        let audio = state
-            .audio
-            .clone()
-            .context("Audio metadata was not received")?;
+        let audio = state.audio.context("Audio metadata was not received")?;
         ensure!(audio.codec == "aac", "Incorrect audio codec");
         ensure!(audio.channels == 1, "Source channel count was lost");
         ensure!(audio.sample_rate == 44100, "Source sample rate was lost");
         let initial_frame = assert_video_pixels(&player)?;
 
-        player.command(Command::TogglePause)?;
+        player.command(PlayerCommand::TogglePause)?;
         pump(&mut player, &mut state, |state| state.paused)?;
-        player.command(Command::Seek(3.0))?;
+        player.command(PlayerCommand::Seek(3.0))?;
         pump(&mut player, &mut state, |state| {
             (state.position - 3.).abs() < 0.15
         })?;
@@ -781,16 +790,11 @@ mod tests {
         graphics.queue.submit([]);
         assert_video_pixels(&player)?;
 
-        let hardware_name = state.decoder.clone();
-        let hardware = hardware_preference(&hardware_name)?;
         let paused_position = state.position;
-        for (preference, expected) in [
-            (VideoDecoder::Software, "software"),
-            (hardware, hardware_name.as_str()),
-        ] {
-            player.command(Command::Decoder(preference))?;
+        for preference in [VideoDecoder::Software, hardware] {
+            player.command(PlayerCommand::Decoder(preference))?;
             pump(&mut player, &mut state, |state| {
-                state.decoder == expected && !state.seeking
+                state.decoder == Some(preference) && !state.seeking
             })?;
             ensure!(state.paused, "Switching decoder resumed paused playback");
             ensure!(
@@ -808,7 +812,7 @@ mod tests {
             assert_video_pixels(&player)?;
         }
 
-        player.command(Command::Volume(25.0))?;
+        player.command(PlayerCommand::Volume(25.0))?;
         pump(&mut player, &mut state, |state| {
             (state.volume - 25.).abs() < 0.01
         })?;
@@ -830,19 +834,19 @@ mod tests {
         );
 
         // Consecutive seeks must discard packets and audio from superseded generations
-        player.command(Command::Seek(1.0))?;
-        player.command(Command::Seek(4.0))?;
-        player.command(Command::Seek(2.0))?;
+        player.command(PlayerCommand::Seek(1.0))?;
+        player.command(PlayerCommand::Seek(4.0))?;
+        player.command(PlayerCommand::Seek(2.0))?;
         pump(&mut player, &mut state, |state| {
             (state.position - 2.0).abs() < 0.15
         })?;
         assert_video_pixels(&player)?;
 
-        player.command(Command::Seek(state.duration))?;
+        player.command(PlayerCommand::Seek(state.duration))?;
         pump(&mut player, &mut state, |state| {
             state.paused && state.position > 5.8
         })?;
-        player.command(Command::TogglePause)?;
+        player.command(PlayerCommand::TogglePause)?;
         pump(&mut player, &mut state, |state| {
             !state.paused && state.position < 1.0
         })?;
@@ -962,15 +966,15 @@ mod tests {
         player.load(&clip)?;
         pump(&mut player, &mut state, |state| state.position > 0.1)?;
         ensure!(
-            state.decoder == "software",
+            state.decoder == Some(VideoDecoder::Software),
             "Software fallback was not selected"
         );
         let initial_frame = assert_video_pixels(&player)?;
 
-        player.command(Command::TogglePause)?;
+        player.command(PlayerCommand::TogglePause)?;
         pump(&mut player, &mut state, |state| state.paused)?;
-        player.command(Command::Seek(2.0))?;
-        player.command(Command::Seek(1.5))?;
+        player.command(PlayerCommand::Seek(2.0))?;
+        player.command(PlayerCommand::Seek(1.5))?;
         pump(&mut player, &mut state, |state| {
             (state.position - 1.5).abs() < 0.15
         })?;
@@ -979,13 +983,13 @@ mod tests {
         graphics.queue.submit([]);
         assert_video_pixels(&player)?;
 
-        player.command(Command::Seek(state.duration))?;
+        player.command(PlayerCommand::Seek(state.duration))?;
         pump(&mut player, &mut state, |state| state.position > 2.8)?;
-        player.command(Command::TogglePause)?;
+        player.command(PlayerCommand::TogglePause)?;
         pump(&mut player, &mut state, |state| {
             state.paused && (state.position - state.duration).abs() < 0.01
         })?;
-        player.command(Command::TogglePause)?;
+        player.command(PlayerCommand::TogglePause)?;
         pump(&mut player, &mut state, |state| {
             !state.paused && state.position < 1.0
         })?;

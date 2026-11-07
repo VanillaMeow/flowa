@@ -1,6 +1,11 @@
 //! Generates FFmpeg bindings and links system or portable media dependencies
 
-use std::{env, error::Error, path::PathBuf, process::Command};
+use std::{
+    env,
+    error::Error,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 const MEDIA_LIBRARIES: &[(&str, &str)] = &[
     ("libavformat", "63"),
@@ -12,8 +17,30 @@ const MEDIA_LIBRARIES: &[(&str, &str)] = &[
     ("sdl3", "3.2"),
 ];
 
+/// SDL3 audio functions called by the playback engine
+const SDL_FUNCTIONS: &[&str] = &[
+    "SDL_InitSubSystem",
+    "SDL_QuitSubSystem",
+    "SDL_GetError",
+    "SDL_GetCurrentAudioDriver",
+    "SDL_OpenAudioDeviceStream",
+    "SDL_DestroyAudioStream",
+    "SDL_GetAudioStreamDevice",
+    "SDL_GetAudioDeviceFormat",
+    "SDL_SetAudioStreamGain",
+    "SDL_PauseAudioStreamDevice",
+    "SDL_ResumeAudioStreamDevice",
+    "SDL_ClearAudioStream",
+    "SDL_FlushAudioStream",
+    "SDL_GetAudioStreamQueued",
+    "SDL_PutAudioStreamData",
+];
+
 fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-changed=build.rs");
+
+    // Sources check one cfg instead of repeating the feature and platform condition
+    println!("cargo::rustc-check-cfg=cfg(video_playback)");
 
     let target_os = env::var("CARGO_CFG_TARGET_OS")?;
 
@@ -22,6 +49,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     {
         return Ok(());
     }
+
+    println!("cargo::rustc-cfg=video_playback");
 
     let static_media = env::var_os("CARGO_FEATURE_STATIC_VIDEO").is_some();
 
@@ -65,7 +94,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         libraries.push(library);
     }
 
-    generate_ffmpeg_bindings(&libraries)?;
+    let out_dir = PathBuf::from(env::var("OUT_DIR")?);
+    generate_ffmpeg_bindings(&libraries, &out_dir)?;
+    generate_native_bindings(&libraries, &out_dir)?;
 
     for source in ["gpu.c", "transfer.c"] {
         let path = format!("native/video/{source}");
@@ -73,7 +104,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         compiler.file(path);
     }
 
-    for header in ["flowa_video.h", "internal.h"] {
+    for header in ["bindings.h", "ffmpeg.h", "flowa_video.h", "internal.h"] {
         println!("cargo:rerun-if-changed=native/video/{header}");
     }
 
@@ -86,24 +117,21 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn generate_ffmpeg_bindings(
+/// Common bindgen settings with the include paths and defines of every media library
+fn bindings_builder(
+    header: &str,
     libraries: &[pkg_config::Library],
-) -> Result<(), Box<dyn Error>> {
-    let mut bindings = bindgen::Builder::default()
-        .header("native/video/ffmpeg.h")
+) -> bindgen::Builder {
+    let mut builder = bindgen::Builder::default()
+        .header(header)
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
-        .allowlist_function("av.*|swr_.*|sws_.*")
-        .allowlist_type("AV.*|SwrContext|SwsContext|SwsFlags")
-        .allowlist_var("FLOWA_AVERROR_.*|AV_TIME_BASE|AVSEEK_FLAG_BACKWARD|AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX|FF_THREAD_.*|SWS_.*")
-        .allowlist_var("AV_PIX_FMT_FLAG_HWACCEL")
         .prepend_enum_name(false)
-        .derive_default(true)
         .generate_comments(false)
         .layout_tests(false);
 
-    for library in libraries.iter().take(5) {
+    for library in libraries {
         for include in &library.include_paths {
-            bindings = bindings.clang_arg(format!("-I{}", include.display()));
+            builder = builder.clang_arg(format!("-I{}", include.display()));
         }
 
         for (name, value) in &library.defines {
@@ -111,12 +139,42 @@ fn generate_ffmpeg_bindings(
                 || format!("-D{name}"),
                 |value| format!("-D{name}={value}"),
             );
-            bindings = bindings.clang_arg(definition);
+            builder = builder.clang_arg(definition);
         }
     }
 
-    let output = PathBuf::from(env::var("OUT_DIR")?).join("ffmpeg.rs");
-    bindings.generate()?.write_to_file(output)?;
+    builder
+}
+
+fn generate_ffmpeg_bindings(
+    libraries: &[pkg_config::Library],
+    out_dir: &Path,
+) -> Result<(), Box<dyn Error>> {
+    bindings_builder("native/video/ffmpeg.h", libraries)
+        .allowlist_function("av.*|swr_.*|sws_.*")
+        .allowlist_type("AV.*|SwrContext|SwsContext|SwsFlags")
+        .allowlist_var("FLOWA_AVERROR_.*|AV_TIME_BASE|AVSEEK_FLAG_BACKWARD|AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX|FF_THREAD_.*|SWS_.*")
+        .allowlist_var("AV_PIX_FMT_FLAG_HWACCEL")
+        .derive_default(true)
+        .generate()?
+        .write_to_file(out_dir.join("ffmpeg.rs"))?;
+
+    Ok(())
+}
+
+/// Shim and SDL3 declarations; Rust supplies the Vulkan and FFmpeg types they reference
+fn generate_native_bindings(
+    libraries: &[pkg_config::Library],
+    out_dir: &Path,
+) -> Result<(), Box<dyn Error>> {
+    bindings_builder("native/video/bindings.h", libraries)
+        .allowlist_function("flowa_.*")
+        .allowlist_function(SDL_FUNCTIONS.join("|"))
+        .allowlist_type("flowa_.*|SDL_AudioFormat")
+        .allowlist_var("FLOWA_.*|SDL_INIT_AUDIO")
+        .blocklist_type("Vk.*|PFN_vk.*|AV.*")
+        .generate()?
+        .write_to_file(out_dir.join("native.rs"))?;
 
     Ok(())
 }

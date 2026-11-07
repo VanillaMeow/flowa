@@ -10,6 +10,7 @@ use crate::{
 };
 
 use super::{
+    actions,
     icons::{self, Icon},
     theme::Colors,
 };
@@ -70,8 +71,8 @@ fn details(
 
     ui.add_space(10.);
 
-    if let Some(entry) = entry {
-        file_actions(ui, entry, commands);
+    if entry.is_some() {
+        file_actions(ui, commands);
     }
 }
 
@@ -174,13 +175,11 @@ fn image_details(ui: &mut egui::Ui, image: &DecodedImage, colors: Colors) {
     }
 }
 
-fn file_actions(ui: &mut egui::Ui, entry: &Entry, commands: &mut Vec<Command>) {
-    if ui.button("Copy file path").clicked() {
-        commands.push(Command::CopyPath);
-    }
-
-    if ui.button("Open containing folder").clicked() {
-        commands.push(Command::Reveal(entry.path.clone()));
+fn file_actions(ui: &mut egui::Ui, commands: &mut Vec<Command>) {
+    for action in [&actions::COPY_PATH, &actions::REVEAL] {
+        if ui.button(action.label).clicked() {
+            commands.push(action.command.clone());
+        }
     }
 }
 

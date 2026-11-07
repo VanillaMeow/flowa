@@ -1,4 +1,4 @@
-//! Playback frame ownership and hardware codecs tied to the rendering device
+//! Playback frames and the hardware codecs tied to the rendering device
 
 use std::sync::Arc;
 
@@ -7,12 +7,10 @@ use anyhow::Result;
 use crate::video::{
     ffmpeg,
     gpu::NativeGpu,
-    media::{Codec, CpuFrame, DecodedFrame, DeviceRef, FrameInfo},
-};
-
-pub(super) use crate::video::media::{
-    AudioBlock, InterruptFlags, Media, Packet, PacketKind, Receive, Sent, Stream,
-    timestamp,
+    media::{
+        AvFrame, Codec, CpuFrame, DeviceRef, FrameInfo, Packet, Receive, Sent, Stream,
+    },
+    native,
 };
 
 /// Keeps the rendering device alive until the codec and its borrowed device references are released
@@ -22,10 +20,14 @@ pub(super) struct HardwareCodec {
 }
 
 impl HardwareCodec {
-    pub fn new(gpu: &Arc<NativeGpu>, stream: &Stream, backend: i32) -> Result<Self> {
+    pub fn new(
+        gpu: &Arc<NativeGpu>,
+        stream: &Stream,
+        backend: native::flowa_decoder_backend,
+    ) -> Result<Self> {
         // SAFETY: The GPU transfers one device reference, and this owner retains the borrowed GPU
         let device = unsafe {
-            DeviceRef::from_raw((gpu.api.gpu_create_decoder_device)(
+            DeviceRef::from_raw(native::flowa_gpu_create_decoder_device(
                 gpu.handle.as_ptr(),
                 backend,
             ))
@@ -59,14 +61,14 @@ impl HardwareCodec {
 }
 
 pub(super) struct Frame {
-    frame: DecodedFrame,
+    frame: AvFrame,
     pub info: FrameInfo,
     // Hardware frames borrow the device; CPU frames have no rendering-device dependency
     _gpu: Option<Arc<NativeGpu>>,
 }
 
 impl Frame {
-    fn new(frame: DecodedFrame, gpu: Option<Arc<NativeGpu>>) -> Self {
+    fn new(frame: AvFrame, gpu: Option<Arc<NativeGpu>>) -> Self {
         let info = frame.info();
 
         Self {

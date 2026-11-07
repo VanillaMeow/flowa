@@ -384,10 +384,13 @@ fn time_label(ui: &mut egui::Ui, text: &str, width: f32, colors: Colors) {
     );
 }
 
+fn slider_focus_id() -> Id {
+    Id::unique("video-slider-focus")
+}
+
 fn remember_slider(ctx: &egui::Context, id: Id, timeline: bool) {
     ctx.data_mut(|data| {
-        let focus = data
-            .get_temp_mut_or_default::<SliderFocus>(Id::unique("video-slider-focus"));
+        let focus = data.get_temp_mut_or_default::<SliderFocus>(slider_focus_id());
         if timeline {
             focus.timeline = Some(id);
         } else {
@@ -403,7 +406,7 @@ pub(crate) fn wants_keyboard_input(ctx: &egui::Context) -> bool {
     };
 
     ctx.data(|data| {
-        data.get_temp::<SliderFocus>(Id::unique("video-slider-focus"))
+        data.get_temp::<SliderFocus>(slider_focus_id())
             .is_some_and(|sliders| {
                 sliders.timeline == Some(focused) || sliders.volume == Some(focused)
             })
@@ -412,14 +415,14 @@ pub(crate) fn wants_keyboard_input(ctx: &egui::Context) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{SliderFocus, VideoControls};
+    use super::{SliderFocus, VideoControls, slider_focus_id};
     use crate::{
         app::Command,
         settings::{Accent, Theme},
         ui::{keyboard, theme},
         video::VideoState,
     };
-    use egui::{Event, Id, Modifiers, PointerButton, Pos2, Rect, vec2};
+    use egui::{Event, Modifiers, PointerButton, Pos2, Rect, vec2};
 
     fn frame(
         ctx: &egui::Context,
@@ -471,7 +474,7 @@ mod tests {
         output.textures_delta.clear();
 
         let sliders = ctx
-            .data(|data| data.get_temp::<SliderFocus>(Id::unique("video-slider-focus")))
+            .data(|data| data.get_temp::<SliderFocus>(slider_focus_id()))
             .expect("Timeline should be registered");
         let timeline = ctx
             .read_response(sliders.timeline.expect("Timeline ID"))

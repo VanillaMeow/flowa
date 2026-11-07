@@ -21,6 +21,23 @@ mod format {
     }
 }
 
+mod file_size {
+    use crate::utils::format::file_size;
+
+    #[test]
+    fn sizes_use_binary_units() {
+        for (bytes, expected) in [
+            (0, "0 B"),
+            (1023, "1023 B"),
+            (1024, "1.0 KiB"),
+            (1536 * 1024, "1.5 MiB"),
+            (3 * 1024 * 1024 * 1024, "3.00 GiB"),
+        ] {
+            assert_eq!(file_size(bytes), expected);
+        }
+    }
+}
+
 mod filename {
     use crate::utils::filename::is_valid;
 

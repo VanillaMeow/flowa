@@ -6,16 +6,20 @@ use anyhow::{Context, Result, bail, ensure};
 use strum::{IntoStaticStr, VariantArray};
 
 use super::{
-    media::{Frame, HardwareCodec, Packet, Receive, Sent, Stream},
+    frame::{Frame, HardwareCodec},
     shared::{BYTE_LIMIT, PACKET_LIMIT, Shared},
     software::SoftwareDecoder,
 };
 use crate::{
     settings::VideoDecoder,
-    video::{gpu::NativeGpu, media::DeviceRef, native},
+    video::{
+        gpu::NativeGpu,
+        media::{DeviceRef, Packet, Receive, Sent, Stream},
+        native,
+    },
 };
 
-// Variant order matches the native device candidate indices
+/// Decoder backends in the order Auto tries them
 #[derive(Clone, Copy, IntoStaticStr, VariantArray)]
 #[strum(serialize_all = "lowercase")]
 enum Backend {
@@ -40,6 +44,16 @@ impl Backend {
         }
     }
 
+    /// The shim's device type, or `None` for FFmpeg's own software decoders
+    fn device(self) -> Option<native::flowa_decoder_backend> {
+        match self {
+            Self::Nvdec => Some(native::FLOWA_DECODER_NVDEC),
+            Self::Vulkan => Some(native::FLOWA_DECODER_VULKAN),
+            Self::Vaapi => Some(native::FLOWA_DECODER_VAAPI),
+            Self::Software => None,
+        }
+    }
+
     fn preference(self) -> VideoDecoder {
         match self {
             Self::Nvdec => VideoDecoder::Nvdec,
@@ -54,18 +68,18 @@ pub(super) fn available_decoders(gpu: &NativeGpu) -> Vec<VideoDecoder> {
     let mut decoders = vec![VideoDecoder::Auto];
 
     for &backend in Backend::VARIANTS {
-        if matches!(backend, Backend::Software) || !backend.available() {
+        let Some(device) = backend.device().filter(|_| backend.available()) else {
             continue;
-        }
+        };
 
         // SAFETY: The probe owns its temporary reference and borrows the live GPU
-        let device = unsafe {
-            DeviceRef::from_raw((gpu.api.gpu_create_decoder_device)(
+        let probe = unsafe {
+            DeviceRef::from_raw(native::flowa_gpu_create_decoder_device(
                 gpu.handle.as_ptr(),
-                backend as i32,
+                device,
             ))
         };
-        if device.is_ok() {
+        if probe.is_ok() {
             decoders.push(backend.preference());
         }
     }
@@ -74,12 +88,12 @@ pub(super) fn available_decoders(gpu: &NativeGpu) -> Vec<VideoDecoder> {
     decoders
 }
 
-enum Codec {
+enum ActiveCodec {
     Hardware(HardwareCodec),
     Software(SoftwareDecoder),
 }
 
-impl Codec {
+impl ActiveCodec {
     fn flush(&mut self) {
         match self {
             Self::Hardware(codec) => codec.flush(),
@@ -102,20 +116,21 @@ impl Codec {
     }
 }
 
-enum Input {
+enum NextInput {
     Packet(Packet),
     Drain,
     Wait,
 }
 
 pub(super) struct Decoder {
-    codec: Option<Codec>,
+    codec: Option<ActiveCodec>,
     gpu: Arc<NativeGpu>,
     stream: Arc<Stream>,
     candidate: usize,
     candidates: &'static [Backend],
     backend: Option<Backend>,
-    pub selected: Option<&'static str>,
+    /// The backend that produced the first frame, once probing has finished
+    pub selected: Option<VideoDecoder>,
     probe: Vec<Packet>,
     probe_bytes: usize,
     replay: usize,
@@ -190,7 +205,7 @@ impl Decoder {
             match received {
                 Ok(Receive::Item(frame)) => {
                     if self.probing {
-                        self.selected = self.backend.map(Into::into);
+                        self.selected = self.backend.map(Backend::preference);
                         self.probing = false;
                         self.clear_probe();
                     }
@@ -220,12 +235,12 @@ impl Decoder {
             }
 
             let packet = match self.input(shared)? {
-                Input::Packet(packet) => Some(packet),
-                Input::Drain => {
+                NextInput::Packet(packet) => Some(packet),
+                NextInput::Drain => {
                     self.flushed = true;
                     None
                 }
-                Input::Wait => return Ok(None),
+                NextInput::Wait => return Ok(None),
             };
             match self
                 .codec
@@ -251,20 +266,20 @@ impl Decoder {
         Ok(None)
     }
 
-    fn input(&mut self, shared: &Shared) -> Result<Input> {
+    fn input(&mut self, shared: &Shared) -> Result<NextInput> {
         if let Some(packet) = self.unsent.take() {
-            return Ok(Input::Packet(packet));
+            return Ok(NextInput::Packet(packet));
         }
 
         if self.replay < self.probe.len() {
             let packet = self.probe[self.replay].try_clone()?;
             self.replay += 1;
-            return Ok(Input::Packet(packet));
+            return Ok(NextInput::Packet(packet));
         }
 
         let mut state = shared.lock();
         if state.seeking {
-            return Ok(Input::Wait);
+            return Ok(NextInput::Wait);
         }
         let packet = state.packets.pop();
         let eof = state.eof;
@@ -273,9 +288,9 @@ impl Decoder {
 
         let Some(packet) = packet else {
             return Ok(if eof && !self.flushed {
-                Input::Drain
+                NextInput::Drain
             } else {
-                Input::Wait
+                NextInput::Wait
             });
         };
         if self.probing {
@@ -288,7 +303,7 @@ impl Decoder {
             self.probe_bytes += packet.bytes;
             self.replay = self.probe.len();
         }
-        Ok(Input::Packet(packet))
+        Ok(NextInput::Packet(packet))
     }
 
     fn retry(&mut self) -> Result<()> {
@@ -307,12 +322,11 @@ impl Decoder {
                 continue;
             }
 
-            let codec = match backend {
-                Backend::Software => {
-                    SoftwareDecoder::new(Arc::clone(&self.stream)).map(Codec::Software)
-                }
-                _ => HardwareCodec::new(&self.gpu, &self.stream, backend as i32)
-                    .map(Codec::Hardware),
+            let codec = match backend.device() {
+                None => SoftwareDecoder::new(Arc::clone(&self.stream))
+                    .map(ActiveCodec::Software),
+                Some(device) => HardwareCodec::new(&self.gpu, &self.stream, device)
+                    .map(ActiveCodec::Hardware),
             };
             match codec {
                 Ok(codec) => {
@@ -340,7 +354,7 @@ impl Decoder {
 
         bail!(
             "Video decoding is unavailable for {}. Tried {}",
-            native::string(&self.stream.info.codec),
+            self.stream.info.codec,
             candidates.join(", ")
         )
     }
@@ -359,7 +373,7 @@ mod tests {
     use strum::VariantArray;
 
     #[test]
-    fn backend_order_matches_the_native_decoder_indices() {
+    fn auto_tries_hardware_backends_before_software() {
         let names: Vec<&'static str> =
             Backend::VARIANTS.iter().copied().map(Into::into).collect();
 

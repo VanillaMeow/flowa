@@ -19,13 +19,7 @@ mod catalog {
         assert!(is_video(Path::new("clip.mkv")));
         assert!(!is_video(Path::new("photo.png")));
         assert!(!is_video(Path::new("mp4")));
-        assert_eq!(
-            supported(Path::new("clip.MP4")),
-            cfg!(all(
-                feature = "video",
-                any(target_os = "linux", target_os = "windows")
-            ))
-        );
+        assert_eq!(supported(Path::new("clip.MP4")), cfg!(video_playback));
     }
 }
 

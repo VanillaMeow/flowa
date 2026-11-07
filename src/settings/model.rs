@@ -1,6 +1,9 @@
 //! Configuration values, defaults, and validation
 
-use std::path::PathBuf;
+use std::{
+    ops::RangeInclusive,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, EnumString, VariantArray};
@@ -21,7 +24,11 @@ use strum::{AsRefStr, EnumString, VariantArray};
 #[strum(ascii_case_insensitive)]
 pub enum Theme {
     #[default]
-    #[strum(to_string = "System / Qt", serialize = "System/Qt")]
+    #[strum(
+        to_string = "System / Qt",
+        serialize = "System/Qt",
+        serialize = "System"
+    )]
     System,
     Charcoal,
     Midnight,
@@ -152,7 +159,17 @@ pub enum VideoDecoder {
     Software,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+// Bounds shared by validation and the preference controls
+pub const UI_SCALE: RangeInclusive<f32> = 0.75..=2.0;
+pub const MEMORY_MB: RangeInclusive<u64> = 128..=4096;
+pub const CHECKER_SIZE: RangeInclusive<f32> = 4.0..=64.0;
+pub const CHECKER_CONTRAST: RangeInclusive<f32> = 0.02..=0.4;
+pub const SLIDESHOW_SECONDS: RangeInclusive<f32> = 1.0..=120.0;
+pub const WINDOW_WIDTH: RangeInclusive<f32> = 640.0..=7680.0;
+pub const WINDOW_HEIGHT: RangeInclusive<f32> = 400.0..=4320.0;
+pub const RECENT_LIMIT: usize = 12;
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub theme: Theme,
@@ -180,7 +197,10 @@ pub struct Settings {
     pub video_decoder: VideoDecoder,
     pub memory_mb: u64,
 
+    /// Files and folders opened explicitly, newest first
     pub recent: Vec<PathBuf>,
+    /// The file shown when the app last closed, used by `reopen_last`
+    pub last_viewed: Option<PathBuf>,
     pub reopen_last: bool,
     pub window_size: [f32; 2],
 }
@@ -210,6 +230,7 @@ impl Default for Settings {
             video_decoder: VideoDecoder::Auto,
             memory_mb: 1024,
             recent: Vec::new(),
+            last_viewed: None,
             reopen_last: false,
             window_size: [1200.0, 820.0],
         }
@@ -219,23 +240,52 @@ impl Default for Settings {
 impl Settings {
     pub fn validate(&mut self) {
         // Hand-edited or older preferences must stay inside supported bounds
-        self.ui_scale = self.ui_scale.clamp(0.75, 2.0);
-        self.memory_mb = self.memory_mb.clamp(128, 4096);
-        self.checker_size = self.checker_size.clamp(4.0, 64.0);
-        self.checker_contrast = self.checker_contrast.clamp(0.02, 0.4);
-        self.slideshow_seconds = self.slideshow_seconds.clamp(1.0, 120.0);
-        self.window_size[0] = self.window_size[0].clamp(640.0, 7680.0);
-        self.window_size[1] = self.window_size[1].clamp(400.0, 4320.0);
-        self.recent.truncate(12);
+        self.ui_scale = clamp(self.ui_scale, &UI_SCALE);
+        self.memory_mb = clamp(self.memory_mb, &MEMORY_MB);
+        self.checker_size = clamp(self.checker_size, &CHECKER_SIZE);
+        self.checker_contrast = clamp(self.checker_contrast, &CHECKER_CONTRAST);
+        self.slideshow_seconds = clamp(self.slideshow_seconds, &SLIDESHOW_SECONDS);
+        self.window_size[0] = clamp(self.window_size[0], &WINDOW_WIDTH);
+        self.window_size[1] = clamp(self.window_size[1], &WINDOW_HEIGHT);
+        self.recent.truncate(RECENT_LIMIT);
 
         if !RendererPreference::SUPPORTED.contains(&self.renderer) {
             self.renderer = RendererPreference::Auto;
         }
     }
 
+    /// The decoded image memory limit in bytes
+    pub fn memory_budget(&self) -> u64 {
+        self.memory_mb * 1024 * 1024
+    }
+
+    /// Moves an explicitly opened file or folder to the front of the recent list
     pub fn remember(&mut self, path: PathBuf) {
-        self.recent.retain(|p| *p != path);
+        self.recent.retain(|recent| *recent != path);
         self.recent.insert(0, path);
-        self.recent.truncate(12);
+        self.recent.truncate(RECENT_LIMIT);
+    }
+
+    /// Keeps recent entries pointing at a file after it is renamed
+    pub fn rename_recent(&mut self, old: &Path, new: &Path) {
+        for recent in &mut self.recent {
+            if recent == old {
+                *recent = new.to_path_buf();
+            }
+        }
+    }
+
+    pub fn forget(&mut self, path: &Path) {
+        self.recent.retain(|recent| recent != path);
+    }
+}
+
+fn clamp<T: PartialOrd + Copy>(value: T, range: &RangeInclusive<T>) -> T {
+    if value < *range.start() {
+        *range.start()
+    } else if value > *range.end() {
+        *range.end()
+    } else {
+        value
     }
 }

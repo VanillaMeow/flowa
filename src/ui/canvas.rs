@@ -113,19 +113,24 @@ impl ImageCanvas {
             ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         self.rect = rect;
 
-        let context_menu = if content.video.state.active {
+        // Only the loading state keeps painting the previous file's frozen preview
+        let loading_image = !content.video.state.active
+            && content.image.decoded.is_none()
+            && content.image.loading;
+        if !loading_image {
             self.previous = None;
+        }
+
+        let context_menu = if content.video.state.active {
             self.show_video(ui, &response, content, commands);
             Some(response)
         } else if let Some(decoded) = &content.image.decoded {
-            self.previous = None;
             self.show_image(ui, &response, content, decoded);
             Some(response)
-        } else if content.image.loading {
+        } else if loading_image {
             self.show_loading(ui, content);
             None
         } else {
-            self.previous = None;
             show_empty_state(ui, rect, content, commands);
             None
         };
@@ -393,7 +398,7 @@ fn welcome_contents(
     );
 
     if !settings.recent.is_empty() {
-        recent_images(ui, width, settings, colors, commands);
+        recent_paths(ui, width, settings, colors, commands);
     }
 }
 
@@ -421,7 +426,7 @@ fn open_buttons(
     });
 }
 
-fn recent_images(
+fn recent_paths(
     ui: &mut egui::Ui,
     width: f32,
     settings: &Settings,
@@ -429,7 +434,7 @@ fn recent_images(
     commands: &mut Vec<Command>,
 ) {
     ui.add_space(30.);
-    ui.label(RichText::new("RECENT FILES").size(11.).color(colors.muted));
+    ui.label(RichText::new("RECENT").size(11.).color(colors.muted));
     ui.add_space(8.);
 
     let mut open = None;

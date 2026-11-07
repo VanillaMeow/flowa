@@ -17,7 +17,7 @@ use anyhow::{Context, Result};
 
 use crate::viewer::image_session::DecodedImage;
 
-use super::image_decode::{decode, preload_bytes};
+use super::image_decode::{decode, preload_estimate};
 use cache::{FileStamp, ImageCache};
 
 pub struct LoadRequest {
@@ -36,7 +36,9 @@ enum Message {
     Hover(PathBuf),
     Neighbors(Vec<PathBuf>),
     Budget(u64),
+    /// Files changed on disk, so cached and in-flight decodes are no longer trustworthy
     Invalidate,
+    /// The selection changed; cached and in-flight preloads stay usable
     Cancel,
 }
 
@@ -95,12 +97,20 @@ struct DecodeJob {
     generation: Option<u64>,
 }
 
+const MAX_HOVER_PRELOADS: usize = 3;
+const MAX_NEIGHBOR_PRELOADS: usize = 2;
+const MAX_SKIPPED: usize = 32;
+
 #[derive(Default)]
 struct Queue {
     selected: Option<LoadRequest>,
     preloads: VecDeque<PathBuf>,
+    /// Files that are not worth preloading again until they change
     skipped: VecDeque<(PathBuf, Option<FileStamp>)>,
     cache: ImageCache,
+    /// The image memory limit applied to every decode
+    image_budget: u64,
+    /// Increments on invalidation so decodes started earlier are discarded
     revision: u64,
 }
 
@@ -108,20 +118,20 @@ impl Queue {
     fn receive(&mut self, message: Message) {
         match message {
             Message::Select(request) => {
-                self.cache.set_budget(request.budget);
+                self.set_budget(request.budget);
                 self.selected = Some(request);
                 self.preloads.clear();
             }
             Message::Hover(path) => {
                 self.preloads.retain(|pending| *pending != path);
                 self.preloads.push_front(path);
-                self.preloads.truncate(3);
+                self.preloads.truncate(MAX_HOVER_PRELOADS);
             }
             Message::Neighbors(paths) => {
-                self.preloads = paths.into_iter().take(2).collect()
+                self.preloads = paths.into_iter().take(MAX_NEIGHBOR_PRELOADS).collect()
             }
             Message::Budget(budget) => {
-                self.cache.set_budget(budget);
+                self.set_budget(budget);
                 self.preloads.clear();
                 self.skipped.clear();
                 self.revision += 1;
@@ -130,17 +140,22 @@ impl Queue {
                     selected.budget = budget;
                 }
             }
-            Message::Invalidate | Message::Cancel => {
+            Message::Invalidate => {
                 self.cache.clear();
                 self.preloads.clear();
                 self.skipped.clear();
                 self.revision += 1;
-
-                if matches!(message, Message::Cancel) {
-                    self.selected = None;
-                }
+            }
+            Message::Cancel => {
+                self.selected = None;
+                self.preloads.clear();
             }
         }
+    }
+
+    fn set_budget(&mut self, image_budget: u64) {
+        self.image_budget = image_budget;
+        self.cache.set_budget(image_budget);
     }
 
     fn drain(&mut self, requests: &mpsc::Receiver<Message>) {
@@ -161,7 +176,7 @@ impl Queue {
         Some(DecodeJob {
             generation: None,
             path: self.preloads.pop_front()?,
-            budget: self.cache.budget,
+            budget: self.image_budget,
         })
     }
 
@@ -188,13 +203,17 @@ impl Queue {
             return None;
         }
 
-        let reserved = preload_bytes(&request.path, request.budget).ok().flatten();
-        let Some(reserved) = reserved else {
+        let estimate = preload_estimate(&request.path, request.budget)
+            .ok()
+            .flatten();
+        let Some(estimate) = estimate.filter(|estimate| {
+            estimate.retained <= self.cache.budget && estimate.working <= request.budget
+        }) else {
             self.skip(request.path.clone(), stamp);
             return None;
         };
 
-        self.cache.make_room(reserved);
+        self.cache.make_room(estimate.retained);
         log::debug!("Preloading {}", request.path.display());
         let result = decode(&request.path, request.budget);
 
@@ -206,7 +225,7 @@ impl Queue {
     }
 
     fn skip(&mut self, path: PathBuf, stamp: Option<FileStamp>) {
-        if self.skipped.len() == 32 {
+        if self.skipped.len() == MAX_SKIPPED {
             self.skipped.pop_front();
         }
 
@@ -391,6 +410,61 @@ mod tests {
         assert_eq!(decoded.size, [32, 16]);
         assert!(Arc::ptr_eq(&pixels, &decoded.frames[0].pixels));
 
+        Ok(())
+    }
+
+    /// Mirrors `Flowa::select`, which cancels the previous selection before requesting
+    fn click(queue: &mut Queue, generation: u64, path: &Path) {
+        queue.receive(Message::Cancel);
+        queue.receive(Message::Select(LoadRequest {
+            generation,
+            path: path.to_path_buf(),
+            budget: IMAGE_BUDGET,
+        }));
+    }
+
+    #[test]
+    fn navigating_to_a_preloaded_neighbor_reuses_its_pixels() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("image.png");
+        save_image(&path)?;
+        let mut queue = Queue::default();
+        queue.receive(Message::Budget(IMAGE_BUDGET));
+        queue.receive(Message::Neighbors(vec![path.clone()]));
+        let job = queue.next().context("Missing preload")?;
+        let revision = queue.revision;
+        let stamp = FileStamp::read(&path);
+        let decoded = queue.load(&job, stamp).context("Preload skipped")??;
+        let pixels = Arc::clone(&decoded.frames[0].pixels);
+        assert!(queue.finish(job, stamp, revision, Ok(decoded), 1).is_none());
+
+        click(&mut queue, 2, &path);
+        let selected = queue.next().context("Click was lost")?;
+        let loaded = queue
+            .load(&selected, stamp)
+            .context("Selection skipped")??;
+
+        assert!(Arc::ptr_eq(&pixels, &loaded.frames[0].pixels));
+        Ok(())
+    }
+
+    #[test]
+    fn a_click_cancels_nothing_that_an_in_flight_preload_can_supply() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("image.png");
+        save_image(&path)?;
+        let mut queue = Queue::default();
+        queue.receive(Message::Budget(IMAGE_BUDGET));
+        queue.receive(Message::Hover(path.clone()));
+        let job = queue.next().context("Missing preload")?;
+        let revision = queue.revision;
+        let stamp = FileStamp::read(&path);
+        let decoded = queue.load(&job, stamp).context("Preload skipped")?;
+
+        click(&mut queue, 2, &path);
+        let completed = queue.finish(job, stamp, revision, decoded, 2);
+
+        assert_eq!(completed.context("Preload was not adopted")?.generation, 2);
         Ok(())
     }
 

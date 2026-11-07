@@ -31,6 +31,8 @@ const ITEM_HEIGHT: f32 = 86.;
 pub(crate) struct Filmstrip {
     worker: ThumbnailWorker,
     generation: u64,
+    /// The image memory limit in bytes, applied to thumbnail decodes
+    budget: u64,
     textures: HashMap<PathBuf, Option<TextureHandle>>,
     pending: HashSet<PathBuf>,
     order: Vec<PathBuf>,
@@ -38,10 +40,11 @@ pub(crate) struct Filmstrip {
 }
 
 impl Filmstrip {
-    pub fn new(ctx: egui::Context) -> Self {
+    pub fn new(ctx: egui::Context, budget: u64) -> Self {
         Self {
             worker: ThumbnailWorker::new(ctx),
             generation: 0,
+            budget,
             textures: HashMap::new(),
             pending: HashSet::new(),
             order: Vec::new(),
@@ -55,6 +58,10 @@ impl Filmstrip {
         self.textures.clear();
         self.pending.clear();
         self.order.clear();
+    }
+
+    pub fn set_budget(&mut self, budget: u64) {
+        self.budget = budget;
     }
 
     pub fn remove(&mut self, path: &Path) {
@@ -79,7 +86,7 @@ impl Filmstrip {
             self.pending.remove(&result.path);
             let texture = result.image.map(|image| {
                 ctx.load_texture(
-                    format!("thumb:{}", result.path.display()),
+                    format!("thumbnail:{}", result.path.display()),
                     image,
                     TextureOptions::LINEAR,
                 )
@@ -255,6 +262,7 @@ impl Filmstrip {
         let request = ThumbnailRequest {
             path: path.to_path_buf(),
             generation: self.generation,
+            budget: self.budget,
         };
 
         if self.worker.requests.try_send(request).is_ok() {

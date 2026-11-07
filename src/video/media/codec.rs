@@ -4,7 +4,7 @@ use std::{ffi::c_void, ptr, ptr::NonNull};
 
 use anyhow::{Context, Result, ensure};
 
-use super::{DecodedFrame, Packet, Receive, Sent, Stream, check, ffi};
+use super::{AvFrame, Packet, Receive, Sent, Stream, check, ffi};
 
 pub(in crate::video) struct DeviceRef(NonNull<ffi::AVBufferRef>);
 
@@ -40,6 +40,15 @@ impl Drop for DeviceRef {
     }
 }
 
+/// Decoder threading for video codecs; audio codecs keep FFmpeg's default
+#[derive(Clone, Copy)]
+pub(in crate::video) enum Threads {
+    /// Lets FFmpeg pick frame and slice threads for sustained playback
+    Automatic,
+    /// Avoids thread startup and frame delay when decoding a single poster frame
+    Single,
+}
+
 pub(in crate::video) struct Codec {
     handle: NonNull<ffi::AVCodecContext>,
     // FFmpeg retains this address through get_format, including while the Rust owner moves
@@ -69,10 +78,13 @@ unsafe extern "C" fn hardware_format(
 
 impl Codec {
     pub fn software(stream: &Stream) -> Result<Self> {
-        Self::software_stream(stream.data())
+        Self::software_stream(stream.data(), Threads::Automatic)
     }
 
-    pub(super) fn software_stream(stream: &ffi::AVStream) -> Result<Self> {
+    pub(super) fn software_stream(
+        stream: &ffi::AVStream,
+        threads: Threads,
+    ) -> Result<Self> {
         // SAFETY: The source owns its codec parameters and the decoder description is static
         let decoder = unsafe { ffi::avcodec_find_decoder((*stream.codecpar).codec_id) };
         let mut codec = Self::allocate(decoder)?;
@@ -83,7 +95,11 @@ impl Codec {
             let context = codec.handle.as_mut();
 
             if (*stream.codecpar).codec_type == ffi::AVMEDIA_TYPE_VIDEO {
-                context.thread_count = 2;
+                // A zero thread count asks FFmpeg to size the pool from the CPU
+                context.thread_count = match threads {
+                    Threads::Automatic => 0,
+                    Threads::Single => 1,
+                };
                 context.thread_type =
                     (ffi::FF_THREAD_FRAME | ffi::FF_THREAD_SLICE) as i32;
             }
@@ -222,8 +238,8 @@ impl Codec {
         }
     }
 
-    pub fn receive(&mut self) -> Result<Receive<DecodedFrame>> {
-        let frame = DecodedFrame::allocate()?;
+    pub fn receive(&mut self) -> Result<Receive<AvFrame>> {
+        let frame = AvFrame::allocate()?;
 
         // SAFETY: The codec is exclusively owned and the destination frame is writable
         let result = unsafe { ffi::avcodec_receive_frame(self.raw(), frame.raw()) };

@@ -5,7 +5,6 @@
 #include <stdint.h>
 #include <vulkan/vulkan.h>
 
-#define FLOWA_VIDEO_ABI 5
 #define FLOWA_VIDEO_SLOTS 3
 
 struct flowa_gpu;
@@ -32,6 +31,13 @@ struct flowa_gpu_info {
     const VkPhysicalDeviceFeatures2 *features;
 };
 
+// Hardware decoder devices the shim can create for FFmpeg
+enum flowa_decoder_backend {
+    FLOWA_DECODER_NVDEC,
+    FLOWA_DECODER_VULKAN,
+    FLOWA_DECODER_VAAPI,
+};
+
 struct flowa_video_target {
     VkImage image;
     VkSemaphore semaphore;
@@ -42,7 +48,6 @@ struct flowa_video_target {
     uint32_t slot;
 };
 
-uint32_t flowa_video_abi_version(void);
 struct flowa_gpu *flowa_gpu_create(
     const struct flowa_gpu_init *init,
     char *error,
@@ -54,7 +59,10 @@ void flowa_gpu_retire_targets(struct flowa_gpu *gpu);
 void flowa_gpu_reset_frames(struct flowa_gpu *gpu);
 
 // Transfers one FFmpeg device reference to the Rust codec owner
-struct AVBufferRef *flowa_gpu_create_decoder_device(struct flowa_gpu *gpu, int backend);
+struct AVBufferRef *flowa_gpu_create_decoder_device(
+    struct flowa_gpu *gpu,
+    enum flowa_decoder_backend backend
+);
 int flowa_gpu_render(
     struct flowa_gpu *gpu,
     const struct AVFrame *frame,

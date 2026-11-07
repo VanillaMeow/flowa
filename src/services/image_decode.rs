@@ -6,10 +6,15 @@ use anyhow::{Context, Result, bail, ensure};
 use egui::ColorImage;
 use image::{AnimationDecoder, DynamicImage, ImageDecoder, ImageReader, RgbaImage};
 
-use crate::viewer::image_session::{DecodedFrame, DecodedImage};
+use crate::viewer::{
+    image_session::{DecodedFrame, DecodedImage},
+    transform::View,
+};
 
 const PREVIEW_EDGE: u32 = 2048;
-const MAX_FRAMES: usize = 2000;
+const THUMBNAIL_EDGE: u32 = 192;
+const MAX_ANIMATION_FRAMES: usize = 2000;
+const UNTAGGED: &str = "sRGB / untagged";
 
 fn limits(budget: u64) -> image::Limits {
     let mut limits = image::Limits::default();
@@ -25,7 +30,7 @@ fn check_size(width: u32, height: u32, budget: u64) -> Result<()> {
     let bytes = u64::from(width) * u64::from(height) * 4;
     ensure!(
         bytes <= budget,
-        "This image needs at least {} MB of decoded memory. Increase the image memory limit in Settings.",
+        "This image needs at least {} MiB of decoded memory. Increase the image memory limit in Preferences.",
         (bytes / 1048576) + 1
     );
 
@@ -55,7 +60,20 @@ pub fn color_image(pixels: &RgbaImage) -> ColorImage {
     )
 }
 
-pub fn preload_bytes(path: &Path, budget: u64) -> Result<Option<u64>> {
+/// Memory needed to preload one image, estimated from its header
+#[derive(Clone, Copy, Debug)]
+pub struct PreloadEstimate {
+    /// Pixels, preview, and thumbnail kept in the cache after decoding
+    pub retained: u64,
+    /// Peak memory while decoding, including conversion buffers
+    pub working: u64,
+}
+
+/// Estimates memory for speculative decoding, or `None` for formats that are never preloaded
+///
+/// Only static JPEG, PNG, WebP, BMP, and QOI images qualify, since their headers report
+/// reliable sizes and decoding them has no unbounded animation or vector cost
+pub fn preload_estimate(path: &Path, budget: u64) -> Result<Option<PreloadEstimate>> {
     let mut reader = ImageReader::open(path)?.with_guessed_format()?;
     reader.limits(limits(budget));
 
@@ -98,18 +116,26 @@ pub fn preload_bytes(path: &Path, budget: u64) -> Result<Option<u64>> {
         _ => return Ok(None),
     };
 
-    // Leave room for conversion buffers as well as the retained pixels and previews
+    if width == 0 || height == 0 {
+        return Ok(None);
+    }
+
     let pixels = u64::from(width) * u64::from(height) * 4;
     let preview =
         u64::from(width.min(PREVIEW_EDGE)) * u64::from(height.min(PREVIEW_EDGE)) * 4;
-    let thumbnail = u64::from(width.min(192)) * u64::from(height.min(192)) * 4;
-    let reserved = source_bytes
+    let thumbnail = u64::from(width.min(THUMBNAIL_EDGE))
+        * u64::from(height.min(THUMBNAIL_EDGE))
+        * 4;
+    let retained = pixels.saturating_add(preview).saturating_add(thumbnail);
+
+    // Decoding holds the source buffer, its RGBA conversion, and an oriented copy at once
+    let working = source_bytes
         .max(pixels)
         .saturating_mul(3)
         .saturating_add(preview)
         .saturating_add(thumbnail);
 
-    Ok((width > 0 && height > 0 && reserved <= budget).then_some(reserved))
+    Ok(Some(PreloadEstimate { retained, working }))
 }
 
 pub fn decode(path: &Path, budget: u64) -> Result<DecodedImage> {
@@ -119,99 +145,18 @@ pub fn decode(path: &Path, budget: u64) -> Result<DecodedImage> {
         .to_string_lossy()
         .to_ascii_lowercase();
     let file_size = path.metadata()?.len();
-    let mut color = "sRGB / untagged".to_owned();
-    let mut metadata = Vec::new();
 
-    let frames = if matches!(ext.as_str(), "svg" | "svgz") {
+    let (frames, color) = if matches!(ext.as_str(), "svg" | "svgz") {
         let rgba = render_svg(path, 16384, budget)?;
-        color = "sRGB · rasterized SVG".to_owned();
-        vec![make_frame(rgba, Duration::ZERO)]
+        let frame = make_frame(rgba, Duration::ZERO);
+        (vec![frame], "sRGB · rasterized SVG".to_owned())
     } else {
-        let mut reader = ImageReader::open(path)?.with_guessed_format()?;
-        let format = reader.format();
-        reader.limits(limits(budget));
-
-        match format {
-            Some(image::ImageFormat::Gif) => {
-                let mut decoder = image::codecs::gif::GifDecoder::new(BufReader::new(
-                    File::open(path)?,
-                ))?;
-                decoder.set_limits(limits(budget))?;
-
-                check_size(decoder.dimensions().0, decoder.dimensions().1, budget)?;
-
-                animated_frames(decoder.into_frames(), budget)?
-            }
-            Some(image::ImageFormat::WebP) => {
-                let mut decoder = image::codecs::webp::WebPDecoder::new(
-                    BufReader::new(File::open(path)?),
-                )?;
-                decoder.set_limits(limits(budget))?;
-
-                if decoder.has_animation() {
-                    let icc = decoder.icc_profile()?;
-                    let mut frames = animated_frames(decoder.into_frames(), budget)?;
-                    for frame in &mut frames {
-                        color =
-                            apply_icc(Arc::make_mut(&mut frame.pixels), icc.as_deref());
-                        frame.preview = preview(&frame.pixels, PREVIEW_EDGE);
-                    }
-                    frames
-                } else {
-                    vec![static_frame(reader.into_decoder()?, budget, &mut color)?]
-                }
-            }
-            Some(image::ImageFormat::Png) => {
-                let decoder = image::codecs::png::PngDecoder::with_limits(
-                    BufReader::new(File::open(path)?),
-                    limits(budget),
-                )?;
-                if decoder.is_apng()? {
-                    let mut decoder = decoder;
-                    let icc = decoder.icc_profile()?;
-                    let mut frames =
-                        animated_frames(decoder.apng()?.into_frames(), budget)?;
-                    for frame in &mut frames {
-                        color =
-                            apply_icc(Arc::make_mut(&mut frame.pixels), icc.as_deref());
-                        frame.preview = preview(&frame.pixels, PREVIEW_EDGE);
-                    }
-                    frames
-                } else {
-                    vec![static_frame(decoder, budget, &mut color)?]
-                }
-            }
-            _ => vec![static_frame(reader.into_decoder()?, budget, &mut color)?],
-        }
+        decode_raster(path, budget)?
     };
-
-    // Metadata is optional and must not prevent an otherwise valid image from opening
-    if let Ok(file) = File::open(path)
-        && let Ok(exif) =
-            exif::Reader::new().read_from_container(&mut BufReader::new(file))
-    {
-        for tag in [
-            exif::Tag::Make,
-            exif::Tag::Model,
-            exif::Tag::DateTimeOriginal,
-            exif::Tag::ExposureTime,
-            exif::Tag::FNumber,
-            exif::Tag::PhotographicSensitivity,
-            exif::Tag::FocalLength,
-            exif::Tag::LensModel,
-        ] {
-            if let Some(field) = exif.get_field(tag, exif::In::PRIMARY) {
-                metadata.push((
-                    tag.to_string(),
-                    field.display_value().with_unit(&exif).to_string(),
-                ));
-            }
-        }
-    }
 
     let first = frames.first().context("The image contains no frames")?;
     let size = [first.pixels.width(), first.pixels.height()];
-    let thumbnail = preview(&first.pixels, 192);
+    let thumbnail = preview(&first.pixels, THUMBNAIL_EDGE);
     let format = if ext.is_empty() {
         "Image".to_owned()
     } else {
@@ -224,8 +169,90 @@ pub fn decode(path: &Path, budget: u64) -> Result<DecodedImage> {
         format,
         file_size,
         color,
-        metadata,
+        metadata: exif_metadata(path),
     })
+}
+
+/// Decodes still and animated raster formats, returning the frames and a color label
+fn decode_raster(path: &Path, budget: u64) -> Result<(Vec<DecodedFrame>, String)> {
+    let mut reader = ImageReader::open(path)?.with_guessed_format()?;
+    let format = reader.format();
+    reader.limits(limits(budget));
+
+    match format {
+        Some(image::ImageFormat::Gif) => {
+            let mut decoder =
+                image::codecs::gif::GifDecoder::new(BufReader::new(File::open(path)?))?;
+            decoder.set_limits(limits(budget))?;
+
+            let (width, height) = decoder.dimensions();
+            check_size(width, height, budget)?;
+
+            let conversion = ColorConversion::new(None);
+            let frames = animated_frames(decoder.into_frames(), &conversion, budget)?;
+            Ok((frames, conversion.label.to_owned()))
+        }
+        Some(image::ImageFormat::WebP) => {
+            let mut decoder = image::codecs::webp::WebPDecoder::new(BufReader::new(
+                File::open(path)?,
+            ))?;
+            decoder.set_limits(limits(budget))?;
+
+            if !decoder.has_animation() {
+                return static_frame(reader.into_decoder()?, budget);
+            }
+
+            let conversion = ColorConversion::new(decoder.icc_profile()?.as_deref());
+            let frames = animated_frames(decoder.into_frames(), &conversion, budget)?;
+            Ok((frames, conversion.label.to_owned()))
+        }
+        Some(image::ImageFormat::Png) => {
+            let mut decoder = image::codecs::png::PngDecoder::with_limits(
+                BufReader::new(File::open(path)?),
+                limits(budget),
+            )?;
+
+            if !decoder.is_apng()? {
+                return static_frame(decoder, budget);
+            }
+
+            let conversion = ColorConversion::new(decoder.icc_profile()?.as_deref());
+            let frames =
+                animated_frames(decoder.apng()?.into_frames(), &conversion, budget)?;
+            Ok((frames, conversion.label.to_owned()))
+        }
+        _ => static_frame(reader.into_decoder()?, budget),
+    }
+}
+
+/// Reads photographic EXIF fields; metadata never prevents an image from opening
+fn exif_metadata(path: &Path) -> Vec<(String, String)> {
+    const TAGS: [exif::Tag; 8] = [
+        exif::Tag::Make,
+        exif::Tag::Model,
+        exif::Tag::DateTimeOriginal,
+        exif::Tag::ExposureTime,
+        exif::Tag::FNumber,
+        exif::Tag::PhotographicSensitivity,
+        exif::Tag::FocalLength,
+        exif::Tag::LensModel,
+    ];
+
+    let Ok(file) = File::open(path) else {
+        return Vec::new();
+    };
+    let Ok(exif) = exif::Reader::new().read_from_container(&mut BufReader::new(file))
+    else {
+        return Vec::new();
+    };
+
+    TAGS.into_iter()
+        .filter_map(|tag| {
+            let field = exif.get_field(tag, exif::In::PRIMARY)?;
+            let value = field.display_value().with_unit(&exif).to_string();
+            Some((tag.to_string(), value))
+        })
+        .collect()
 }
 
 fn make_frame(pixels: RgbaImage, delay: Duration) -> DecodedFrame {
@@ -240,12 +267,12 @@ fn make_frame(pixels: RgbaImage, delay: Duration) -> DecodedFrame {
 fn static_frame(
     mut decoder: impl ImageDecoder,
     budget: u64,
-    color: &mut String,
-) -> Result<DecodedFrame> {
+) -> Result<(Vec<DecodedFrame>, String)> {
     decoder.set_limits(limits(budget))?;
     let (w, h) = decoder.dimensions();
     check_size(w, h, budget)?;
-    let icc = decoder.icc_profile().ok().flatten();
+    let conversion =
+        ColorConversion::new(decoder.icc_profile().ok().flatten().as_deref());
     let orientation = decoder
         .orientation()
         .unwrap_or(image::metadata::Orientation::NoTransforms);
@@ -253,39 +280,65 @@ fn static_frame(
     image.apply_orientation(orientation);
 
     let mut rgba = image.into_rgba8();
-    *color = apply_icc(&mut rgba, icc.as_deref());
-    Ok(make_frame(rgba, Duration::ZERO))
+    conversion.apply(&mut rgba);
+    Ok((
+        vec![make_frame(rgba, Duration::ZERO)],
+        conversion.label.to_owned(),
+    ))
 }
 
-fn apply_icc(pixels: &mut RgbaImage, icc: Option<&[u8]>) -> String {
-    let Some(icc) = icc else {
-        return "sRGB / untagged".into();
-    };
-    let Ok(profile) = lcms2::Profile::new_icc(icc) else {
-        return "Invalid ICC profile · displayed as sRGB".into();
-    };
-    if profile.color_space() != lcms2::ColorSpaceSignature::RgbData {
-        return "Non-RGB ICC · displayed as sRGB".into();
+type SrgbTransform = lcms2::Transform<u8, u8>;
+
+/// Converts embedded profiles to sRGB, or explains why pixels are shown unconverted
+struct ColorConversion {
+    transform: Option<SrgbTransform>,
+    label: &'static str,
+}
+
+impl ColorConversion {
+    fn new(icc: Option<&[u8]>) -> Self {
+        match srgb_transform(icc) {
+            Ok(transform) => Self {
+                transform: Some(transform),
+                label: "Embedded ICC → sRGB",
+            },
+            Err(label) => Self {
+                transform: None,
+                label,
+            },
+        }
     }
-    let transform = lcms2::Transform::<u8, u8>::new_flags(
+
+    fn apply(&self, pixels: &mut RgbaImage) {
+        if let Some(transform) = &self.transform {
+            transform.transform_in_place(pixels.as_mut());
+        }
+    }
+}
+
+fn srgb_transform(icc: Option<&[u8]>) -> Result<SrgbTransform, &'static str> {
+    let icc = icc.ok_or(UNTAGGED)?;
+    let profile = lcms2::Profile::new_icc(icc)
+        .map_err(|_| "Invalid ICC profile · displayed as sRGB")?;
+
+    if profile.color_space() != lcms2::ColorSpaceSignature::RgbData {
+        return Err("Non-RGB ICC · displayed as sRGB");
+    }
+
+    lcms2::Transform::new_flags(
         &profile,
         lcms2::PixelFormat::RGBA_8,
         &lcms2::Profile::new_srgb(),
         lcms2::PixelFormat::RGBA_8,
         lcms2::Intent::RelativeColorimetric,
         lcms2::Flags::COPY_ALPHA,
-    );
-    match transform {
-        Ok(transform) => {
-            transform.transform_in_place(pixels.as_mut());
-            "Embedded ICC → sRGB".into()
-        }
-        Err(_) => "ICC conversion unavailable · displayed as sRGB".into(),
-    }
+    )
+    .map_err(|_| "ICC conversion unavailable · displayed as sRGB")
 }
 
 fn animated_frames(
     frames: image::Frames<'_>,
+    conversion: &ColorConversion,
     budget: u64,
 ) -> Result<Vec<DecodedFrame>> {
     let mut out = Vec::new();
@@ -293,15 +346,16 @@ fn animated_frames(
 
     for frame in frames {
         ensure!(
-            out.len() < MAX_FRAMES,
-            "Animation exceeds the {MAX_FRAMES}-frame limit"
+            out.len() < MAX_ANIMATION_FRAMES,
+            "Animation exceeds the {MAX_ANIMATION_FRAMES}-frame limit"
         );
         let frame = frame?;
         let (num, den) = frame.delay().numer_denom_ms();
         let delay = Duration::from_secs_f64(
             (f64::from(num) / f64::from(den) / 1000.0).max(0.02),
         );
-        let buffer = frame.into_buffer();
+        let mut buffer = frame.into_buffer();
+        conversion.apply(&mut buffer);
 
         // Account for both source pixels and the preview retained for each frame
         used = used
@@ -313,7 +367,7 @@ fn animated_frames(
             );
         ensure!(
             used <= budget,
-            "This animation exceeds the image memory limit. Increase it in Settings."
+            "This animation exceeds the image memory limit. Increase it in Preferences."
         );
         out.push(make_frame(buffer, delay));
     }
@@ -379,39 +433,55 @@ fn render_svg(path: &Path, edge: u32, budget: u64) -> Result<RgbaImage> {
     RgbaImage::from_raw(w, h, pixmap.take()).context("Invalid SVG pixel buffer")
 }
 
-pub fn thumbnail(path: &Path) -> Result<ColorImage> {
+/// Decodes a filmstrip thumbnail within the user's image memory limit
+pub fn thumbnail(path: &Path, budget: u64) -> Result<ColorImage> {
     if path.extension().is_some_and(|ext| {
         ext.eq_ignore_ascii_case("svg") || ext.eq_ignore_ascii_case("svgz")
     }) {
-        return Ok(color_image(&render_svg(path, 256, 64 * 1024 * 1024)?));
+        return Ok(color_image(&render_svg(path, 256, budget)?));
     }
 
     let mut reader = ImageReader::open(path)?.with_guessed_format()?;
-    reader.limits(limits(256 * 1024 * 1024));
+    reader.limits(limits(budget));
 
     let mut decoder = reader.into_decoder()?;
     let (w, h) = decoder.dimensions();
-    check_size(w, h, 256 * 1024 * 1024)?;
+    check_size(w, h, budget)?;
     let orientation = decoder
         .orientation()
         .unwrap_or(image::metadata::Orientation::NoTransforms);
-    let icc = decoder.icc_profile().ok().flatten();
+    let conversion =
+        ColorConversion::new(decoder.icc_profile().ok().flatten().as_deref());
 
     let mut image = DynamicImage::from_decoder(decoder)?;
     image.apply_orientation(orientation);
-    let mut small = image.thumbnail(192, 128).into_rgba8();
+    let mut small = image.thumbnail(THUMBNAIL_EDGE, 128).into_rgba8();
 
-    apply_icc(&mut small, icc.as_deref());
+    conversion.apply(&mut small);
     Ok(color_image(&small))
 }
 
-pub fn export(
-    pixels: &RgbaImage,
-    path: &Path,
-    rotation: u8,
-    flip_x: bool,
-    flip_y: bool,
-) -> Result<()> {
+/// Applies the viewer's flips and quarter turns to a copy of the pixels
+pub fn apply_view(pixels: &RgbaImage, view: &View) -> DynamicImage {
+    let mut image = DynamicImage::ImageRgba8(pixels.clone());
+
+    if view.flip_x {
+        image = image.fliph();
+    }
+
+    if view.flip_y {
+        image = image.flipv();
+    }
+
+    match view.rotation % 4 {
+        1 => image.rotate90(),
+        2 => image.rotate180(),
+        3 => image.rotate270(),
+        _ => image,
+    }
+}
+
+pub fn export(pixels: &RgbaImage, path: &Path, view: &View) -> Result<()> {
     let format = image::ImageFormat::from_path(path)
         .context("Choose a .png, .jpg, .webp, .bmp, or .tiff extension")?;
 
@@ -427,22 +497,7 @@ pub fn export(
         "Export supports PNG, JPEG, WebP, BMP, and TIFF"
     );
 
-    let mut image = DynamicImage::ImageRgba8(pixels.clone());
-
-    if flip_x {
-        image = image.fliph();
-    }
-
-    if flip_y {
-        image = image.flipv();
-    }
-
-    image = match rotation % 4 {
-        1 => image.rotate90(),
-        2 => image.rotate180(),
-        3 => image.rotate270(),
-        _ => image,
-    };
+    let mut image = apply_view(pixels, view);
 
     if format == image::ImageFormat::Jpeg {
         image = DynamicImage::ImageRgb8(image.into_rgb8());

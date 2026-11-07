@@ -1,3 +1,5 @@
+//! Reversible image-to-screen transforms for flips, quarter turns, zoom, and pan
+
 use egui::{Pos2, Rect, Vec2, vec2};
 
 #[derive(Debug, Clone)]

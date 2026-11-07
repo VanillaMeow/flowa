@@ -12,48 +12,40 @@ use anyhow::{Context, Result, ensure};
 use super::{
     audio::AudioOutput,
     decoder::Decoder,
-    media::{self, Frame},
-    shared::{Seek, Shared},
+    frame::Frame,
+    shared::{PlaybackState, Seek, Shared},
     worker,
 };
 use crate::settings::VideoDecoder;
-use crate::video::{AudioInfo, gpu::NativeGpu, native};
+use crate::video::{
+    VideoState,
+    gpu::NativeGpu,
+    media::{self, StreamInfo},
+    native,
+};
 
+/// Bounds how many late frames one poll may skip while catching up to the clock
+const MAX_FRAMES_PER_POLL: usize = 12;
+
+/// The UI-facing playback state plus scheduling details used by the player
 #[derive(Clone)]
 pub(super) struct Snapshot {
-    pub position: f64,
-    pub duration: f64,
-    pub volume: f64,
+    pub video: VideoState,
+    /// Seconds until the next decoded frame is due
     pub next_frame_delay: f64,
+    /// Increments whenever a new frame becomes current
     pub frame_serial: u64,
-    pub loading: bool,
-    pub seeking: bool,
-    pub paused: bool,
-    pub size: [u32; 2],
-    pub decoder: String,
-    pub codec: String,
-    pub audio: String,
-    pub audio_info: Option<AudioInfo>,
-    pub error: Option<String>,
+    /// The SDL audio driver, such as `sdl3/pipewire`
+    pub audio_output: String,
 }
 
 impl Default for Snapshot {
     fn default() -> Self {
         Self {
-            position: 0.0,
-            duration: 0.0,
-            volume: 100.0,
+            video: VideoState::default(),
             next_frame_delay: 0.005,
             frame_serial: 0,
-            loading: false,
-            seeking: false,
-            paused: false,
-            size: [0; 2],
-            decoder: String::new(),
-            codec: String::new(),
-            audio: String::new(),
-            audio_info: None,
-            error: None,
+            audio_output: String::new(),
         }
     }
 }
@@ -130,7 +122,7 @@ impl Engine {
 
         // SAFETY: All native video submissions belong to this engine's thread
         // The demux worker has joined before its frames and audio output are released
-        unsafe { (self.gpu.api.gpu_reset_frames)(self.gpu.handle.as_ptr()) };
+        unsafe { native::flowa_gpu_reset_frames(self.gpu.handle.as_ptr()) };
         self.pending = None;
         self.current = None;
         self.decoder = None;
@@ -262,18 +254,10 @@ impl Engine {
 
     pub fn poll(&mut self) -> Snapshot {
         let Some(shared) = self.shared.as_ref().map(Arc::clone) else {
-            return Snapshot {
-                volume: self.volume,
-                ..Snapshot::default()
-            };
+            return self.idle_snapshot(None);
         };
 
-        if let Err(error) = self.prepare(&shared).and_then(|ready| {
-            if ready {
-                self.advance(&shared)?;
-            }
-            Ok(())
-        }) {
+        if let Err(error) = self.update(&shared) {
             shared.fail(format!("{error:#}"));
         }
 
@@ -281,16 +265,31 @@ impl Engine {
             Ok(snapshot) => snapshot,
             Err(error) => {
                 shared.fail(&error);
-                Snapshot {
-                    error: Some(format!("{error:#}")),
-                    volume: self.volume,
-                    ..Snapshot::default()
-                }
+                self.idle_snapshot(Some(format!("{error:#}")))
             }
         }
     }
 
-    pub fn render(&mut self, target: &native::Target) -> Result<()> {
+    fn update(&mut self, shared: &Shared) -> Result<()> {
+        if self.prepare(shared)? {
+            self.advance(shared)?;
+        }
+
+        self.pause_at_end(shared)
+    }
+
+    fn idle_snapshot(&self, error: Option<String>) -> Snapshot {
+        Snapshot {
+            video: VideoState {
+                volume: self.volume,
+                error,
+                ..VideoState::default()
+            },
+            ..Snapshot::default()
+        }
+    }
+
+    pub fn render(&mut self, target: &native::flowa_video_target) -> Result<()> {
         let current = self
             .current
             .as_ref()
@@ -308,7 +307,7 @@ impl Engine {
 
         // SAFETY: Borrowed frames and stream parameters outlive the call; C retains GPU-flight references
         let result = native::check(|error, size| unsafe {
-            (self.gpu.api.gpu_render)(
+            native::flowa_gpu_render(
                 self.gpu.handle.as_ptr(),
                 current.frame.raw(),
                 stream.raw(),
@@ -342,9 +341,9 @@ impl Engine {
             return Ok(false);
         }
 
-        if stream.info.audio.is_some() && state.audio.is_none() {
-            state.audio =
-                Some(AudioOutput::open(Arc::clone(&self.gpu.api), state.volume)?);
+        if stream.info.audio.is_some() && state.audio.is_none() && !state.audio_disabled
+        {
+            open_audio(&mut state);
             shared.notify();
         }
 
@@ -377,7 +376,7 @@ impl Engine {
             None => return Ok(()),
         };
 
-        for _ in 0..12 {
+        for _ in 0..MAX_FRAMES_PER_POLL {
             if self.pending.is_none() {
                 let Some(decoder) = &mut self.decoder else {
                     return Ok(());
@@ -450,72 +449,94 @@ impl Engine {
         Ok(())
     }
 
-    fn snapshot(&self, shared: &Shared) -> Result<Snapshot> {
+    /// Pauses on the last frame once decoding has finished and the clock reaches the end
+    fn pause_at_end(&self, shared: &Shared) -> Result<()> {
         let mut state = shared.lock();
-        let position = state.position(Instant::now())?;
-        let info = state.stream.as_ref().map(|stream| stream.info);
-        let duration = info.map_or(0.0, |info| info.duration);
-        let end = if duration > 0.0 {
-            duration
-        } else {
-            self.current.as_ref().map_or(0.0, |frame| {
-                frame.position + info.map_or(0.0, |info| info.frame_duration)
-            })
-        };
+        let decoded_everything =
+            self.decoder.as_ref().is_some_and(|decoder| decoder.eof)
+                && self.pending.is_none();
 
-        if self.decoder.as_ref().is_some_and(|decoder| decoder.eof)
-            && self.pending.is_none()
-            && state.started
-            && position >= end
-        {
-            state.ended = true;
-            state.paused = true;
-            state.clock.anchor(end, Instant::now());
-            if let Some(audio) = &state.audio {
-                audio.pause(true)?;
-            }
+        if !decoded_everything || !state.started || state.ended {
+            return Ok(());
         }
 
-        let position = if state.ended { end } else { position };
-        Ok(Snapshot {
-            position: if duration > 0.0 {
-                position.min(duration)
-            } else {
-                position
-            },
-            duration,
-            volume: state.volume,
-            next_frame_delay: self
-                .pending
-                .as_ref()
-                .map_or(0.005, |frame| (frame.position - position).max(0.0)),
-            frame_serial: self.frame_serial,
+        let end = self.end_position(stream_info(&state));
+        if state.position(Instant::now())? < end {
+            return Ok(());
+        }
+
+        state.ended = true;
+        state.paused = true;
+        state.clock.anchor(end, Instant::now());
+
+        if let Some(audio) = &state.audio {
+            audio.pause(true)?;
+        }
+
+        Ok(())
+    }
+
+    /// The media duration, or the end of the current frame when the container has none
+    fn end_position(&self, info: Option<StreamInfo>) -> f64 {
+        let duration = info.map_or(0.0, |info| info.duration);
+
+        if duration > 0.0 {
+            return duration;
+        }
+
+        let frame_duration = info.map_or(0.0, |info| info.frame_duration);
+        self.current
+            .as_ref()
+            .map_or(0.0, |frame| frame.position + frame_duration)
+    }
+
+    fn snapshot(&self, shared: &Shared) -> Result<Snapshot> {
+        let mut state = shared.lock();
+        let info = stream_info(&state);
+        let duration = info.map_or(0.0, |info| info.duration);
+
+        let mut position = if state.ended {
+            self.end_position(info)
+        } else {
+            state.position(Instant::now())?
+        };
+        if duration > 0.0 {
+            position = position.min(duration);
+        }
+
+        let next_frame_delay = self
+            .pending
+            .as_ref()
+            .map_or(0.005, |frame| (frame.position - position).max(0.0));
+        let size = self.current.as_ref().map_or([0; 2], |frame| {
+            frame
+                .frame
+                .display_size(info.map_or(0.0, |info| info.rotation))
+        });
+
+        let video = VideoState {
+            active: true,
             loading: self.current.is_none() && state.error.is_none(),
             seeking: self.current.is_some() && (!state.started || state.seeking),
             paused: state.paused,
-            size: self.current.as_ref().map_or([0; 2], |frame| {
-                frame
-                    .frame
-                    .display_size(info.map_or(0.0, |info| info.rotation))
-            }),
-            decoder: self
-                .decoder
-                .as_ref()
-                .and_then(|decoder| decoder.selected)
-                .unwrap_or_default()
-                .into(),
-            codec: info.map_or_else(String::new, |info| native::string(&info.codec)),
-            audio: state
+            position,
+            duration,
+            volume: state.volume,
+            size,
+            decoder: self.decoder.as_ref().and_then(|decoder| decoder.selected),
+            codec: info.map_or("", |info| info.codec),
+            audio: info.and_then(|info| info.audio),
+            error: state.error.clone(),
+        };
+
+        Ok(Snapshot {
+            video,
+            next_frame_delay,
+            frame_serial: self.frame_serial,
+            audio_output: state
                 .audio
                 .as_ref()
                 .map_or_else(String::new, |audio| audio.name.clone()),
-            audio_info: info.and_then(|info| info.audio).map(|audio| AudioInfo {
-                codec: native::string(&audio.codec),
-                channels: audio.channels,
-                sample_rate: audio.sample_rate,
-                bit_rate: audio.bit_rate,
-            }),
-            error: state.error.clone(),
         })
     }
 }
@@ -523,6 +544,21 @@ impl Engine {
 impl Drop for Engine {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+fn stream_info(state: &PlaybackState) -> Option<StreamInfo> {
+    state.stream.as_ref().map(|stream| stream.info)
+}
+
+/// Opens the output device, or falls back to silent playback on the wall clock
+fn open_audio(state: &mut PlaybackState) {
+    match AudioOutput::open(state.volume) {
+        Ok(audio) => state.audio = Some(audio),
+        Err(error) => {
+            log::warn!("Playing without sound: {error:#}");
+            state.audio_disabled = true;
+        }
     }
 }
 
@@ -577,18 +613,11 @@ mod tests {
         let gpu = gpu::for_device(&graphics.device)?;
         let mut engine = Engine::new(gpu, egui::Context::default());
         engine.open(&clip)?;
-        let state = pump(&mut engine, |state| state.position > 0.1)?;
-        ensure!(
-            state.decoder != "software",
-            "A hardware decoder is required for this test"
-        );
-        let hardware = match state.decoder.as_str() {
-            "nvdec" => VideoDecoder::Nvdec,
-            "vulkan" => VideoDecoder::Vulkan,
-            "vaapi" => VideoDecoder::Vaapi,
-            name => anyhow::bail!("Unexpected decoder: {name}"),
-        };
-        let hardware_name = state.decoder.clone();
+        let state = pump(&mut engine, |state| state.video.position > 0.1)?.video;
+        let hardware = state
+            .decoder
+            .filter(|decoder| *decoder != VideoDecoder::Software)
+            .context("A hardware decoder is required for this test")?;
         engine.toggle_pause()?;
         let position = state.position;
         let shared = engine
@@ -604,8 +633,9 @@ mod tests {
         );
 
         let state = pump(&mut engine, |state| {
-            state.decoder == "software" && !state.seeking
-        })?;
+            state.video.decoder == Some(VideoDecoder::Software) && !state.video.seeking
+        })?
+        .video;
         ensure!(state.paused, "Recovery changed pause state");
         ensure!(
             (state.position - position).abs() < 0.15,
@@ -616,19 +646,20 @@ mod tests {
         // A terminal import failure stops the demux worker and latches the UI error
         shared.fail("Injected frame import failure");
         let state = engine.poll();
-        ensure!(state.error.is_some(), "Failure was not reported");
+        ensure!(state.video.error.is_some(), "Failure was not reported");
         ensure!(shared.stopped(), "The failed worker was not stopped");
 
         engine.set_decoder(hardware)?;
         let state = pump(&mut engine, |state| {
-            state.decoder == hardware_name && !state.seeking
-        })?;
+            state.video.decoder == Some(hardware) && !state.video.seeking
+        })?
+        .video;
         ensure!(state.paused, "Reopening changed pause state");
         ensure!(
             (state.position - position).abs() < 0.15,
             "Reopening lost the playback position"
         );
-        ensure!(state.audio_info.is_none(), "A silent clip reported audio");
+        ensure!(state.audio.is_none(), "A silent clip reported audio");
         engine.stop();
         Ok(())
     }
@@ -641,7 +672,11 @@ mod tests {
 
         loop {
             let state = engine.poll();
-            ensure!(state.error.is_none(), "Playback failed: {:?}", state.error);
+            ensure!(
+                state.video.error.is_none(),
+                "Playback failed: {:?}",
+                state.video.error
+            );
             if ready(&state) && engine.current.is_some() {
                 return Ok(state);
             }

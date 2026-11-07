@@ -2,8 +2,9 @@
 
 FFmpeg 9 decodes video, libplacebo renders into wgpu textures, and SDL3 plays audio.
 Rust owns playback, seeking, queues, FFmpeg contexts, resampling, poster extraction,
-and frame lifetimes. Bindings are generated from the linked FFmpeg SDK. The C shim
-handles the shared Vulkan device, libplacebo rendering, and GPU interoperability.
+and frame lifetimes. Bindings are generated from the linked FFmpeg SDK, and from
+`bindings.h` for the shim and SDL3 audio. The C shim handles the shared Vulkan
+device, libplacebo rendering, and GPU interoperability.
 
 Linux hardware playback is validated. Windows Vulkan source and build preparation
 are present, but native Windows build and hardware validation are still pending.
@@ -27,8 +28,11 @@ another decoder reopens the stream. File details reports video and audio codecs,
 the source audio channel count, sample rate, bitrate, and active video decoder.
 Hardware candidates must return hardware frames. Failed candidates replay a
 bounded set of initial packets into the next decoder. Software decoding runs on a
-dedicated worker with bounded packet and frame channels and two codec threads.
+dedicated worker with bounded packet and frame channels; FFmpeg sizes its codec
+thread pool from the CPU. Poster extraction decodes on a single thread.
 Seek generations discard stale CPU frames. Audio decoding also runs on the CPU.
+When no audio output device can be opened, playback continues without sound and
+the clock follows wall time.
 
 A hardware decode error after playback starts switches to software and seeks to
 the current position, preserving pause state and the displayed frame. This

@@ -129,29 +129,27 @@ fn run_once(options: NativeOptions, startup: &mut Option<Startup>) -> eframe::Re
     )
 }
 
+/// Creates the shared Vulkan device that video playback renders into
 fn configure_video(options: &mut NativeOptions, renderer: RendererPreference) {
-    #[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
-    {
-        if !matches!(
-            renderer,
-            RendererPreference::Auto | RendererPreference::Vulkan
-        ) {
-            return;
-        }
+    let vulkan_renderer = matches!(
+        renderer,
+        RendererPreference::Auto | RendererPreference::Vulkan
+    );
 
-        if let Some(backend) = std::env::var_os("WGPU_BACKEND")
-            && backend != "vulkan"
-        {
-            return;
-        }
-
-        match crate::video::gpu::setup() {
-            Ok(setup) => options.wgpu_options.wgpu_setup = setup,
-            Err(error) => log::warn!("Video device setup: {error:#}"),
-        }
+    if !cfg!(video_playback) || !vulkan_renderer {
+        return;
     }
 
-    let _ = (options, renderer);
+    if let Some(backend) = std::env::var_os("WGPU_BACKEND")
+        && !backend.eq_ignore_ascii_case("vulkan")
+    {
+        return;
+    }
+
+    match crate::video::gpu::setup() {
+        Ok(setup) => options.wgpu_options.wgpu_setup = setup,
+        Err(error) => log::warn!("Video device setup: {error:#}"),
+    }
 }
 
 fn set_backends(options: &mut NativeOptions, backends: Backends) {

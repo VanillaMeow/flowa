@@ -1,48 +1,44 @@
-//! Video sessions with an optional native Vulkan playback backend
+//! Video sessions backed by FFmpeg decoding and Vulkan presentation when the build has them
 
-#[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
+#[cfg(video_playback)]
 mod ffmpeg;
-#[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
+#[cfg(video_playback)]
 pub(crate) mod gpu;
-#[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
+#[cfg(video_playback)]
 mod media;
-#[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
+#[cfg(video_playback)]
 mod native;
-#[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
+#[cfg(video_playback)]
 mod player;
-#[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
+#[cfg(video_playback)]
 mod thumbnail;
 
-use std::{path::Path, time::Duration};
+#[cfg(not(video_playback))]
+mod unsupported;
+#[cfg(not(video_playback))]
+pub(crate) use unsupported::gpu;
+#[cfg(not(video_playback))]
+use unsupported::{player, thumbnail};
+
+use std::{path::Path, sync::atomic::AtomicU64};
+
+use anyhow::{Context, Result, bail};
 
 use crate::settings::VideoDecoder;
-use anyhow::{Result, bail};
 
 /// Extracts filmstrip pixels without requiring an initialized playback device
 pub(crate) fn thumbnail(
     path: &Path,
-    generation: &std::sync::atomic::AtomicU64,
+    generation: &AtomicU64,
     expected: u64,
 ) -> Result<egui::ColorImage> {
-    #[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
-    {
-        thumbnail::extract(path, generation, expected)
-    }
-
-    #[cfg(not(all(
-        feature = "video",
-        any(target_os = "linux", target_os = "windows")
-    )))]
-    {
-        let _ = (path, generation, expected);
-        bail!("This build does not support video thumbnails")
-    }
+    thumbnail::extract(path, generation, expected)
 }
 
 /// Source audio properties before playback resampling
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct AudioInfo {
-    pub codec: String,
+    pub codec: &'static str,
     pub channels: u32,
     pub sample_rate: u32,
     pub bit_rate: u64,
@@ -51,6 +47,7 @@ pub(crate) struct AudioInfo {
 /// Playback properties reported by the FFmpeg player
 ///
 /// Times are seconds, volume is a percentage, and size includes display aspect ratio
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct VideoState {
     pub active: bool,
     pub loading: bool,
@@ -60,15 +57,16 @@ pub(crate) struct VideoState {
     pub duration: f64,
     pub volume: f64,
     pub size: [u32; 2],
-    pub decoder: String,
-    pub codec: String,
+    /// The decoder producing frames, or `None` while candidates are still being tried
+    pub decoder: Option<VideoDecoder>,
+    pub codec: &'static str,
     pub audio: Option<AudioInfo>,
     pub error: Option<String>,
 }
 
 impl VideoState {
     pub fn codec_description(&self) -> &str {
-        match self.codec.as_str() {
+        match self.codec {
             "h264" => "H.264 / AVC",
             "hevc" => "H.265 / HEVC",
             "av1" => "AV1",
@@ -84,23 +82,12 @@ impl VideoState {
         self.active && !self.loading && self.error.is_none()
     }
 
-    /// Describes decoder selection before the first decoded frame arrives
     pub fn decoder_description(&self) -> String {
-        if self.decoder.is_empty() || self.decoder == "no" {
-            return "Selecting video decoder".into();
+        match self.decoder {
+            None | Some(VideoDecoder::Auto) => "Selecting video decoder".into(),
+            Some(VideoDecoder::Software) => "Software decoding · CPU".into(),
+            Some(hardware) => format!("Hardware decoding · {}", hardware.as_ref()),
         }
-
-        if self.decoder == "software" {
-            return "Software decoding · CPU".into();
-        }
-
-        let name = match self.decoder.as_str() {
-            "nvdec" => "NVDEC",
-            "vulkan" => "Vulkan",
-            "vaapi" => "VA-API",
-            other => other,
-        };
-        format!("Hardware decoding · {name}")
     }
 }
 
@@ -115,22 +102,28 @@ impl Default for VideoState {
             duration: 0.,
             volume: 100.,
             size: [0; 2],
-            decoder: String::new(),
-            codec: String::new(),
+            decoder: None,
+            codec: "",
             audio: None,
             error: None,
         }
     }
 }
 
+/// Requests sent from the UI to the playback engine
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum PlayerCommand {
+    TogglePause,
+    Seek(f64),
+    Volume(f64),
+    Decoder(VideoDecoder),
+}
+
 /// Coordinates playback state and the texture displayed by the image canvas
-///
-/// The optional Rust player owns decoding and GPU resources for this window
 #[derive(Default)]
 pub(crate) struct VideoSession {
     pub state: VideoState,
     pub texture: Option<egui::TextureId>,
-    #[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
     player: Option<player::Player>,
     unavailable: Option<String>,
     decoders: Vec<VideoDecoder>,
@@ -139,30 +132,25 @@ pub(crate) struct VideoSession {
 impl VideoSession {
     /// Initializes playback only after the application's compatible device exists
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        #[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
-        if let Some(graphics) = &cc.wgpu_render_state {
-            return match player::Player::new(graphics, &cc.egui_ctx) {
-                Ok(player) => Self {
-                    decoders: player.available_decoders(),
-                    player: Some(player),
-                    ..Default::default()
-                },
-                Err(error) => {
-                    log::info!("Video backend unavailable: {error:#}");
-                    Self {
-                        unavailable: Some(format!("{error:#}")),
-                        ..Default::default()
-                    }
-                }
-            };
-        }
+        let player = cc
+            .wgpu_render_state
+            .as_ref()
+            .context("Video playback needs the wgpu renderer")
+            .and_then(|graphics| player::Player::new(graphics, &cc.egui_ctx));
 
-        let _ = cc;
-        Self {
-            unavailable: Some(
-                "This build does not support Vulkan video playback".into(),
-            ),
-            ..Default::default()
+        match player {
+            Ok(player) => Self {
+                decoders: player.available_decoders(),
+                player: Some(player),
+                ..Default::default()
+            },
+            Err(error) => {
+                log::info!("Video backend unavailable: {error:#}");
+                Self {
+                    unavailable: Some(format!("{error:#}")),
+                    ..Default::default()
+                }
+            }
         }
     }
 
@@ -176,30 +164,24 @@ impl VideoSession {
             ..Default::default()
         };
 
-        #[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
-        if let Some(player) = &mut self.player {
-            if let Err(error) = player.load(path) {
-                self.fail(error);
-            } else if let Err(error) =
-                player.command(Command::Volume(self.state.volume))
-            {
-                self.fail(error);
-            }
+        let Some(player) = &mut self.player else {
+            self.state.loading = false;
+            self.state.error = Some(self.unavailable_reason().to_owned());
             return;
-        }
+        };
 
-        let _ = path;
-        self.state.loading = false;
-        self.state.error = Some(
-            self.unavailable
-                .clone()
-                .unwrap_or_else(|| "Video backend unavailable".into()),
-        );
+        let volume = self.state.volume;
+        let opened = player
+            .load(path)
+            .and_then(|()| player.command(PlayerCommand::Volume(volume)));
+
+        if let Err(error) = opened {
+            self.fail(error);
+        }
     }
 
     /// Stops playback before the browser changes its selection
     pub fn close(&mut self) {
-        #[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
         if self.state.active
             && let Some(player) = &mut self.player
         {
@@ -215,60 +197,37 @@ impl VideoSession {
 
     /// Advances playback and prepares a frame without waiting for GPU completion
     pub fn poll(&mut self, ctx: &egui::Context) {
-        #[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
-        if let Some(player) = &mut self.player {
-            player.poll(&mut self.state);
+        let Some(player) = &mut self.player else {
+            return;
+        };
 
-            if self.state.ready() {
-                match player.render(self.state.size) {
-                    Ok(texture) => self.texture = texture,
-                    Err(error) => self.fail(error),
-                }
+        player.poll(&mut self.state);
+        let repaint_after = player.repaint_after();
+
+        if self.state.ready() {
+            match player.render(self.state.size) {
+                Ok(texture) => self.texture = texture,
+                Err(error) => self.fail(error),
             }
         }
 
-        if self.state.active
-            && (!self.state.paused || self.state.seeking)
-            && self.state.error.is_none()
-        {
-            #[cfg(all(
-                feature = "video",
-                any(target_os = "linux", target_os = "windows")
-            ))]
-            let delay = self
-                .player
-                .as_ref()
-                .map_or(Duration::from_millis(16), player::Player::repaint_after);
-            #[cfg(not(all(
-                feature = "video",
-                any(target_os = "linux", target_os = "windows")
-            )))]
-            let delay = Duration::from_millis(16);
-            ctx.request_repaint_after(delay);
+        let playing = !self.state.paused || self.state.seeking;
+
+        if self.state.active && playing && self.state.error.is_none() {
+            ctx.request_repaint_after(repaint_after);
         }
     }
 
     /// Reports whether this window has an initialized Vulkan playback backend
     pub fn available(&self) -> bool {
-        #[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
-        {
-            self.player.is_some()
-        }
-
-        #[cfg(not(all(
-            feature = "video",
-            any(target_os = "linux", target_os = "windows")
-        )))]
-        {
-            false
-        }
+        self.player.is_some()
     }
 
     /// Explains why video is unavailable without hiding native initialization failures
     pub fn unavailable_reason(&self) -> &str {
         self.unavailable
             .as_deref()
-            .unwrap_or("Video playback needs the optional Linux Vulkan backend")
+            .unwrap_or("Video playback needs the Vulkan renderer")
     }
 
     pub fn available_decoders(&self) -> &[VideoDecoder] {
@@ -276,32 +235,21 @@ impl VideoSession {
     }
 
     pub fn set_decoder(&mut self, preference: VideoDecoder) -> Result<()> {
-        #[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
-        {
-            self.command(Command::Decoder(preference))?;
-            self.state.error = None;
-            Ok(())
-        }
+        self.command(PlayerCommand::Decoder(preference))?;
+        self.state.error = None;
 
-        #[cfg(not(all(
-            feature = "video",
-            any(target_os = "linux", target_os = "windows")
-        )))]
-        {
-            let _ = preference;
-            bail!("Video backend unavailable")
-        }
+        Ok(())
     }
 
     /// Changes pause state while preserving the current frame
     pub fn toggle_play(&mut self) -> Result<()> {
-        self.command(Command::TogglePause)
+        self.command(PlayerCommand::TogglePause)
     }
 
     /// Seeks to an absolute media time, bounded by the known duration
     pub fn seek(&mut self, seconds: f64) -> Result<()> {
         let position = seek_position(seconds, self.state.duration)?;
-        self.command(Command::Seek(position))
+        self.command(PlayerCommand::Seek(position))
     }
 
     /// Sets output volume as a percentage between zero and one hundred
@@ -310,41 +258,28 @@ impl VideoSession {
             bail!("Volume must be finite");
         }
 
-        self.command(Command::Volume(volume.clamp(0., 100.)))
+        self.command(PlayerCommand::Volume(volume.clamp(0., 100.)))
     }
 
-    fn command(&mut self, command: Command) -> Result<()> {
-        if let Command::Seek(value) | Command::Volume(value) = command
+    fn command(&mut self, command: PlayerCommand) -> Result<()> {
+        if let PlayerCommand::Seek(value) | PlayerCommand::Volume(value) = command
             && !value.is_finite()
         {
             bail!("Playback control must be finite");
         }
 
-        #[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
-        if let Some(player) = &mut self.player {
-            return player.command(command);
-        }
-
-        let _ = command;
-        bail!("Video backend unavailable")
+        self.player
+            .as_mut()
+            .context("Video backend unavailable")?
+            .command(command)
     }
 
-    #[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
     fn fail(&mut self, error: anyhow::Error) {
         log::error!("Video playback: {error:#}");
         self.state.loading = false;
         self.state.error = Some(format!("{error:#}"));
         self.texture = None;
     }
-}
-
-#[derive(Clone, Copy)]
-pub(super) enum Command {
-    TogglePause,
-    Seek(f64),
-    Volume(f64),
-    #[cfg(all(feature = "video", any(target_os = "linux", target_os = "windows")))]
-    Decoder(VideoDecoder),
 }
 
 fn seek_position(seconds: f64, duration: f64) -> Result<f64> {

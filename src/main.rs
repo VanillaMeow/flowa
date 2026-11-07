@@ -50,5 +50,5 @@ fn main() -> anyhow::Result<()> {
     };
 
     app::run(settings, persistence, launch)
-        .map_err(|error| anyhow::anyhow!("Could not start Flowa: {error}"))
+        .map_err(|error| anyhow::anyhow!("Could not start flowa: {error}"))
 }

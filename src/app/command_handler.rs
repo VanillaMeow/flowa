@@ -1,6 +1,6 @@
 //! Execute application commands after UI borrows end
 
-use crate::services::file_actions::Task;
+use crate::services::file_actions::{self, Task};
 
 use super::{Command, Flowa};
 
@@ -20,7 +20,7 @@ impl Flowa {
         match command {
             Command::OpenFile => self.pick(false),
             Command::OpenFolder => self.pick(true),
-            Command::OpenPath(path) => self.open_path(path, ctx),
+            Command::OpenPath(path) => self.open(path, ctx),
             Command::Refresh => {
                 if let Some(path) = self.browser.refresh_path() {
                     self.open_path(path, ctx);
@@ -52,7 +52,7 @@ impl Flowa {
                 }
             }
             Command::Export => self.export(),
-            Command::Reveal(path) => self.actions.request(Task::Reveal(path)),
+            Command::Reveal => self.reveal(),
 
             Command::RequestRename => {
                 if self.busy.is_none()
@@ -71,16 +71,10 @@ impl Flowa {
                 }
             }
             Command::ConfirmRename { path, name } => {
-                if self.busy.is_none() {
-                    self.actions.request(Task::Rename { source: path, name });
-                    self.busy = Some("Renaming image…".into());
-                }
+                self.start_task(Task::Rename { source: path, name }, "Renaming image…");
             }
             Command::ConfirmTrash(path) => {
-                if self.busy.is_none() {
-                    self.actions.request(Task::Trash(path));
-                    self.busy = Some("Moving to trash…".into());
-                }
+                self.start_task(Task::Trash(path), "Moving to trash…");
             }
 
             Command::Fit => self.ui.canvas.view.reset(),
@@ -102,7 +96,7 @@ impl Flowa {
             Command::TogglePlay => {
                 if self.video.state.active {
                     if let Err(error) = self.video.toggle_play() {
-                        self.ui.dialogs.notify(format!("{error:#}"), true);
+                        self.notify_error(&error);
                     }
                 } else if self.image.animated() {
                     self.image.toggle_play();
@@ -113,12 +107,12 @@ impl Flowa {
             }
             Command::SeekVideo(position) => {
                 if let Err(error) = self.video.seek(position) {
-                    self.ui.dialogs.notify(format!("{error:#}"), true);
+                    self.notify_error(&error);
                 }
             }
             Command::SetVideoVolume(volume) => {
                 if let Err(error) = self.video.set_volume(volume) {
-                    self.ui.dialogs.notify(format!("{error:#}"), true);
+                    self.notify_error(&error);
                 }
             }
             Command::ToggleSlideshow => self
@@ -156,44 +150,52 @@ impl Flowa {
         }
     }
 
-    fn pick(&mut self, folder: bool) {
-        if self.busy.is_none() {
-            self.busy = Some("Opening…".into());
-            self.actions.request(Task::Pick {
-                folder,
-                start: self.browser.folder().map(|folder| folder.to_path_buf()),
-            });
+    /// Sends one task to the action worker; its result clears the busy status
+    fn start_task(&mut self, task: Task, status: &str) {
+        if self.busy.is_some() {
+            return;
         }
+
+        self.busy = Some(status.into());
+        self.actions.request(task);
+    }
+
+    fn pick(&mut self, folder: bool) {
+        let start = self.browser.folder().map(|folder| folder.to_path_buf());
+        self.start_task(Task::Pick { folder, start }, "Opening…");
     }
 
     fn copy_image(&mut self) {
-        if self.busy.is_some() {
+        let Some(pixels) = self.image.current_pixels() else {
             return;
-        }
+        };
 
-        if let Some(pixels) = self.image.current_pixels() {
-            self.busy = Some("Copying image…".into());
-            self.actions.request(Task::Copy {
-                pixels,
-                view: self.ui.canvas.view.clone(),
-            });
-        }
+        let view = self.ui.canvas.view.clone();
+        self.start_task(Task::Copy { pixels, view }, "Copying image…");
     }
 
     fn export(&mut self) {
-        if self.busy.is_some() {
-            return;
-        }
-
-        if let (Some(pixels), Some(entry)) =
+        let (Some(pixels), Some(entry)) =
             (self.image.current_pixels(), self.browser.current())
-        {
-            self.actions.request(Task::Export {
-                pixels,
-                source: entry.path.clone(),
-                view: self.ui.canvas.view.clone(),
-            });
-            self.busy = Some("Exporting a copy…".into());
+        else {
+            return;
+        };
+
+        let task = Task::Export {
+            pixels,
+            source: entry.path.clone(),
+            view: self.ui.canvas.view.clone(),
+        };
+        self.start_task(task, "Exporting a copy…");
+    }
+
+    fn reveal(&mut self) {
+        let Some(entry) = self.browser.current() else {
+            return;
+        };
+
+        if let Err(error) = file_actions::reveal(&entry.path) {
+            self.notify_error(&error);
         }
     }
 }

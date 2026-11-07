@@ -18,32 +18,37 @@ static int video_error(char *error, size_t size, const char *format, ...) {
 
 struct AVBufferRef *flowa_gpu_create_decoder_device(
     struct flowa_gpu *gpu,
-    int backend
+    enum flowa_decoder_backend backend
 ) {
     AVBufferRef *device = NULL;
 
-    if (backend == 1)
-        return gpu->video_queue && gpu->av_device ? av_buffer_ref(gpu->av_device)
-                                                  : NULL;
+    switch (backend) {
+        case FLOWA_DECODER_VULKAN:
+            if (gpu->video_queue && gpu->av_device)
+                device = av_buffer_ref(gpu->av_device);
+            return device;
+        case FLOWA_DECODER_NVDEC:
+            if (gpu->av_device)
+                av_hwdevice_ctx_create_derived(
+                    &device,
+                    AV_HWDEVICE_TYPE_CUDA,
+                    gpu->av_device,
+                    0
+                );
+            return device;
+        case FLOWA_DECODER_VAAPI:
+            if (gpu->render_node[0])
+                av_hwdevice_ctx_create(
+                    &device,
+                    AV_HWDEVICE_TYPE_VAAPI,
+                    gpu->render_node,
+                    NULL,
+                    0
+                );
+            return device;
+    }
 
-    if (backend == 0 && gpu->av_device)
-        av_hwdevice_ctx_create_derived(
-            &device,
-            AV_HWDEVICE_TYPE_CUDA,
-            gpu->av_device,
-            0
-        );
-
-    if (backend == 2 && gpu->render_node[0])
-        av_hwdevice_ctx_create(
-            &device,
-            AV_HWDEVICE_TYPE_VAAPI,
-            gpu->render_node,
-            NULL,
-            0
-        );
-
-    return device;
+    return NULL;
 }
 
 static void gpu_log(void *userdata, enum pl_log_level level, const char *message) {
@@ -116,10 +121,6 @@ static void create_ffmpeg_device(struct flowa_gpu *gpu) {
     }
 
     gpu->av_device = reference;
-}
-
-uint32_t flowa_video_abi_version(void) {
-    return FLOWA_VIDEO_ABI;
 }
 
 struct flowa_gpu *flowa_gpu_create(

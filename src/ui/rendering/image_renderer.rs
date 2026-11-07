@@ -12,13 +12,15 @@ use image::RgbaImage;
 use crate::{
     services::image_workers::{self, TileKey, TileRequest, TileWorker},
     settings::{Canvas, Settings},
-    ui::theme::Colors,
+    ui::theme::{self, Colors},
     viewer::{image_session::ImageSession, transform::View},
 };
 
 use super::geometry;
 
 const TILE_UPLOADS_PER_FRAME: usize = 4;
+const TILE_REQUESTS_PER_FRAME: usize = 4;
+/// About 184 MiB of 1024² RGBA textures, enough to cover a 4K canvas with headroom
 const MAX_CACHED_TILES: usize = 46;
 
 struct TileTexture {
@@ -277,7 +279,9 @@ impl ImageRenderer {
             if let Some(tile) = self.tiles.get_mut(&key) {
                 tile.touched = self.paint_counter;
                 paint_resident_tile(painter, tile, key, frame, size, span, base);
-            } else if requests < 4 && self.request_tile(key, source_pixels) {
+            } else if requests < TILE_REQUESTS_PER_FRAME
+                && self.request_tile(key, source_pixels)
+            {
                 requests += 1;
             }
         }
@@ -418,13 +422,13 @@ fn paint_backdrop(
     }
 
     let square = settings.checker_size;
-    let dark = u32::from(base.r()) + u32::from(base.g()) + u32::from(base.b()) < 384;
+    let contrast = if theme::is_dark(base) {
+        Color32::WHITE
+    } else {
+        Color32::BLACK
+    };
     let alternate: Color32 = egui::lerp(
-        egui::Rgba::from(base)..=egui::Rgba::from(if dark {
-            Color32::WHITE
-        } else {
-            Color32::BLACK
-        }),
+        egui::Rgba::from(base)..=egui::Rgba::from(contrast),
         settings.checker_contrast,
     )
     .into();

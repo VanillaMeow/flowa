@@ -2,7 +2,7 @@
 
 use std::{
     collections::HashMap,
-    ffi::{CStr, c_char, c_int, c_void},
+    ffi::{CStr, c_char, c_int},
     ptr::NonNull,
     sync::{Arc, Mutex, OnceLock, Weak, atomic::AtomicBool},
 };
@@ -14,15 +14,14 @@ use eframe::{
     wgpu::{self, hal},
 };
 
-use super::native::{self, Api, GpuInfo, GpuInit};
+use super::native;
 
 type Registry = Mutex<HashMap<u64, Weak<NativeGpu>>>;
 static DEVICES: OnceLock<Registry> = OnceLock::new();
 
 /// Retains the native device until wgpu and every player release them
 pub(super) struct NativeGpu {
-    pub api: Arc<Api>,
-    pub handle: NonNull<c_void>,
+    pub handle: NonNull<native::flowa_gpu>,
     pub background_playback: bool,
     pub playback_claimed: AtomicBool,
     // The adapter retains the Vulkan instance borrowed by the native device
@@ -37,7 +36,7 @@ unsafe impl Sync for NativeGpu {}
 impl Drop for NativeGpu {
     fn drop(&mut self) {
         // SAFETY: All dependent renderers and frames have released this final device owner
-        unsafe { (self.api.gpu_destroy)(self.handle.as_ptr()) };
+        unsafe { native::flowa_gpu_destroy(self.handle.as_ptr()) };
     }
 }
 
@@ -116,8 +115,6 @@ unsafe extern "C" fn log_message(level: c_int, message: *const c_char) {
 }
 
 fn create_device(adapter: &wgpu::Adapter) -> Result<(wgpu::Device, wgpu::Queue)> {
-    let api = Api::load()?;
-
     // SAFETY: The adapter guard retains the instance throughout native device creation
     let native = unsafe { adapter.as_hal::<hal::api::Vulkan>() }
         .context("Vulkan adapter unavailable")?;
@@ -132,7 +129,7 @@ fn create_device(adapter: &wgpu::Adapter) -> Result<(wgpu::Device, wgpu::Queue)>
         p_next: description.p_next.cast_mut(),
         ..Default::default()
     };
-    let init = GpuInit {
+    let init = native::flowa_gpu_init {
         instance: instance.raw_instance().handle(),
         physical_device: native.raw_physical_device(),
         get_proc_addr: instance.entry().static_fn().get_instance_proc_addr,
@@ -144,13 +141,13 @@ fn create_device(adapter: &wgpu::Adapter) -> Result<(wgpu::Device, wgpu::Queue)>
     let mut error = [0; 768];
 
     // SAFETY: The native side copies descriptors and creates an owned Vulkan device
-    let handle = unsafe { (api.gpu_create)(&init, error.as_mut_ptr(), error.len()) };
+    let handle =
+        unsafe { native::flowa_gpu_create(&init, error.as_mut_ptr(), error.len()) };
     let handle = NonNull::new(handle).with_context(|| native::string(&error))?;
-    let mut info = std::mem::MaybeUninit::<GpuInfo>::uninit();
-    unsafe { (api.gpu_get_info)(handle.as_ptr(), info.as_mut_ptr()) };
+    let mut info = std::mem::MaybeUninit::<native::flowa_gpu_info>::uninit();
+    unsafe { native::flowa_gpu_get_info(handle.as_ptr(), info.as_mut_ptr()) };
     let info = unsafe { info.assume_init() };
     let owner = Arc::new(NativeGpu {
-        api,
         handle,
         background_playback: info.graphics_queue != 0,
         playback_claimed: AtomicBool::new(false),

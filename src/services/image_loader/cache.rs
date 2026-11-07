@@ -8,6 +8,9 @@ use std::{
 
 use crate::viewer::image_session::DecodedImage;
 
+const MAX_CACHED_IMAGES: usize = 4;
+const MAX_CACHE_BYTES: u64 = 512 * 1024 * 1024;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct FileStamp {
     size: u64,
@@ -42,8 +45,9 @@ impl ImageCache {
         self.entries.clear();
     }
 
+    /// Allows a quarter of the image memory limit, enough for a few camera photos
     pub fn set_budget(&mut self, image_budget: u64) {
-        self.budget = (image_budget / 16).min(64 * 1024 * 1024);
+        self.budget = (image_budget / 4).min(MAX_CACHE_BYTES);
         self.make_room(0);
     }
 
@@ -82,7 +86,7 @@ impl ImageCache {
         self.entries.retain(|entry| entry.path != path);
         self.make_room(bytes);
 
-        if self.entries.len() == 4 {
+        if self.entries.len() == MAX_CACHED_IMAGES {
             self.entries.pop_front();
         }
 

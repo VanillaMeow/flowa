@@ -7,8 +7,8 @@ use std::{
 
 use anyhow::{Context, Result, bail, ensure};
 
-use super::media::{Frame, Packet, Receive, Sent, Stream};
-use crate::video::media::{Codec, CpuFrame};
+use super::frame::Frame;
+use crate::video::media::{Codec, CpuFrame, Packet, Receive, Sent, Stream};
 
 struct Request {
     generation: u64,
