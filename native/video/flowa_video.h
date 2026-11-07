@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <vulkan/vulkan.h>
 
-#define FLOWA_VIDEO_ABI 4
+#define FLOWA_VIDEO_ABI 5
 #define FLOWA_VIDEO_SLOTS 3
 
 struct flowa_gpu;
@@ -26,6 +26,7 @@ struct flowa_gpu_init {
 struct flowa_gpu_info {
     VkDevice device;
     uint32_t graphics_family;
+    uint32_t graphics_queue;
     const char *const *extensions;
     int num_extensions;
     const VkPhysicalDeviceFeatures2 *features;

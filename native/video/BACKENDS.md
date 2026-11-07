@@ -105,7 +105,10 @@ access-mask bookkeeping and synchronization when decoder images are reused.
   `player/rendering.rs` passes raw `VkImage` handles and semaphore values between
   wgpu and libplacebo. Texture lifetime and resize retirement depend on both APIs.
 - Hardware codec creation derives CUDA and Vulkan contexts from that device;
-  VA-API selects its DRM render node. The UI thread serializes hardware submissions.
+  VA-API selects its DRM render node. A playback worker serializes hardware decoding
+  and libplacebo rendering. On devices with a second graphics queue, wgpu uses that
+  queue so the UI can keep drawing during decoder setup and shader compilation.
+  Devices with only one graphics queue retain playback on the UI thread.
 - `media/` preserves Unix path bytes and requires valid Unicode encoded as UTF-8
   on Windows. Native Windows tests must still exercise non-ASCII paths.
 

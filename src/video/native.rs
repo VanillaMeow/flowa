@@ -30,6 +30,7 @@ pub(super) struct GpuInit {
 pub(super) struct GpuInfo {
     pub device: vk::Device,
     pub graphics_family: u32,
+    pub graphics_queue: u32,
     pub extensions: *const *const c_char,
     pub num_extensions: c_int,
     pub features: *const vk::PhysicalDeviceFeatures2<'static>,
@@ -75,7 +76,7 @@ macro_rules! define_api {
                 let api = Self { $($name: linked::$name,)* };
 
                 // SAFETY: The version query takes no arguments and owns no resources
-                ensure!(unsafe { (api.video_abi_version)() } == 4,
+                ensure!(unsafe { (api.video_abi_version)() } == 5,
                     "Unsupported Flowa FFmpeg shim ABI; rebuild Flowa with Cargo");
                 Ok(Arc::new(api))
             }

@@ -4,7 +4,7 @@ use std::{
     collections::HashMap,
     ffi::{CStr, c_char, c_int, c_void},
     ptr::NonNull,
-    sync::{Arc, Mutex, OnceLock, Weak},
+    sync::{Arc, Mutex, OnceLock, Weak, atomic::AtomicBool},
 };
 
 use anyhow::{Context, Result};
@@ -23,11 +23,14 @@ static DEVICES: OnceLock<Registry> = OnceLock::new();
 pub(super) struct NativeGpu {
     pub api: Arc<Api>,
     pub handle: NonNull<c_void>,
+    pub background_playback: bool,
+    pub playback_claimed: AtomicBool,
     // The adapter retains the Vulkan instance borrowed by the native device
     _adapter: wgpu::Adapter,
 }
 
-// SAFETY: Players submit on the UI thread; the final owner may destroy an idle device on any thread
+// SAFETY: One playback owner uses queue zero; wgpu uses a separate queue for background playback
+// The final owner destroys the device only after playback and wgpu release it
 unsafe impl Send for NativeGpu {}
 unsafe impl Sync for NativeGpu {}
 
@@ -143,14 +146,16 @@ fn create_device(adapter: &wgpu::Adapter) -> Result<(wgpu::Device, wgpu::Queue)>
     // SAFETY: The native side copies descriptors and creates an owned Vulkan device
     let handle = unsafe { (api.gpu_create)(&init, error.as_mut_ptr(), error.len()) };
     let handle = NonNull::new(handle).with_context(|| native::string(&error))?;
+    let mut info = std::mem::MaybeUninit::<GpuInfo>::uninit();
+    unsafe { (api.gpu_get_info)(handle.as_ptr(), info.as_mut_ptr()) };
+    let info = unsafe { info.assume_init() };
     let owner = Arc::new(NativeGpu {
         api,
         handle,
+        background_playback: info.graphics_queue != 0,
+        playback_claimed: AtomicBool::new(false),
         _adapter: adapter.clone(),
     });
-    let mut info = std::mem::MaybeUninit::<GpuInfo>::uninit();
-    unsafe { (owner.api.gpu_get_info)(owner.handle.as_ptr(), info.as_mut_ptr()) };
-    let info = unsafe { info.assume_init() };
 
     // SAFETY: Extension strings belong to the native owner retained by the device's drop callback
     let enabled: Vec<&'static CStr> = unsafe {
@@ -176,7 +181,7 @@ fn create_device(adapter: &wgpu::Adapter) -> Result<(wgpu::Device, wgpu::Queue)>
             &descriptor.required_limits,
             &descriptor.memory_hints,
             info.graphics_family,
-            0,
+            info.graphics_queue,
         )
     }?;
     drop(native);

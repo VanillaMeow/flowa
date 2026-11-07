@@ -4,10 +4,10 @@ use anyhow::{Context, Result, ensure};
 use ash::vk;
 use eframe::wgpu::{self, hal};
 
-use super::{Player, SLOT_COUNT, Target};
+use super::{Playback, SLOT_COUNT, Target};
 use crate::video::native::Target as NativeTarget;
 
-impl Player {
+impl Playback {
     /// Reuses the last frame unless FFmpeg produces a new frame or the target size changes
     pub fn render(&mut self, size: [u32; 2]) -> Result<Option<egui::TextureId>> {
         if size.contains(&0) || self.status.frame_serial == 0 {
@@ -56,13 +56,16 @@ impl Player {
 
         self.timeline += 2;
         let ready = self.timeline - 1;
+        self.graphics.queue.submit([encoder.finish()]);
 
+        // Stage the signal after submitting the transition, since a concurrent UI
+        // submission can consume it before the following empty submission
         // SAFETY: Semaphore ownership is retained until all submissions complete
         let queue = unsafe { self.graphics.queue.as_hal::<hal::api::Vulkan>() }
             .context("Vulkan queue unavailable")?;
         queue.add_signal_semaphore(self.semaphore, Some(ready));
         drop(queue);
-        self.graphics.queue.submit([encoder.finish()]);
+        self.graphics.queue.submit([]);
 
         // The native renderer borrows the image until it signals the next even value
         let texture = unsafe { target.texture.as_hal::<hal::api::Vulkan>() }
@@ -78,7 +81,8 @@ impl Player {
         };
         self.engine.render(&frame)?;
 
-        // The next egui submission waits on the GPU, so the UI thread stays unblocked
+        // Add the wait only after native rendering has submitted its GPU work
+        // UI submissions can continue while the worker prepares shaders and frames
         let queue = unsafe { self.graphics.queue.as_hal::<hal::api::Vulkan>() }
             .context("Vulkan queue unavailable")?;
         queue.add_wait_semaphore(
@@ -165,22 +169,9 @@ impl Player {
 
         // Retire native image views before wgpu destroys the images they reference
         unsafe { (self.gpu.api.gpu_retire_targets)(self.gpu.handle.as_ptr()) };
-        self.retire_targets_after_player()
-    }
-
-    pub(super) fn retire_targets_after_player(&mut self) -> Result<()> {
-        self.graphics
-            .device
-            .poll(wgpu::PollType::wait_indefinitely())?;
-
-        // SAFETY: Waiting here is restricted to resize and teardown, after ordered submissions
-        unsafe { self.native.device_wait_idle() }?;
-
-        let mut renderer = self.graphics.renderer.write();
-
-        for target in self.targets.drain(..) {
-            renderer.free_texture(&target.id);
-        }
+        // Wgpu retains submitted resources until completion; the UI frees egui registrations
+        // only after receiving the replacement frame and these retired targets
+        self.retired.append(&mut self.targets);
 
         Ok(())
     }

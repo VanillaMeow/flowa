@@ -19,6 +19,7 @@ use super::{
 use crate::settings::VideoDecoder;
 use crate::video::{AudioInfo, gpu::NativeGpu, native};
 
+#[derive(Clone)]
 pub(super) struct Snapshot {
     pub position: f64,
     pub duration: f64,
@@ -127,7 +128,8 @@ impl Engine {
             log::warn!("The media worker terminated unexpectedly");
         }
 
-        // SAFETY: All video submissions belong to this UI thread and the demux worker has joined
+        // SAFETY: All native video submissions belong to this engine's thread
+        // The demux worker has joined before its frames and audio output are released
         unsafe { (self.gpu.api.gpu_reset_frames)(self.gpu.handle.as_ptr()) };
         self.pending = None;
         self.current = None;
@@ -136,7 +138,6 @@ impl Engine {
         self.applied_generation = 0;
         self.last_pts = 0.0;
 
-        // Shared owns SDL output, which must be destroyed here on the UI thread
         drop(shared);
     }
 
@@ -533,7 +534,7 @@ mod tests {
     use eframe::egui_wgpu::{RenderState, RendererOptions, WgpuConfiguration};
 
     use super::*;
-    use crate::video::{VideoState, gpu, player::Player};
+    use crate::video::gpu;
 
     #[test]
     #[ignore = "Requires Vulkan, a hardware H.264 decoder, and ffmpeg with libx264"]
@@ -573,14 +574,10 @@ mod tests {
             None,
             RendererOptions::default(),
         ))?;
-        let mut player = Player::new(&graphics, &egui::Context::default())?;
-        let mut state = VideoState {
-            active: true,
-            loading: true,
-            ..Default::default()
-        };
-        player.load(&clip)?;
-        pump(&mut player, &mut state, |state| state.position > 0.1)?;
+        let gpu = gpu::for_device(&graphics.device)?;
+        let mut engine = Engine::new(gpu, egui::Context::default());
+        engine.open(&clip)?;
+        let state = pump(&mut engine, |state| state.position > 0.1)?;
         ensure!(
             state.decoder != "software",
             "A hardware decoder is required for this test"
@@ -592,23 +589,21 @@ mod tests {
             name => anyhow::bail!("Unexpected decoder: {name}"),
         };
         let hardware_name = state.decoder.clone();
-        player.command(crate::video::Command::TogglePause)?;
+        engine.toggle_pause()?;
         let position = state.position;
-        let shared = player
-            .engine
+        let shared = engine
             .shared
             .as_ref()
             .map(Arc::clone)
             .context("No media worker")?;
-        player
-            .engine
+        engine
             .recover_decoder(&shared, anyhow::anyhow!("Injected hardware failure"))?;
         ensure!(
-            player.displayed.is_some(),
-            "Recovery blanked the displayed texture"
+            engine.current.is_some(),
+            "Recovery discarded the current frame"
         );
 
-        pump(&mut player, &mut state, |state| {
+        let state = pump(&mut engine, |state| {
             state.decoder == "software" && !state.seeking
         })?;
         ensure!(state.paused, "Recovery changed pause state");
@@ -620,12 +615,12 @@ mod tests {
 
         // A terminal import failure stops the demux worker and latches the UI error
         shared.fail("Injected frame import failure");
-        player.poll(&mut state);
+        let state = engine.poll();
         ensure!(state.error.is_some(), "Failure was not reported");
         ensure!(shared.stopped(), "The failed worker was not stopped");
 
-        player.command(crate::video::Command::Decoder(hardware))?;
-        pump(&mut player, &mut state, |state| {
+        engine.set_decoder(hardware)?;
+        let state = pump(&mut engine, |state| {
             state.decoder == hardware_name && !state.seeking
         })?;
         ensure!(state.paused, "Reopening changed pause state");
@@ -633,27 +628,22 @@ mod tests {
             (state.position - position).abs() < 0.15,
             "Reopening lost the playback position"
         );
-        ensure!(state.audio.is_none(), "A silent clip reported audio");
-        player.stop();
+        ensure!(state.audio_info.is_none(), "A silent clip reported audio");
+        engine.stop();
         Ok(())
     }
 
     fn pump(
-        player: &mut Player,
-        state: &mut VideoState,
-        ready: impl Fn(&VideoState) -> bool,
-    ) -> Result<()> {
+        engine: &mut Engine,
+        ready: impl Fn(&Snapshot) -> bool,
+    ) -> Result<Snapshot> {
         let deadline = Instant::now() + Duration::from_secs(10);
 
         loop {
-            player.poll(state);
+            let state = engine.poll();
             ensure!(state.error.is_none(), "Playback failed: {:?}", state.error);
-            if state.ready() {
-                player.render(state.size)?;
-                player.graphics.queue.submit([]);
-            }
-            if ready(state) && player.displayed.is_some() {
-                return Ok(());
+            if ready(&state) && engine.current.is_some() {
+                return Ok(state);
             }
 
             ensure!(Instant::now() < deadline, "Decoder recovery timed out");

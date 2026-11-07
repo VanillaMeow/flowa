@@ -207,6 +207,7 @@ struct flowa_gpu *flowa_gpu_create(
             .opt_extensions = optional,
             .num_opt_extensions = decode_count,
             .features = &features,
+            .queue_count = 1,
             .extra_queues = VK_QUEUE_VIDEO_DECODE_BIT_KHR
         )
     );
@@ -255,9 +256,27 @@ struct flowa_gpu *flowa_gpu_create(
 }
 
 void flowa_gpu_get_info(struct flowa_gpu *gpu, struct flowa_gpu_info *info) {
+    PFN_vkGetPhysicalDeviceQueueFamilyProperties get_queues =
+        (void *)gpu->vk->get_proc_addr(
+            gpu->vk->instance,
+            "vkGetPhysicalDeviceQueueFamilyProperties"
+        );
+    uint32_t count = 0;
+    get_queues(gpu->vk->phys_device, &count, NULL);
+    VkQueueFamilyProperties *queues = calloc(count, sizeof(*queues));
+    uint32_t graphics_queue = 0;
+
+    if (queues) {
+        get_queues(gpu->vk->phys_device, &count, queues);
+        if (queues[gpu->vk->queue_graphics.index].queueCount > 1)
+            graphics_queue = 1;
+        free(queues);
+    }
+
     *info = (struct flowa_gpu_info){
         .device = gpu->vk->device,
         .graphics_family = gpu->vk->queue_graphics.index,
+        .graphics_queue = graphics_queue,
         .extensions = gpu->vk->extensions,
         .num_extensions = gpu->vk->num_extensions,
         .features = gpu->vk->features,

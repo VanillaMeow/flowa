@@ -21,7 +21,28 @@ const SDL_F32: i32 = if cfg!(target_endian = "little") {
     0x9120
 };
 
-/// Created and destroyed on the UI thread; queue operations are serialized by Shared
+/// Keeps SDL subsystem initialization and shutdown on the UI thread
+pub(super) struct AudioRuntime(Arc<Api>);
+
+impl AudioRuntime {
+    pub fn new(api: Arc<Api>) -> Result<Self> {
+        ensure!(
+            unsafe { (api.sdl_init)(SDL_INIT_AUDIO) },
+            "Cannot initialize SDL3 audio: {}",
+            error(&api)
+        );
+        Ok(Self(api))
+    }
+}
+
+impl Drop for AudioRuntime {
+    fn drop(&mut self) {
+        // SAFETY: The player joins playback and destroys its audio streams before shutdown
+        unsafe { (self.0.sdl_quit)(SDL_INIT_AUDIO) };
+    }
+}
+
+/// Owned by playback; queue operations are serialized by Shared
 pub(super) struct AudioOutput {
     api: Arc<Api>,
     stream: NonNull<c_void>,
@@ -30,17 +51,11 @@ pub(super) struct AudioOutput {
 }
 
 // SAFETY: SDL3 queue/control functions are thread-safe and every access holds the playback mutex
-// Initialization and destruction stay on the UI thread after the worker has joined
+// SDL subsystem initialization and shutdown belong to the UI's AudioRuntime
 unsafe impl Send for AudioOutput {}
 
 impl AudioOutput {
     pub fn open(api: Arc<Api>, volume: f64) -> Result<Self> {
-        // SAFETY: Audio initialization runs on the UI thread and is paired with one quit
-        ensure!(
-            unsafe { (api.sdl_init)(SDL_INIT_AUDIO) },
-            "Cannot initialize SDL3 audio: {}",
-            error(&api)
-        );
         let requested = AudioSpec {
             format: SDL_F32,
             channels: CHANNELS as i32,
@@ -55,9 +70,7 @@ impl AudioOutput {
             )
         };
         let Some(stream) = NonNull::new(stream) else {
-            let message = error(&api);
-            unsafe { (api.sdl_quit)(SDL_INIT_AUDIO) };
-            anyhow::bail!("Cannot open SDL3 audio: {message}");
+            anyhow::bail!("Cannot open SDL3 audio: {}", error(&api));
         };
 
         let mut actual = AudioSpec::default();
@@ -160,10 +173,9 @@ impl AudioOutput {
 
 impl Drop for AudioOutput {
     fn drop(&mut self) {
-        // SAFETY: The engine has joined its worker before releasing output on the UI thread
+        // SAFETY: The engine has joined the media worker before releasing its stream
         unsafe {
             (self.api.sdl_audio_destroy)(self.stream.as_ptr());
-            (self.api.sdl_quit)(SDL_INIT_AUDIO);
         }
     }
 }
