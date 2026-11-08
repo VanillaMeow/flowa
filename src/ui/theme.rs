@@ -11,9 +11,15 @@ use egui::{Color32, CornerRadius, FontId, Stroke, TextStyle, Visuals};
 
 use crate::settings::{Accent, Theme};
 
+use super::style::{motion, radius, size, space, text};
+
+/// Shared by the Sweet theme and its accent swatch
+const SWEET_ACCENT: [u8; 3] = [197, 14, 210];
+
 pub fn accent_color(accent: Accent, fallback: Color32) -> Color32 {
     rgb(match accent {
         Accent::Theme => return fallback,
+        Accent::Sweet => SWEET_ACCENT,
         Accent::Violet => [177, 146, 245],
         Accent::Iris => [144, 151, 255],
         Accent::Blue => [108, 164, 245],
@@ -49,7 +55,7 @@ pub fn is_dark(color: Color32) -> bool {
     u32::from(color.r()) + u32::from(color.g()) + u32::from(color.b()) < 384
 }
 
-fn mix(a: Color32, b: Color32, amount: f32) -> Color32 {
+pub fn mix(a: Color32, b: Color32, amount: f32) -> Color32 {
     egui::lerp(egui::Rgba::from(a)..=egui::Rgba::from(b), amount).into()
 }
 
@@ -131,7 +137,7 @@ pub fn colors(theme: Theme, accent: Accent, system_dark: bool) -> Colors {
             raised: Some([30, 34, 51]),
             muted_mix: 0.65,
             border_mix: 0.16,
-            ..Palette::new([22, 25, 37], [24, 27, 40], [211, 218, 227], [197, 14, 210])
+            ..Palette::new([22, 25, 37], [24, 27, 40], [211, 218, 227], SWEET_ACCENT)
         },
         Theme::Nord => {
             Palette::new([36, 42, 53], [46, 52, 64], [236, 239, 244], [136, 192, 208])
@@ -186,17 +192,20 @@ pub fn apply(ctx: &egui::Context, colors: Colors) {
     };
 
     style.text_styles = [
-        (TextStyle::Small, FontId::proportional(13.0)),
-        (TextStyle::Body, FontId::proportional(16.0)),
-        (TextStyle::Button, FontId::proportional(15.0)),
-        (TextStyle::Heading, FontId::proportional(23.0)),
-        (TextStyle::Monospace, FontId::monospace(13.0)),
+        (TextStyle::Small, FontId::proportional(text::LABEL)),
+        (TextStyle::Body, FontId::proportional(text::BODY)),
+        (TextStyle::Button, FontId::proportional(text::BUTTON)),
+        (TextStyle::Heading, FontId::proportional(text::HEADING)),
+        (TextStyle::Monospace, FontId::monospace(text::LABEL)),
     ]
     .into();
 
-    style.spacing.item_spacing = egui::vec2(8.0, 8.0);
-    style.spacing.button_padding = egui::vec2(12.0, 8.0);
-    style.spacing.interact_size.y = 34.0;
+    style.spacing.item_spacing = egui::vec2(space::SM, space::SM);
+    style.spacing.button_padding = egui::vec2(space::MD, space::SM);
+    style.spacing.interact_size.y = size::CONTROL;
+    style.spacing.menu_margin = egui::Margin::same(space::XS as i8);
+    style.spacing.slider_width = 220.;
+    style.animation_time = motion::FADE_IN;
 
     style.visuals.panel_fill = colors.panel;
     style.visuals.window_fill = colors.panel;
@@ -204,11 +213,13 @@ pub fn apply(ctx: &egui::Context, colors: Colors) {
     style.visuals.faint_bg_color = colors.raised;
     style.visuals.override_text_color = Some(colors.text);
     style.visuals.window_stroke = Stroke::new(1.0, colors.border);
-    style.visuals.window_corner_radius = CornerRadius::same(12);
+    style.visuals.window_corner_radius = CornerRadius::same(radius::WINDOW);
+    style.visuals.menu_corner_radius = CornerRadius::same(radius::CARD);
 
     style.visuals.selection.bg_fill = mix(colors.panel, colors.accent, 0.28);
     style.visuals.selection.stroke = Stroke::new(1.0, colors.accent);
     style.visuals.hyperlink_color = colors.accent;
+    style.visuals.handle_shape = egui::style::HandleShape::Circle;
     style.visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, colors.border);
     style.visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, colors.text);
 
@@ -218,7 +229,7 @@ pub fn apply(ctx: &egui::Context, colors: Colors) {
         &mut style.visuals.widgets.hovered,
         &mut style.visuals.widgets.open,
     ] {
-        widget.corner_radius = CornerRadius::same(7);
+        widget.corner_radius = CornerRadius::same(radius::CONTROL);
         widget.fg_stroke = Stroke::new(1.5, colors.text);
         widget.bg_stroke = Stroke::NONE;
         widget.bg_fill = colors.raised;
@@ -229,6 +240,12 @@ pub fn apply(ctx: &egui::Context, colors: Colors) {
     style.visuals.widgets.hovered.weak_bg_fill = mix(colors.panel, colors.text, 0.12);
     style.visuals.widgets.active.bg_fill = mix(colors.panel, colors.accent, 0.24);
     style.visuals.widgets.active.bg_stroke = Stroke::new(1.0, colors.accent);
+
+    // Pale controls disappear on pale panels without an edge
+    if !colors.dark {
+        style.visuals.widgets.inactive.bg_stroke =
+            Stroke::new(1.0, mix(colors.panel, colors.text, 0.25));
+    }
 
     ctx.set_global_style(style);
 }

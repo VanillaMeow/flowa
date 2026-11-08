@@ -19,7 +19,9 @@ use super::{
     rendering::image_renderer::{
         self as renderer, FrozenPreview, ImageRenderer, RenderFrame,
     },
+    style::{space, text},
     theme::Colors,
+    widgets,
 };
 
 const LOADING_DELAY: Duration = Duration::from_millis(150);
@@ -310,7 +312,7 @@ fn show_loading(ui: &mut egui::Ui, rect: Rect, colors: Colors, opacity: f32) {
 
 fn loading_contents(ui: &mut egui::Ui, colors: Colors) {
     ui.spinner();
-    ui.add_space(12.);
+    ui.add_space(space::MD);
     ui.label(RichText::new("Opening file…").color(colors.muted));
 }
 
@@ -336,11 +338,11 @@ fn error_contents(
     commands: &mut Vec<Command>,
 ) {
     icons::logo(ui, 40., content.colors.muted);
-    ui.add_space(14.);
+    ui.add_space(space::MD);
     ui.heading("This file could not be opened");
-    ui.add_space(8.);
+    ui.add_space(space::SM);
     ui.label(RichText::new(error).color(content.colors.muted));
-    ui.add_space(16.);
+    ui.add_space(space::LG);
 
     ui.horizontal(|ui| {
         if ui.button("Open another file").clicked() {
@@ -383,19 +385,15 @@ fn welcome_contents(
     colors: Colors,
     commands: &mut Vec<Command>,
 ) {
-    icons::logo(ui, 58., colors.accent);
-    ui.add_space(18.);
-    ui.label(RichText::new("flowa").size(34.));
-    ui.add_space(24.);
+    icons::logo(ui, 64., colors.accent);
+    ui.add_space(space::LG);
+    ui.label(RichText::new("flowa").size(text::DISPLAY));
+    ui.add_space(space::XL);
 
     open_buttons(ui, width, colors, commands);
 
-    ui.add_space(14.);
-    ui.label(
-        RichText::new("or drop an image, video, or folder anywhere")
-            .size(13.)
-            .color(colors.muted),
-    );
+    ui.add_space(space::MD);
+    widgets::hint(ui, "or drop an image, video, or folder anywhere", colors);
 
     if !settings.recent.is_empty() {
         recent_paths(ui, width, settings, colors, commands);
@@ -433,9 +431,9 @@ fn recent_paths(
     colors: Colors,
     commands: &mut Vec<Command>,
 ) {
-    ui.add_space(30.);
-    ui.label(RichText::new("RECENT").size(11.).color(colors.muted));
-    ui.add_space(8.);
+    ui.add_space(space::XL);
+    widgets::caption(ui, "Recent", colors);
+    ui.add_space(space::SM);
 
     let mut open = None;
 

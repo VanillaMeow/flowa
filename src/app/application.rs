@@ -103,7 +103,6 @@ impl Flowa {
         gpu: String,
     ) -> Self {
         settings.filmstrip |= launch.filmstrip;
-        settings.info |= launch.info;
 
         let colors = current_colors(&settings, &ctx);
         theme::apply(&ctx, colors);
@@ -117,7 +116,7 @@ impl Flowa {
             browser: Browser::new(),
             image: ImageSession::new(),
             video: VideoSession::default(),
-            ui: ViewerUi::new(ctx.clone(), &settings, launch.preferences),
+            ui: ViewerUi::new(ctx.clone(), &settings, launch.preferences, launch.info),
             settings: SettingsStore::new(settings, config_path),
             scanner: FolderScanner::new(),
             loader,
@@ -291,6 +290,7 @@ impl Flowa {
             colors: self.colors,
             fullscreen: self.ui.fullscreen,
             preferences_open: self.ui.preferences.open,
+            inspector_open: self.ui.inspector,
             busy: self.busy.as_deref(),
             slideshow: self.slideshow.active,
         }
@@ -413,7 +413,7 @@ impl Flowa {
             self.handle_commands(std::mem::take(&mut commands), ctx);
         }
 
-        if self.settings.values.info {
+        if self.ui.inspector {
             ui::inspector::show(
                 ui,
                 self.browser.current(),
@@ -448,10 +448,6 @@ impl Flowa {
     }
 
     fn show_preferences(&mut self, ctx: &egui::Context) {
-        if !self.ui.preferences.open {
-            return;
-        }
-
         let previous = self.settings.values.clone();
         self.ui.preferences.show(
             ctx,

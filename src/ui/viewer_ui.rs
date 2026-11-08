@@ -18,6 +18,8 @@ pub(crate) struct ViewerUi {
     pub preferences: PreferencesWindow,
     pub dialogs: Dialogs,
     pub fullscreen: bool,
+    /// The file details panel starts closed each session unless requested at launch
+    pub inspector: bool,
 }
 
 impl ViewerUi {
@@ -25,6 +27,7 @@ impl ViewerUi {
         ctx: egui::Context,
         settings: &Settings,
         preferences_open: bool,
+        inspector: bool,
     ) -> Self {
         Self {
             canvas: ImageCanvas::new(ctx.clone(), settings.nearest),
@@ -33,6 +36,7 @@ impl ViewerUi {
             preferences: PreferencesWindow::new(preferences_open),
             dialogs: Dialogs::default(),
             fullscreen: false,
+            inspector,
         }
     }
 

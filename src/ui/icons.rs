@@ -2,7 +2,11 @@
 
 use egui::{Color32, Pos2, Response, Sense, Ui, Vec2, vec2};
 
-use super::{rendering::icon_cache, theme};
+use super::{
+    rendering::icon_cache,
+    style::{size, space},
+    theme,
+};
 
 pub const LICENSE: &str = include_str!("../../assets/icons/lucide/LICENSE");
 
@@ -28,6 +32,9 @@ pub enum Icon {
     Image,
     Check,
     Alert,
+    Heart,
+    /// The flower from the desktop icon, without its backdrop
+    Logo,
 }
 
 impl Icon {
@@ -55,14 +62,21 @@ impl Icon {
             Self::Image => include_str!("../../assets/icons/lucide/image.svg"),
             Self::Check => include_str!("../../assets/icons/lucide/check.svg"),
             Self::Alert => include_str!("../../assets/icons/lucide/circle-alert.svg"),
+            Self::Heart => include_str!("../../assets/icons/lucide/heart.svg"),
+            Self::Logo => include_str!("../../assets/flowa-mark.svg"),
         }
+    }
+
+    /// Outline icons drawn solid, keeping the vendored Lucide files unchanged
+    pub(crate) fn filled(self) -> bool {
+        matches!(self, Self::Heart)
     }
 }
 
 pub fn button(ui: &mut Ui, icon: Icon, label: &str, selected: bool) -> Response {
     let response = ui.add(
         egui::Button::new("")
-            .min_size(vec2(34.0, 34.0))
+            .min_size(Vec2::splat(size::CONTROL))
             .selected(selected),
     );
 
@@ -74,7 +88,7 @@ pub fn button(ui: &mut Ui, icon: Icon, label: &str, selected: bool) -> Response 
         ui.painter(),
         icon,
         response.rect.center(),
-        18.0,
+        size::ICON,
         if ui.is_enabled() {
             ui.visuals().text_color()
         } else {
@@ -85,22 +99,35 @@ pub fn button(ui: &mut Ui, icon: Icon, label: &str, selected: bool) -> Response 
     response.on_hover_text(label)
 }
 
-pub fn logo(ui: &mut Ui, size: f32, color: Color32) -> Response {
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
-    flower(ui.painter(), rect.center(), size * 0.43, color);
-    response
+/// A borderless icon button for secondary actions inside compact surfaces
+pub fn small_button(ui: &mut Ui, icon: Icon, label: &str) -> Response {
+    let side = size::SMALL_ICON + space::SM;
+    let response = ui.add(
+        egui::Button::new("")
+            .min_size(Vec2::splat(side))
+            .frame_when_inactive(false),
+    );
+
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label)
+    });
+
+    let color = ui.visuals().widgets.inactive.fg_stroke.color;
+    paint(
+        ui.painter(),
+        icon,
+        response.rect.center(),
+        size::SMALL_ICON,
+        color,
+    );
+
+    response.on_hover_text(label)
 }
 
-pub fn flower(painter: &egui::Painter, center: Pos2, radius: f32, color: Color32) {
-    for n in 0..6 {
-        let a = n as f32 * std::f32::consts::TAU / 6.0;
-        painter.circle_filled(
-            center + vec2(a.cos(), a.sin()) * radius * 0.56,
-            radius * 0.44,
-            color,
-        );
-    }
-    painter.circle_filled(center, radius * 0.28, color);
+pub fn logo(ui: &mut Ui, size: f32, color: Color32) -> Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
+    paint(ui.painter(), Icon::Logo, rect.center(), size, color);
+    response
 }
 
 pub fn paint(

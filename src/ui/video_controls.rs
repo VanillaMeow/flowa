@@ -9,12 +9,12 @@ use crate::{app::Command, utils::format::media_time, video::VideoState};
 use super::{
     actions,
     icons::{self, Icon},
+    style::{margin, size, space},
     theme::Colors,
 };
 
-const CONTROL_SIZE: f32 = 34.;
 const TIMELINE_HEIGHT: f32 = 22.;
-const ROW_SPACING: f32 = 4.;
+const ROW_SPACING: f32 = space::XS;
 const INLINE_VOLUME_WIDTH: f32 = 104.;
 const INLINE_VOLUME_BREAKPOINT: f32 = 420.;
 const SEEK_ACKNOWLEDGEMENT_TIMEOUT: Duration = Duration::from_secs(1);
@@ -65,8 +65,8 @@ impl VideoControls {
 
         let frame = egui::Frame::new()
             .fill(colors.panel)
-            .inner_margin(egui::Margin::symmetric(18, 10));
-        let transport_height = root.spacing().interact_size.y.max(CONTROL_SIZE);
+            .inner_margin(margin::BOTTOM_PANEL);
+        let transport_height = root.spacing().interact_size.y.max(size::CONTROL);
         let timeline_height = root
             .text_style_height(&egui::TextStyle::Body)
             .max(TIMELINE_HEIGHT);
@@ -104,7 +104,7 @@ impl VideoControls {
         compact: bool,
         commands: &mut Vec<Command>,
     ) {
-        ui.spacing_mut().item_spacing = vec2(12., ROW_SPACING);
+        ui.spacing_mut().item_spacing = vec2(space::MD, ROW_SPACING);
         ui.spacing_mut().slider_rail_height = 3.;
 
         if compact {
@@ -201,15 +201,15 @@ impl VideoControls {
 
         let volume_menu = ui.available_width() < 640.;
         let volume_width = if volume_menu {
-            CONTROL_SIZE
+            size::CONTROL
         } else {
-            CONTROL_SIZE + INLINE_VOLUME_WIDTH + ui.spacing().item_spacing.x
+            size::CONTROL + INLINE_VOLUME_WIDTH + ui.spacing().item_spacing.x
         };
         let timeline_width =
             ui.available_width() - volume_width - ui.spacing().item_spacing.x;
 
         ui.allocate_ui_with_layout(
-            vec2(timeline_width, CONTROL_SIZE),
+            vec2(timeline_width, size::CONTROL),
             Layout::left_to_right(Align::Center),
             |ui| self.timeline(ui, state, colors, commands),
         );
@@ -247,9 +247,9 @@ impl VideoControls {
         }
 
         // The nested group keeps the volume slider natural in the trailing controls
-        let width = CONTROL_SIZE + INLINE_VOLUME_WIDTH + ui.spacing().item_spacing.x;
+        let width = size::CONTROL + INLINE_VOLUME_WIDTH + ui.spacing().item_spacing.x;
         ui.allocate_ui_with_layout(
-            vec2(width, CONTROL_SIZE),
+            vec2(width, size::CONTROL),
             Layout::left_to_right(Align::Center),
             |ui| {
                 self.mute_button(ui, state, commands);
@@ -264,7 +264,7 @@ impl VideoControls {
         state: &VideoState,
         commands: &mut Vec<Command>,
     ) {
-        let button = egui::Button::new("").min_size(vec2(CONTROL_SIZE, CONTROL_SIZE));
+        let button = egui::Button::new("").min_size(vec2(size::CONTROL, size::CONTROL));
         let (response, _) =
             egui::containers::menu::MenuButton::from_button(button).ui(ui, |ui| {
                 ui.label(format!("Volume · {:.0}%", state.volume));
@@ -361,7 +361,7 @@ fn paint_button_icon(ui: &egui::Ui, response: &Response, icon: Icon) {
         ui.painter(),
         icon,
         response.rect.center(),
-        18.,
+        size::ICON,
         ui.visuals().text_color(),
     );
 }

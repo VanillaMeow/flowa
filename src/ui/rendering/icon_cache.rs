@@ -137,7 +137,12 @@ fn texture(ctx: &egui::Context, key: CacheKey) -> CachedTexture {
 }
 
 fn rasterize(icon: Icon, pixels: u32) -> Result<ColorImage> {
-    let svg = icon.svg().replace("currentColor", "#ffffff");
+    let mut svg = icon.svg().replace("currentColor", "#ffffff");
+
+    if icon.filled() {
+        svg = svg.replace(r#"fill="none""#, r##"fill="#ffffff""##);
+    }
+
     let tree = resvg::usvg::Tree::from_str(&svg, &resvg::usvg::Options::default())
         .context("Invalid embedded Lucide SVG")?;
     let mut pixmap = resvg::tiny_skia::Pixmap::new(pixels, pixels)

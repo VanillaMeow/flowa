@@ -1,6 +1,6 @@
 //! Viewer menus, toolbar controls, and the status bar
 
-use egui::RichText;
+use egui::{RichText, Vec2};
 use strum::VariantArray;
 
 use crate::{
@@ -15,8 +15,12 @@ use super::{
     actions,
     canvas::ImageCanvas,
     icons::{self, Icon},
+    style::{margin, size, space, text},
     theme::Colors,
 };
+
+/// The flower fills most of its button, like an app icon
+const MENU_LOGO_SIZE: f32 = 24.;
 
 pub(crate) struct ToolbarState<'a> {
     pub browser: &'a Browser,
@@ -27,6 +31,7 @@ pub(crate) struct ToolbarState<'a> {
     pub colors: Colors,
     pub fullscreen: bool,
     pub preferences_open: bool,
+    pub inspector_open: bool,
     pub busy: Option<&'a str>,
     pub slideshow: bool,
 }
@@ -38,10 +43,10 @@ pub(crate) fn show(
 ) {
     let frame = egui::Frame::new()
         .fill(state.colors.panel)
-        .inner_margin(egui::Margin::symmetric(14, 9));
+        .inner_margin(margin::TOOLBAR);
 
     egui::Panel::top("toolbar")
-        .exact_size(58.)
+        .exact_size(size::TOOLBAR)
         .frame(frame)
         .show(root, |ui| toolbar_row(ui, state, commands));
 }
@@ -62,12 +67,10 @@ fn toolbar_contents(
     let ctx = ui.ctx().clone();
     let compact = ui.available_width() < 600.;
 
-    icons::logo(ui, 26., state.colors.accent);
-    ui.add_space(4.);
-    ui.menu_button("File", |ui| file_menu(ui, state, commands));
+    app_menu(ui, state, commands);
 
-    if actions::OPEN_FILE.button(ui, Icon::Open, false).clicked() {
-        commands.push(Command::OpenFile);
+    if actions::OPEN_FOLDER.button(ui, Icon::Open, false).clicked() {
+        commands.push(actions::OPEN_FOLDER.command.clone());
     }
 
     ui.separator();
@@ -109,7 +112,7 @@ fn compact_view_menu(
 
     for (action, selected) in [
         (&actions::FILMSTRIP, state.settings.filmstrip),
-        (&actions::INSPECTOR, state.settings.info),
+        (&actions::INSPECTOR, state.inspector_open),
         (&actions::FULLSCREEN, state.fullscreen),
     ] {
         action.menu_label(ui, action.label, true, selected, commands);
@@ -157,13 +160,32 @@ fn image_title(ui: &mut egui::Ui, state: &ToolbarState<'_>) {
     let entry = state.browser.current();
     let title = entry.map(|entry| entry.name.as_str()).unwrap_or("");
     let width = (ui.available_width() - 480.).clamp(40., 260.);
-    let label = egui::Label::new(RichText::new(title).size(15.)).truncate();
+    let label = egui::Label::new(RichText::new(title).size(text::BUTTON)).truncate();
 
-    let response = ui.add_sized([width, 34.], label);
+    let response = ui.add_sized([width, size::CONTROL], label);
 
     if let Some(entry) = entry {
         response.on_hover_text(entry.path.display().to_string());
     }
+}
+
+/// The logo button opens the file menu, where the File label used to be
+fn app_menu(ui: &mut egui::Ui, state: &ToolbarState<'_>, commands: &mut Vec<Command>) {
+    let button = egui::Button::new("").min_size(Vec2::splat(size::CONTROL));
+    let (response, _) = egui::containers::menu::MenuButton::from_button(button)
+        .ui(ui, |ui| file_menu(ui, state, commands));
+
+    icons::paint(
+        ui.painter(),
+        Icon::Logo,
+        response.rect.center(),
+        MENU_LOGO_SIZE,
+        state.colors.accent,
+    );
+
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Menu"));
+    response.on_hover_text("Menu");
 }
 
 fn file_menu(ui: &mut egui::Ui, state: &ToolbarState<'_>, commands: &mut Vec<Command>) {
@@ -207,7 +229,7 @@ fn window_buttons(
             Icon::Settings,
             state.preferences_open,
         ),
-        (&actions::INSPECTOR, Icon::Info, state.settings.info),
+        (&actions::INSPECTOR, Icon::Info, state.inspector_open),
         (
             &actions::FILMSTRIP,
             Icon::Filmstrip,
@@ -277,7 +299,7 @@ fn view_buttons(
     if ui
         .add_sized(
             [62., 32.],
-            egui::Button::new(RichText::new(percentage).size(13.)).frame(false),
+            egui::Button::new(RichText::new(percentage).size(text::LABEL)).frame(false),
         )
         .on_hover_text("Click for actual pixels")
         .clicked()
@@ -297,10 +319,10 @@ pub(crate) fn status(root: &mut egui::Ui, state: &ToolbarState<'_>) {
 
     let frame = egui::Frame::new()
         .fill(state.colors.panel)
-        .inner_margin(egui::Margin::symmetric(18, 4));
+        .inner_margin(margin::STATUS_BAR);
 
     egui::Panel::bottom("status")
-        .exact_size(32.)
+        .exact_size(size::STATUS_BAR)
         .frame(frame)
         .show(root, |ui| status_row(ui, state));
 }
@@ -350,19 +372,19 @@ fn navigation_status(ui: &mut egui::Ui, state: &ToolbarState<'_>) {
     }
 
     if let Some(busy) = state.busy {
-        ui.add(egui::Spinner::new().size(16.));
+        ui.add(egui::Spinner::new().size(space::LG));
         status_label(ui, busy, state.colors);
     } else if state.slideshow {
         ui.label(
             RichText::new("Slideshow")
-                .size(12.)
+                .size(text::SMALL)
                 .color(state.colors.accent),
         );
     }
 }
 
-fn status_label(ui: &mut egui::Ui, text: &str, colors: Colors) {
-    ui.label(RichText::new(text).size(12.).color(colors.muted));
+fn status_label(ui: &mut egui::Ui, label: &str, colors: Colors) {
+    ui.label(RichText::new(label).size(text::SMALL).color(colors.muted));
 }
 
 pub(crate) fn context_menu(

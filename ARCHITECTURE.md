@@ -8,7 +8,7 @@ Flowa is one Rust crate. `src/main.rs` handles the native entry point, codec reg
 | --- | --- | --- |
 | `app/` | Application construction and coordination | `application.rs`, `native.rs`, `command.rs`, `command_handler.rs`, `worker_results.rs`, `launch.rs` |
 | `viewer/` | Viewing state and rules | `browser.rs`, `catalog.rs`, `image_session.rs`, `playback.rs`, `transform.rs` |
-| `ui/` | Egui components, styling, input, and drawing | `viewer_ui.rs`, `canvas.rs`, `filmstrip.rs`, `toolbar.rs`, `inspector.rs`, `dialogs.rs`, `preferences.rs`, `keyboard.rs`, `theme.rs`, `icons.rs` |
+| `ui/` | Egui components, styling, input, and drawing | `viewer_ui.rs`, `canvas.rs`, `filmstrip.rs`, `toolbar.rs`, `inspector.rs`, `dialogs.rs`, `preferences.rs`, `keyboard.rs`, `theme.rs`, `style.rs`, `widgets.rs`, `icons.rs` |
 | `ui/rendering/` | GPU textures and drawing geometry | `image_renderer.rs`, `icon_cache.rs`, `geometry.rs` |
 | `services/` | Filesystem access, codecs, desktop integration, and background workers | `folder_scan.rs`, `image_decode.rs`, `image_loader/mod.rs`, `image_workers.rs`, `file_actions.rs` |
 | `video/` | FFmpeg media ownership, playback workers, and native GPU presentation | `media/`, `player/`, `gpu.rs`, `native.rs`, `thumbnail.rs` |
@@ -23,7 +23,7 @@ Launch options remain owned by startup until the graphics context is ready, so a
 
 `viewer/browser.rs` owns catalog entries, selection, sorting, and scan generations. It receives catalog data from the application; filesystem inspection and background scans run in `services/folder_scan.rs`. `viewer/image_session.rs` defines decoded image data and owns load generations, loading/errors, and the current image. `viewer/playback.rs` owns animation and slideshow clocks. Playback returns repaint delays to the application and does not schedule UI work itself. `viewer/transform.rs` contains reversible image-to-screen transforms.
 
-`settings/model.rs` defines settings, appearance choices, defaults, and validation. `settings/store.rs` handles configuration paths, loading, saving, and change tracking. Color mapping and egui styling live in `ui/theme.rs`.
+`settings/model.rs` defines settings, appearance choices, defaults, and validation. `settings/store.rs` handles configuration paths, loading, saving, and change tracking. Color mapping and egui styling live in `ui/theme.rs`. `ui/style.rs` names the shared spacing, margins, radii, sizes, text sizes, and animation timing, and `ui/widgets.rs` holds the section cards, captions, hints, segmented controls, and fade-out helper built from them. Components use these instead of literal numbers.
 
 `utils/format.rs` formats file sizes for the toolbar and inspector. `utils/filename.rs` validates portable filenames for both the rename dialog and file-action service. Image transforms stay in the viewer, and texture-quad drawing stays in `ui/rendering/geometry.rs`.
 
@@ -39,7 +39,7 @@ Launch options remain owned by startup until the graphics context is ready, so a
 | `PreferencesWindow` in `ui/preferences.rs` | Open state, selected tab, and editing settings |
 | `Dialogs` in `ui/dialogs.rs` | Rename/trash confirmations and temporary notices |
 
-Toolbar, status, context-menu, and inspector rendering remain functions with explicit inputs. They have no persistent application-owned state of their own. `ui/keyboard.rs` translates key events into commands.
+Toolbar, status, context-menu, and inspector rendering remain functions with explicit inputs. They have no persistent application-owned state of their own. Whether the inspector is open lives in `ViewerUi` and is not saved, so each session starts with it closed unless `--info` is passed. `ui/keyboard.rs` translates key events into commands.
 
 Components collect commands in a local vector; `Flowa` applies them after each panel releases its borrows, before drawing dependent panels. Navigation, sorting, view commands, file operations, and window toggles use the same handlers regardless of their input source. Continuous canvas dragging and pointer zoom update the canvas's own view directly.
 
@@ -47,7 +47,7 @@ Rename/trash confirmations carry the path captured when the dialog opened. The c
 
 ## Control icons
 
-`ui/icons.rs` maps semantic control names to bundled [Lucide SVGs](assets/icons/lucide/README.md), retaining the button, tooltip, and accessibility helpers. The Flowa flower logo remains its own vector artwork. `ui/rendering/icon_cache.rs` rasterizes SVGs with the existing resvg dependency and stores the resulting textures in egui's context-owned cache.
+`ui/icons.rs` maps semantic control names to bundled [Lucide SVGs](assets/icons/lucide/README.md), retaining the button, tooltip, and accessibility helpers. The Flowa flower logo remains its own vector artwork: `assets/flowa.svg` is the desktop icon, and `assets/flowa-mark.svg` is the same flower without its backdrop, rendered through the icon cache so its center stays transparent. `ui/rendering/icon_cache.rs` rasterizes SVGs with the existing resvg dependency and stores the resulting textures in egui's context-owned cache.
 
 Icon textures are keyed by glyph and physical pixel size. Monochrome SVGs become white premultiplied-alpha masks; the painter applies the current text, accent, or disabled color without rerasterizing. Bitmap rectangles align to device pixels. Cache lookup/insertion happens under egui's memory lock, while rasterization and texture upload happen after that lock is released.
 

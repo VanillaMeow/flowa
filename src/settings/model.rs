@@ -63,6 +63,8 @@ pub enum Theme {
 pub enum Accent {
     #[default]
     Theme,
+    /// The magenta of the Sweet theme
+    Sweet,
     Violet,
     Iris,
     Blue,
@@ -185,7 +187,6 @@ pub struct Settings {
 
     pub filmstrip: bool,
     pub compact_video_controls: bool,
-    pub info: bool,
     pub ui_scale: f32,
     pub fit_small: bool,
     pub remember_view: bool,
@@ -219,7 +220,6 @@ impl Default for Settings {
             checker_contrast: 0.09,
             filmstrip: false,
             compact_video_controls: true,
-            info: false,
             ui_scale: 1.0,
             fit_small: false,
             remember_view: false,

@@ -131,9 +131,7 @@ impl Flowa {
                 self.settings.values.filmstrip = !self.settings.values.filmstrip;
                 self.ui.filmstrip.reveal_selection();
             }
-            Command::ToggleInspector => {
-                self.settings.values.info = !self.settings.values.info
-            }
+            Command::ToggleInspector => self.ui.inspector = !self.ui.inspector,
 
             Command::TogglePreferences => {
                 self.ui.preferences.open = !self.ui.preferences.open

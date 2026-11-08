@@ -1,7 +1,5 @@
 //! File properties and photographic metadata
 
-use egui::RichText;
-
 use crate::{
     app::Command,
     utils::format,
@@ -12,7 +10,9 @@ use crate::{
 use super::{
     actions,
     icons::{self, Icon},
+    style::{margin, space},
     theme::Colors,
+    widgets,
 };
 
 pub(crate) fn show(
@@ -26,10 +26,14 @@ pub(crate) fn show(
     egui::Panel::right("inspector")
         .default_size(280.)
         .size_range(230.0..=420.0)
-        .frame(egui::Frame::new().fill(colors.panel).inner_margin(20))
+        .frame(
+            egui::Frame::new()
+                .fill(colors.panel)
+                .inner_margin(margin::SIDE_PANEL),
+        )
         .show(root, |ui| {
             header(ui, commands);
-            ui.add_space(18.);
+            ui.add_space(space::LG);
 
             egui::ScrollArea::vertical().show(ui, |ui| {
                 details(ui, entry, decoded, video, colors, commands);
@@ -69,7 +73,7 @@ fn details(
         video_details(ui, video, colors);
     }
 
-    ui.add_space(10.);
+    ui.add_space(space::SM);
 
     if entry.is_some() {
         file_actions(ui, commands);
@@ -184,7 +188,7 @@ fn file_actions(ui: &mut egui::Ui, commands: &mut Vec<Command>) {
 }
 
 fn detail(ui: &mut egui::Ui, label: &str, value: &str, colors: Colors) {
-    ui.label(RichText::new(label).size(11.).color(colors.muted));
+    widgets::caption(ui, label, colors);
     ui.add(egui::Label::new(value).wrap());
-    ui.add_space(15.);
+    ui.add_space(space::MD);
 }

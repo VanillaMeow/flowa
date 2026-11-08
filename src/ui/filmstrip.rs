@@ -19,6 +19,7 @@ use crate::{
 
 use super::{
     icons::{self, Icon},
+    style::{margin, radius, text},
     theme::Colors,
 };
 
@@ -27,6 +28,8 @@ const MAX_CACHED_THUMBNAILS: usize = 128;
 const ITEM_STRIDE: f32 = 116.;
 const ITEM_WIDTH: f32 = 108.;
 const ITEM_HEIGHT: f32 = 86.;
+/// Items, panel margins, and room for the horizontal scroll bar
+const STRIP_HEIGHT: f32 = 116.;
 
 pub(crate) struct Filmstrip {
     worker: ThumbnailWorker,
@@ -122,10 +125,10 @@ impl Filmstrip {
 
         let frame = egui::Frame::new()
             .fill(colors.panel)
-            .inner_margin(egui::Margin::symmetric(14, 10));
+            .inner_margin(margin::BOTTOM_PANEL);
 
         egui::Panel::bottom("filmstrip")
-            .exact_size(116.)
+            .exact_size(STRIP_HEIGHT)
             .frame(frame)
             .show(root, |ui| {
                 self.show_scroll_area(ui, browser, colors, commands)
@@ -212,7 +215,7 @@ impl Filmstrip {
         } else {
             colors.canvas
         };
-        ui.painter().rect_filled(rect, 7., background);
+        ui.painter().rect_filled(rect, radius::CONTROL, background);
 
         self.paint_thumbnail(ui.painter(), &entry.path, rect, colors);
         paint_caption(ui, &entry.name, rect, selected, colors);
@@ -290,7 +293,8 @@ fn paint_caption(
         rect.max - vec2(5., 1.),
     );
     let color = if selected { colors.text } else { colors.muted };
-    let text = egui::WidgetText::from(RichText::new(name).size(11.).color(color));
+    let text =
+        egui::WidgetText::from(RichText::new(name).size(text::CAPTION).color(color));
     let galley = text.into_galley(
         ui,
         Some(egui::TextWrapMode::Truncate),
@@ -321,7 +325,7 @@ fn paint_outline(
 
     painter.rect_stroke(
         response.rect,
-        7.,
+        radius::CONTROL,
         Stroke::new(width, color),
         egui::StrokeKind::Inside,
     );

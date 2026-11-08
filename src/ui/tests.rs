@@ -354,6 +354,7 @@ mod toolbar {
             colors,
             fullscreen: false,
             preferences_open: false,
+            inspector_open: false,
             busy: None,
             slideshow: false,
         };
