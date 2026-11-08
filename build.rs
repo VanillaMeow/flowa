@@ -1,10 +1,10 @@
-//! Generates FFmpeg bindings and links system or portable media dependencies
+//! Generates FFmpeg bindings and links bundled, system, or portable media dependencies
 
 use std::{
     env,
     error::Error,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
 };
 
 const MEDIA_LIBRARIES: &[(&str, &str)] = &[
@@ -60,6 +60,26 @@ fn main() -> Result<(), Box<dyn Error>> {
         );
     }
 
+    // Portable builds bring their own static FFmpeg, and other platforms use their SDK
+    let ffmpeg_prefix = if env::var_os("CARGO_FEATURE_BUNDLED_FFMPEG").is_some()
+        && target_os == "linux"
+        && !static_media
+    {
+        Some(build_bundled_ffmpeg()?)
+    } else {
+        None
+    };
+
+    // The bundled FFmpeg takes precedence; its dependencies come from the system
+    if let Some(prefix) = &ffmpeg_prefix {
+        let mut search_paths = vec![prefix.join("lib/pkgconfig")];
+        let existing = env::var_os("PKG_CONFIG_PATH");
+        search_paths.extend(existing.iter().flat_map(env::split_paths));
+
+        // SAFETY: The build script has not started any other threads
+        unsafe { env::set_var("PKG_CONFIG_PATH", env::join_paths(search_paths)?) };
+    }
+
     let mut compiler = cc::Build::new();
     compiler.std("c11").pic(true);
 
@@ -74,11 +94,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         .flag_if_supported("-Wno-unused-parameter");
 
     let mut libraries = Vec::new();
+    let mut bundled = Vec::new();
     for &(name, version) in MEDIA_LIBRARIES {
+        let from_bundle = ffmpeg_prefix.is_some() && is_ffmpeg(name);
         let library = pkg_config::Config::new()
             .atleast_version(version)
-            .statik(static_media)
-            .cargo_metadata(!static_media)
+            .statik(static_media || from_bundle)
+            .cargo_metadata(!static_media && !from_bundle)
             .probe(name)
             .map_err(|error| {
                 format!(
@@ -90,6 +112,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         compiler.includes(&library.include_paths);
         for (name, value) in &library.defines {
             compiler.define(name, value.as_deref());
+        }
+
+        if from_bundle {
+            bundled.push(library.clone());
         }
         libraries.push(library);
     }
@@ -114,7 +140,65 @@ fn main() -> Result<(), Box<dyn Error>> {
         link_static_media(&libraries);
     }
 
+    if let Some(prefix) = &ffmpeg_prefix {
+        link_bundled_ffmpeg(&bundled, &prefix.join("lib"));
+    }
+
     Ok(())
+}
+
+fn is_ffmpeg(library: &str) -> bool {
+    library.starts_with("libav") || library.starts_with("libsw")
+}
+
+/// Builds the patched static FFmpeg on first use and returns its install prefix
+fn build_bundled_ffmpeg() -> Result<PathBuf, Box<dyn Error>> {
+    let script = "tools/bundled-ffmpeg.sh";
+
+    for path in [
+        script,
+        "tools/portable/dependencies.sh",
+        "tools/portable/ffmpeg-vulkan-frames.patch",
+    ] {
+        println!("cargo:rerun-if-changed={path}");
+    }
+
+    let output = Command::new("bash")
+        .arg(script)
+        .current_dir(env::var("CARGO_MANIFEST_DIR")?)
+        .stderr(Stdio::inherit())
+        .output()?;
+
+    if !output.status.success() {
+        return Err("Building the bundled FFmpeg failed; its log is above".into());
+    }
+
+    Ok(PathBuf::from(String::from_utf8(output.stdout)?.trim()))
+}
+
+/// Links the bundled FFmpeg archives and, dynamically, the system libraries they use
+fn link_bundled_ffmpeg(libraries: &[pkg_config::Library], archive_dir: &Path) {
+    // A group resolves references between the archives regardless of their order
+    println!("cargo:rustc-link-arg=-Wl,--start-group");
+
+    for library in libraries {
+        for name in &library.libs {
+            let archive = archive_dir.join(format!("lib{name}.a"));
+
+            if archive.is_file() {
+                println!("cargo:rerun-if-changed={}", archive.display());
+                println!("cargo:rustc-link-arg={}", archive.display());
+            } else {
+                println!("cargo:rustc-link-arg=-l{name}");
+            }
+        }
+
+        for arguments in &library.ld_args {
+            println!("cargo:rustc-link-arg=-Wl,{}", arguments.join(","));
+        }
+    }
+
+    println!("cargo:rustc-link-arg=-Wl,--end-group");
 }
 
 /// Common bindgen settings with the include paths and defines of every media library

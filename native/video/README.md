@@ -47,10 +47,14 @@ and scales it to fit 192×128. It gives up after three seconds, 512 packets, or
 ## FFmpeg patch
 
 FFmpeg 9.0 creates Vulkan decode images with flags some drivers don't support,
-which fails validation and can break Vulkan Video decoding. Portable builds apply
-[`ffmpeg-vulkan-frames.patch`](../../tools/portable/ffmpeg-vulkan-frames.patch),
-which limits those flags to what the video profile supports and fixes decoder
-synchronization. Builds against system FFmpeg need an equivalent fix to use
+which fails validation and can break Vulkan Video decoding.
+[`ffmpeg-vulkan-frames.patch`](../../tools/portable/ffmpeg-vulkan-frames.patch)
+limits those flags to what the video profile supports and fixes decoder
+synchronization.
+
+Local builds link a static FFmpeg with this patch, built by
+[`tools/bundled-ffmpeg.sh`](../../tools/bundled-ffmpeg.sh) using the same recipe as
+portable builds. Builds against system FFmpeg need an equivalent fix to use
 Vulkan Video on affected drivers.
 
 ## Testing

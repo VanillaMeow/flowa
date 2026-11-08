@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pinned static dependencies for the portable build
+# Pinned static dependencies for the portable build and the bundled FFmpeg of local builds
 
 fetch_source() {
     local name=$1 url=$2 checksum=$3
@@ -127,12 +127,7 @@ build_media() {
     fetch_source libplacebo \
         https://codeload.github.com/haasn/libplacebo/tar.gz/refs/tags/v7.360.1 \
         d05fdf90bea2f629eaa2d115e909fd356388ac639e54f77b87a018a6d76224bd
-    # Keep NVDEC compatible with the validated NVIDIA 580 and CUDA 13.0 driver
-    fetch_source ffmpeg \
-        https://ffmpeg.org/releases/ffmpeg-9.0.tar.xz \
-        7f607a00dd0d28a729d5a4811205812eef01cf6ef6155025febb6f36a9062d52 \
-        "$project_dir/tools/portable/ffmpeg-vulkan-frames.patch"
-
+    fetch_ffmpeg
 
     if [[ ! -f $build_dir/media-complete ]]; then
         cmake_library vulkan-headers -DVULKAN_HEADERS_ENABLE_TESTS=OFF
@@ -170,20 +165,34 @@ EOF
         touch "$build_dir/media-complete"
     fi
 
-    if [[ ! -f $build_dir/ffmpeg-complete ]]; then
-        mkdir -p "$build_dir/build/ffmpeg"
-        (cd "$build_dir/build/ffmpeg"
-            "$build_dir/sources/ffmpeg/configure" --prefix="$prefix" \
-                --disable-shared --enable-static --enable-pic --disable-autodetect \
-                --disable-programs --disable-doc --disable-debug --disable-avdevice \
-                --disable-encoders --disable-muxers --disable-network \
-                --enable-protocol=file,pipe --enable-libdav1d --enable-libdrm \
-                --enable-vaapi --enable-vulkan --enable-ffnvcodec --enable-cuda \
-                --enable-cuvid --enable-nvdec --pkg-config-flags=--static \
-                --extra-cflags="$CFLAGS $CPPFLAGS" --extra-ldflags="$LDFLAGS"
-            make -j "$jobs"
-            make install)
-        touch "$build_dir/ffmpeg-complete"
+    build_ffmpeg
+}
+
+fetch_ffmpeg() {
+    # Keep NVDEC compatible with the validated NVIDIA 580 and CUDA 13.0 driver
+    fetch_source ffmpeg \
+        https://ffmpeg.org/releases/ffmpeg-9.0.tar.xz \
+        7f607a00dd0d28a729d5a4811205812eef01cf6ef6155025febb6f36a9062d52 \
+        "$project_dir/tools/portable/ffmpeg-vulkan-frames.patch"
+}
+
+# Static FFmpeg with every decoder and demuxer, but no encoders, muxers, or network
+build_ffmpeg() {
+    if [[ -f $build_dir/ffmpeg-complete ]]; then
+        return
     fi
 
+    mkdir -p "$build_dir/build/ffmpeg"
+    (cd "$build_dir/build/ffmpeg"
+        "$build_dir/sources/ffmpeg/configure" --prefix="$prefix" \
+            --disable-shared --enable-static --enable-pic --disable-autodetect \
+            --disable-programs --disable-doc --disable-debug --disable-avdevice \
+            --disable-encoders --disable-muxers --disable-network \
+            --enable-protocol=file,pipe --enable-libdav1d --enable-libdrm \
+            --enable-vaapi --enable-vulkan --enable-ffnvcodec --enable-cuda \
+            --enable-cuvid --enable-nvdec --pkg-config-flags=--static \
+            --extra-cflags="$CFLAGS ${CPPFLAGS:-}" --extra-ldflags="${LDFLAGS:-}"
+        make -j "$jobs"
+        make install)
+    touch "$build_dir/ffmpeg-complete"
 }

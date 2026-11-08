@@ -5,15 +5,17 @@ Run `just` to list every command.
 ## Requirements
 
 Rust 1.99+, Just, a C compiler, pkg-config, and Clang. For video, AVIF, and HEIC
-you also need FFmpeg 9+, libplacebo 7.360+, SDL3, Vulkan headers, dav1d, and
-libheif 1.17+ with an HEVC decoder.
+you also need libplacebo 7.360+, SDL3, Vulkan headers, dav1d, libva, libdrm, NASM,
+and libheif 1.17+ with an HEVC decoder.
 
 On Arch Linux:
 
 ```sh
-sudo pacman -S --needed rust just base-devel pkgconf clang cmake wayland \
-    libxkbcommon dav1d libheif ffmpeg libplacebo sdl3 vulkan-headers
+sudo pacman -S --needed rust just base-devel pkgconf clang cmake nasm wayland \
+    libxkbcommon dav1d libheif libva libdrm libplacebo sdl3 vulkan-headers
 ```
+
+The video tests also use the `ffmpeg` command to create sample clips.
 
 ## Build and install
 
@@ -38,6 +40,19 @@ To build without video, AVIF, or HEIC, which needs none of the media libraries:
 cargo build --release --no-default-features
 ```
 
+## FFmpeg
+
+The first build compiles its own static FFmpeg 9.0, which takes a few minutes.
+It's cached in `.cache/ffmpeg` and shared by every build type. It includes a fix
+for Vulkan Video decoding, and flowa starts faster than with the system's
+FFmpeg, which loads around a hundred extra libraries.
+
+To link the system's FFmpeg 9+ instead:
+
+```sh
+cargo build --release --no-default-features --features avif,heif,video
+```
+
 ## Portable builds
 
 Portable builds need only Just and Podman (or Docker, with
@@ -51,9 +66,6 @@ system packages is awkward.
 
 Builds use every CPU core. Set `CARGO_BUILD_JOBS` to use fewer if the machine runs
 out of memory. Downloaded sources are cached in `.cache/portable-deps`.
-
-The portable build patches FFmpeg to fix Vulkan Video decoding. See the
-[video backend notes](native/video/README.md) for details.
 
 ## Windows
 

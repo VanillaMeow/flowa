@@ -25,6 +25,7 @@ rustc-ice-*.txt
 
 ### Project specific
 .cache/portable-deps
+.cache/ffmpeg
 artifacts
 *.log
 _dev
