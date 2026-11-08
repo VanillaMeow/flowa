@@ -56,7 +56,8 @@ mkdir -p "$CARGO_TARGET_DIR"
 CARGO_TARGET_DIR=$(cd "$CARGO_TARGET_DIR" && pwd)
 export CARGO_TARGET_DIR
 
-jobs=${CARGO_BUILD_JOBS:-2}
+# Use every core unless CARGO_BUILD_JOBS limits Cargo and the media builds alike
+jobs=${CARGO_BUILD_JOBS:-$(nproc)}
 build_dir="$project_dir/.cache/portable-deps/$build_key"
 download_dir="$project_dir/.cache/portable-deps/downloads"
 prefix="$build_dir/prefix"

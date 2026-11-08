@@ -92,8 +92,8 @@ glibc 2.39+, a Vulkan loader, GPU drivers, and a host audio backend. Video decod
 prefers compatible hardware and falls back to CPU decoding. Rendering still
 requires Vulkan, including when decoding on the CPU.
 
-Sources are checksum-verified and cached in `.cache/portable-deps`. Builds use two
-jobs by default; override with `CARGO_BUILD_JOBS`. `just portable` uses the generic
+Sources are checksum-verified and cached in `.cache/portable-deps`. Builds use every
+CPU core; set `CARGO_BUILD_JOBS` to limit them on machines with little memory. `just portable` uses the generic
 x86-64 CPU baseline. `CONTAINER_ENGINE=docker` selects Docker explicitly.
 
 `just portable-native` builds the same self-contained executable tuned for the

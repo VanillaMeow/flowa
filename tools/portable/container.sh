@@ -26,13 +26,18 @@ fi
 "$engine" build --target builder -t flowa-portable-builder \
     -f tools/portable/Containerfile tools
 
+# Cargo and the media builds use every core unless the caller sets a limit
+job_flags=()
+if [[ -n ${CARGO_BUILD_JOBS:-} ]]; then
+    job_flags=(-e CARGO_BUILD_JOBS="$CARGO_BUILD_JOBS")
+fi
+
 user_flags=(--user "$(id -u):$(id -g)")
 if [[ ${engine##*/} == podman ]]; then
     user_flags=(--userns=keep-id)
 fi
 
-"$engine" run --rm "${user_flags[@]}" \
+"$engine" run --rm "${user_flags[@]}" "${job_flags[@]}" \
     -e CARGO_HOME=/work/target/portable-cargo \
-    -e CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" \
     -e FLOWA_PORTABLE_CPU="${FLOWA_PORTABLE_CPU:-generic}" \
     -v "$project_dir:/work:Z" flowa-portable-builder
