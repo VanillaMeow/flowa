@@ -24,11 +24,17 @@ just build
 ```
 
 Cargo generates FFmpeg bindings from the installed SDK and compiles the C GPU
-shim automatically. Local builds use system media libraries. For CPU-specific optimization:
+shim automatically. Local builds use system media libraries and are optimized for
+this computer's CPU. To share a build with other machines that have the same
+system libraries, build without CPU-specific instructions instead:
 
 ```sh
-RUSTFLAGS="-C target-cpu=native" just build
+just build-generic
+./target/generic/flowa /path/to/file
 ```
+
+Each flavor uses its own Cargo profile and output folder, so switching between
+them does not rebuild the other.
 
 `just run /path/to/file` builds and runs a debug version. Plain Cargo commands work
 as well. To build without video, AVIF, or HEIF:
@@ -124,5 +130,8 @@ See [video validation](native/video/README.md#validation) for hardware tests.
 
 ## Install on Linux
 
-`just install` builds and installs under `~/.local`, including the desktop entry
-and icon. `just uninstall` removes the installation and preserves preferences.
+`just install` builds for this computer and installs under `~/.local`, including
+the desktop entry and icon. `just install-generic` installs the generic build
+instead, and `just install-portable` installs the last `just portable` build
+without rebuilding it. `just uninstall` removes the installation and preserves
+preferences.

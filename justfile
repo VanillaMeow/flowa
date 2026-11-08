@@ -1,15 +1,23 @@
 set positional-arguments
 
 formatter := env("UNCRUSTIFY", "uncrustify")
+target_dir := env("CARGO_TARGET_DIR", "target")
+
+# Each build flavor has its own Cargo profile, so switching flavors never rebuilds another
+native_flags := "-C target-cpu=native"
 
 # List project commands
 [private]
 default:
     @just --list
 
-# Build a local release with video and installed media libraries
+# Build a release for this computer's CPU with video and installed media libraries
 build *args:
-    cargo build --locked --release "$@"
+    RUSTFLAGS="${RUSTFLAGS:-} {{ native_flags }}" cargo build --locked --release "$@"
+
+# Build a release without CPU-specific instructions, for machines with the same libraries
+build-generic *args:
+    cargo build --locked --profile generic "$@"
 
 # Build and run a development version, optionally opening a file
 run *args:
@@ -40,9 +48,17 @@ check *args:
 test *args:
     cargo test --locked "$@"
 
-# Build and install locally, including desktop integration
+# Build for this computer and install locally, including desktop integration
 install: build
-    tools/install.sh install
+    tools/install.sh install {{ quote(target_dir / "release/flowa") }}
+
+# Build without CPU-specific instructions and install locally
+install-generic: build-generic
+    tools/install.sh install {{ quote(target_dir / "generic/flowa") }}
+
+# Install the last portable build without rebuilding it
+install-portable:
+    tools/install.sh install {{ quote(target_dir / "x86_64-unknown-linux-gnu/portable/flowa") }}
 
 # Remove the local installation, preserving preferences
 uninstall:

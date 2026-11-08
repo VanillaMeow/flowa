@@ -7,9 +7,9 @@ bin_dir="$HOME/.local/bin"
 
 case ${1:-} in
     install)
-        binary="${CARGO_TARGET_DIR:-$project_dir/target}/release/flowa"
+        binary=${2:-"${CARGO_TARGET_DIR:-$project_dir/target}/release/flowa"}
         if [ ! -x "$binary" ]; then
-            printf '%s\n' 'Build first with just build.' >&2
+            printf 'No build found at %s. Build it first with just.\n' "$binary" >&2
             exit 1
         fi
 
@@ -26,7 +26,7 @@ case ${1:-} in
         printf '%s\n' 'Removed flowa. Preferences were preserved.'
         ;;
     *)
-        printf 'Usage: %s install|uninstall\n' "$0" >&2
+        printf 'Usage: %s install [BINARY] | uninstall\n' "$0" >&2
         exit 2
         ;;
 esac

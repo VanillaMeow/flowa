@@ -63,6 +63,10 @@ lto = "thin"
 codegen-units = 1
 strip = true
 
+# Build with just build-generic to share between machines with the same system libraries
+[profile.generic]
+inherits = "release"
+
 # Build with just portable to statically link native codecs
 [profile.portable]
 inherits = "release"
