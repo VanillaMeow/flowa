@@ -20,7 +20,7 @@ pub fn section<R>(
     // Recessed toward the canvas so raised controls inside keep their contrast
     let inner = egui::Frame::new()
         .fill(theme::mix(colors.panel, colors.canvas, 0.5))
-        .stroke(Stroke::new(1., colors.border.gamma_multiply(0.6)))
+        .stroke(Stroke::new(1., colors.border.gamma_multiply(0.1)))
         .corner_radius(radius::CARD)
         .inner_margin(margin::SECTION)
         .show(ui, |ui| {
@@ -82,8 +82,9 @@ fn segment<T: Copy + PartialEq>(
     label: &str,
 ) -> bool {
     let active = *selected == value;
+    // No stroke override: egui reserves room for the pressed outline, so replacing it
+    // would resize the button while it is held
     let mut button = egui::Button::new(label)
-        .stroke(Stroke::NONE)
         .corner_radius(radius::CONTROL)
         .min_size(egui::vec2(0., 30.));
 
@@ -101,6 +102,35 @@ fn segment<T: Copy + PartialEq>(
     }
 
     clicked
+}
+
+/// Centers a row of widgets horizontally, which egui's horizontal layouts can't do
+///
+/// The row's width is remembered from the previous frame, and a frame whose width
+/// changed is discarded and laid out again, so the row never visibly jumps
+pub fn centered<R>(
+    ui: &mut Ui,
+    id_salt: &str,
+    add_contents: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    let id = ui.scope_id().with(id_salt);
+    let width = ui.data(|data| data.get_temp::<f32>(id));
+
+    ui.horizontal(|ui| {
+        let available = ui.available_width();
+        ui.add_space(((available - width.unwrap_or(available)) / 2.).max(0.));
+
+        let row = ui.scope(add_contents);
+        let measured = row.response.rect.width();
+
+        if width.is_none_or(|width| (width - measured).abs() > 0.5) {
+            ui.data_mut(|data| data.insert_temp(id, measured));
+            ui.ctx().request_discard("Centering a row of a new width");
+        }
+
+        row.inner
+    })
+    .inner
 }
 
 /// Opacity of an element that egui fades in, fading out briefly once it is hidden

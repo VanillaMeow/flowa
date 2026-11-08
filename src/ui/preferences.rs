@@ -14,7 +14,7 @@ use crate::{
 use super::{
     actions,
     icons::{self, Icon},
-    style::{space, text},
+    style::{radius, space, text},
     theme::{self, Colors},
     widgets::{self, hint, section},
 };
@@ -100,7 +100,9 @@ impl PreferencesWindow {
 
 fn preference_tabs(ui: &mut egui::Ui, selected: &mut Tab, colors: Colors) {
     let tabs = Tab::VARIANTS.iter().map(|tab| (*tab, tab.as_ref()));
-    widgets::segmented(ui, selected, tabs, colors);
+    widgets::centered(ui, "tabs", |ui| {
+        widgets::segmented(ui, selected, tabs, colors)
+    });
 }
 
 fn preference_tab(
@@ -354,16 +356,10 @@ fn about_contents(ui: &mut egui::Ui, colors: Colors) {
 
 /// "Made with ♥ by …", with the heart drawn as an icon since egui has no emoji font
 fn credit(ui: &mut egui::Ui, colors: Colors) {
-    let gap = space::XS;
     let label = |text: &str| RichText::new(text).size(text::LABEL).color(colors.muted);
-    let byline = format!("by {AUTHOR}");
-    let width = text_width(ui, label("Made with"))
-        + HEART_SIZE
-        + text_width(ui, label(&byline))
-        + gap * 2.;
 
-    centered_row(ui, width, |ui| {
-        ui.spacing_mut().item_spacing.x = gap;
+    widgets::centered(ui, "credit", |ui| {
+        ui.spacing_mut().item_spacing.x = space::XS;
         ui.label(label("Made with"));
 
         let (rect, _) =
@@ -376,7 +372,7 @@ fn credit(ui: &mut egui::Ui, colors: Colors) {
             HEART_COLOR,
         );
 
-        ui.label(label(&byline));
+        ui.label(label(&format!("by {AUTHOR}")));
     });
 }
 
@@ -386,7 +382,7 @@ fn about_video(ui: &mut egui::Ui, colors: Colors) {
     ui.label("MP4 · MKV · WebM · MOV · AVI · MPEG · M2TS / MTS · TS · OGV");
     ui.label("FFmpeg decoding · Vulkan rendering · SDL3 audio");
     ui.add_space(space::SM);
-    centered_links(
+    links(
         ui,
         &[
             ("libplacebo", "https://libplacebo.org"),
@@ -396,40 +392,12 @@ fn about_video(ui: &mut egui::Ui, colors: Colors) {
     );
 }
 
-fn centered_links(ui: &mut egui::Ui, links: &[(&str, &str)]) {
-    let gap = ui.spacing().item_spacing.x;
-    let labels: f32 = links.iter().map(|(label, _)| text_width(ui, *label)).sum();
-    let width = labels + gap * links.len().saturating_sub(1) as f32;
-
-    centered_row(ui, width, |ui| {
+fn links(ui: &mut egui::Ui, links: &[(&str, &str)]) {
+    widgets::centered(ui, "links", |ui| {
         for (label, url) in links {
             ui.hyperlink_to(*label, *url);
         }
     });
-}
-
-/// Horizontal layouts ignore centering, so the row is indented by its measured width
-fn centered_row(
-    ui: &mut egui::Ui,
-    width: f32,
-    add_contents: impl FnOnce(&mut egui::Ui),
-) {
-    ui.horizontal(|ui| {
-        ui.add_space(((ui.available_width() - width) / 2.).max(0.));
-        add_contents(ui);
-    });
-}
-
-fn text_width(ui: &egui::Ui, text: impl Into<egui::WidgetText>) -> f32 {
-    text.into()
-        .into_galley(
-            ui,
-            Some(egui::TextWrapMode::Extend),
-            f32::INFINITY,
-            egui::TextStyle::Body,
-        )
-        .size()
-        .x
 }
 
 fn icon_licenses(ui: &mut egui::Ui) {
@@ -503,9 +471,7 @@ fn theme_picker(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors) {
         .show(ui, |ui| {
             for (index, theme) in Theme::VARIANTS.iter().copied().enumerate() {
                 let selected = settings.theme == theme;
-                let button = theme_card(theme, selected, card_width, colors);
-
-                let response = ui.add(button);
+                let response = theme_card(ui, theme, selected, card_width, colors);
 
                 if response.clicked() {
                     settings.theme = theme;
@@ -525,25 +491,35 @@ fn theme_picker(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors) {
         });
 }
 
+/// A button previewing the theme, outlined in the accent color when selected
 fn theme_card(
+    ui: &mut egui::Ui,
     theme: Theme,
     selected: bool,
     width: f32,
     colors: Colors,
-) -> egui::Button<'static> {
+) -> egui::Response {
     let preview = theme::colors(theme, Accent::Theme, colors.dark);
-    let border_width = if selected { 2. } else { 1. };
-    let border_color = if selected {
-        colors.accent
-    } else {
-        colors.border
-    };
     let title = RichText::new(theme.as_ref()).color(preview.text);
-
-    egui::Button::new(title)
+    let button = egui::Button::new(title)
         .fill(preview.panel)
-        .stroke(egui::Stroke::new(border_width, border_color))
-        .min_size(vec2(width, 54.))
+        .min_size(vec2(width, 54.));
+    let response = ui.add(button);
+
+    // Painted over the button rather than set as its stroke, which would resize it
+    let (border_width, border_color) = if selected {
+        (2., colors.accent)
+    } else {
+        (1., colors.border)
+    };
+    ui.painter().rect_stroke(
+        response.rect,
+        radius::CONTROL,
+        egui::Stroke::new(border_width, border_color),
+        egui::StrokeKind::Inside,
+    );
+
+    response
 }
 
 fn accent_picker(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors) {
