@@ -11,10 +11,13 @@ use crate::viewer::{
     transform::View,
 };
 
+use super::{image_workers::THUMBNAIL_SIZE, resize};
+use crate::utils::units::MIB;
+
 const PREVIEW_EDGE: u32 = 2048;
-const THUMBNAIL_EDGE: u32 = 192;
 const MAX_ANIMATION_FRAMES: usize = 2000;
 const UNTAGGED: &str = "sRGB / untagged";
+const MAX_SVG_BYTES: u64 = 32 * MIB;
 
 fn limits(budget: u64) -> image::Limits {
     let mut limits = image::Limits::default();
@@ -31,26 +34,36 @@ fn check_size(width: u32, height: u32, budget: u64) -> Result<()> {
     ensure!(
         bytes <= budget,
         "This image needs at least {} MiB of decoded memory. Increase the image memory limit in Preferences.",
-        (bytes / 1048576) + 1
+        (bytes / MIB) + 1
     );
 
     Ok(())
 }
 
-fn preview(pixels: &RgbaImage, edge: u32) -> ColorImage {
-    let longest = pixels.width().max(pixels.height());
+fn preview(pixels: &RgbaImage, edge: u32) -> Result<ColorImage> {
+    let [width, height] =
+        resize::fit_within(pixels.width(), pixels.height(), edge, edge);
 
-    if longest <= edge {
-        return color_image(pixels);
+    if [width, height] == [pixels.width(), pixels.height()] {
+        return Ok(color_image(pixels));
     }
 
-    let width = (u64::from(pixels.width()) * u64::from(edge) / u64::from(longest))
-        .max(1) as u32;
-    let height = (u64::from(pixels.height()) * u64::from(edge) / u64::from(longest))
-        .max(1) as u32;
-    let resized = image::imageops::thumbnail(pixels, width, height);
+    Ok(color_image(&resize::downscale(
+        pixels, None, width, height,
+    )?))
+}
 
-    color_image(&resized)
+/// Builds the filmstrip thumbnail from a preview, which is far smaller than the source
+fn thumbnail_from_preview(preview: &ColorImage) -> Result<ColorImage> {
+    let [width, height] = [preview.size[0] as u32, preview.size[1] as u32];
+    let [thumbnail_width, thumbnail_height] =
+        resize::fit_within(width, height, THUMBNAIL_SIZE[0], THUMBNAIL_SIZE[1]);
+
+    if [thumbnail_width, thumbnail_height] == [width, height] {
+        return Ok(preview.clone());
+    }
+
+    resize::downscale_premultiplied(preview, thumbnail_width, thumbnail_height)
 }
 
 pub fn color_image(pixels: &RgbaImage) -> ColorImage {
@@ -123,8 +136,8 @@ pub fn preload_estimate(path: &Path, budget: u64) -> Result<Option<PreloadEstima
     let pixels = u64::from(width) * u64::from(height) * 4;
     let preview =
         u64::from(width.min(PREVIEW_EDGE)) * u64::from(height.min(PREVIEW_EDGE)) * 4;
-    let thumbnail = u64::from(width.min(THUMBNAIL_EDGE))
-        * u64::from(height.min(THUMBNAIL_EDGE))
+    let thumbnail = u64::from(width.min(THUMBNAIL_SIZE[0]))
+        * u64::from(height.min(THUMBNAIL_SIZE[1]))
         * 4;
     let retained = pixels.saturating_add(preview).saturating_add(thumbnail);
 
@@ -148,7 +161,7 @@ pub fn decode(path: &Path, budget: u64) -> Result<DecodedImage> {
 
     let (frames, color) = if matches!(ext.as_str(), "svg" | "svgz") {
         let rgba = render_svg(path, 16384, budget)?;
-        let frame = make_frame(rgba, Duration::ZERO);
+        let frame = make_frame(rgba, Duration::ZERO)?;
         (vec![frame], "sRGB · rasterized SVG".to_owned())
     } else {
         decode_raster(path, budget)?
@@ -156,7 +169,7 @@ pub fn decode(path: &Path, budget: u64) -> Result<DecodedImage> {
 
     let first = frames.first().context("The image contains no frames")?;
     let size = [first.pixels.width(), first.pixels.height()];
-    let thumbnail = preview(&first.pixels, THUMBNAIL_EDGE);
+    let thumbnail = thumbnail_from_preview(&first.preview)?;
     let format = if ext.is_empty() {
         "Image".to_owned()
     } else {
@@ -255,13 +268,14 @@ fn exif_metadata(path: &Path) -> Vec<(String, String)> {
         .collect()
 }
 
-fn make_frame(pixels: RgbaImage, delay: Duration) -> DecodedFrame {
-    let preview = preview(&pixels, PREVIEW_EDGE);
-    DecodedFrame {
+fn make_frame(pixels: RgbaImage, delay: Duration) -> Result<DecodedFrame> {
+    let preview = preview(&pixels, PREVIEW_EDGE)?;
+
+    Ok(DecodedFrame {
         pixels: Arc::new(pixels),
         preview,
         delay,
-    }
+    })
 }
 
 fn static_frame(
@@ -282,7 +296,7 @@ fn static_frame(
     let mut rgba = image.into_rgba8();
     conversion.apply(&mut rgba);
     Ok((
-        vec![make_frame(rgba, Duration::ZERO)],
+        vec![make_frame(rgba, Duration::ZERO)?],
         conversion.label.to_owned(),
     ))
 }
@@ -369,22 +383,19 @@ fn animated_frames(
             used <= budget,
             "This animation exceeds the image memory limit. Increase it in Preferences."
         );
-        out.push(make_frame(buffer, delay));
+        out.push(make_frame(buffer, delay)?);
     }
     ensure!(!out.is_empty(), "The animation contains no frames");
     Ok(out)
 }
 
 fn render_svg(path: &Path, edge: u32, budget: u64) -> Result<RgbaImage> {
-    ensure!(
-        path.metadata()?.len() <= 32 * 1024 * 1024,
-        "SVG source exceeds the 32 MB limit"
-    );
+    let too_large = "SVG source exceeds the 32 MiB limit";
+    ensure!(path.metadata()?.len() <= MAX_SVG_BYTES, too_large);
+
+    // The file can grow between the size check and the read
     let data = std::fs::read(path)?;
-    ensure!(
-        data.len() <= 32 * 1024 * 1024,
-        "SVG source exceeds the 32 MB limit"
-    );
+    ensure!(data.len() as u64 <= MAX_SVG_BYTES, too_large);
     let mut options = resvg::usvg::Options::default();
 
     // Plain SVGs without text can skip expensive system-font discovery
@@ -455,7 +466,14 @@ pub fn thumbnail(path: &Path, budget: u64) -> Result<ColorImage> {
 
     let mut image = DynamicImage::from_decoder(decoder)?;
     image.apply_orientation(orientation);
-    let mut small = image.thumbnail(THUMBNAIL_EDGE, 128).into_rgba8();
+    let rgba = image.into_rgba8();
+    let [width, height] = resize::fit_within(
+        rgba.width(),
+        rgba.height(),
+        THUMBNAIL_SIZE[0],
+        THUMBNAIL_SIZE[1],
+    );
+    let mut small = resize::downscale(&rgba, None, width, height)?;
 
     conversion.apply(&mut small);
     Ok(color_image(&small))

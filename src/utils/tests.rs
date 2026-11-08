@@ -22,16 +22,19 @@ mod format {
 }
 
 mod file_size {
-    use crate::utils::format::file_size;
+    use crate::utils::{
+        format::file_size,
+        units::{GIB, KIB, MIB},
+    };
 
     #[test]
     fn sizes_use_binary_units() {
         for (bytes, expected) in [
             (0, "0 B"),
             (1023, "1023 B"),
-            (1024, "1.0 KiB"),
-            (1536 * 1024, "1.5 MiB"),
-            (3 * 1024 * 1024 * 1024, "3.00 GiB"),
+            (KIB, "1.0 KiB"),
+            (3 * MIB / 2, "1.5 MiB"),
+            (3 * GIB, "3.00 GiB"),
         ] {
             assert_eq!(file_size(bytes), expected);
         }

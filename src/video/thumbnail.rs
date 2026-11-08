@@ -10,6 +10,7 @@ use anyhow::{Context, Result, ensure};
 use image::DynamicImage;
 
 use super::media;
+use crate::services::image_workers::THUMBNAIL_SIZE;
 
 struct Cancellation<'a> {
     generation: &'a AtomicU64,
@@ -36,10 +37,13 @@ pub(super) fn extract(
     };
     ensure!(!cancellation.cancelled(), "Thumbnail request was cancelled");
 
-    let poster = media::extract_poster(path, || cancellation.cancelled(), [192, 128])?;
+    let [max_width, max_height] = THUMBNAIL_SIZE;
+    let poster =
+        media::extract_poster(path, || cancellation.cancelled(), THUMBNAIL_SIZE)?;
     ensure!(!cancellation.cancelled(), "Thumbnail request was cancelled");
     ensure!(
-        (1..=192).contains(&poster.width) && (1..=128).contains(&poster.height),
+        (1..=max_width).contains(&poster.width)
+            && (1..=max_height).contains(&poster.height),
         "Invalid video thumbnail dimensions"
     );
     let image = image::RgbaImage::from_raw(poster.width, poster.height, poster.pixels)
@@ -52,7 +56,7 @@ pub(super) fn extract(
         3 => image.rotate270(),
         _ => image,
     };
-    let image = image.thumbnail(192, 128).into_rgba8();
+    let image = image.thumbnail(max_width, max_height).into_rgba8();
 
     Ok(crate::services::image_decode::color_image(&image))
 }

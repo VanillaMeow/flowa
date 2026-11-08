@@ -4,7 +4,9 @@ FFmpeg 9 decodes video, libplacebo renders into wgpu textures, and SDL3 plays au
 Rust owns playback, seeking, queues, FFmpeg contexts, resampling, poster extraction,
 and frame lifetimes. Bindings are generated from the linked FFmpeg SDK, and from
 `bindings.h` for the shim and SDL3 audio. The C shim handles the shared Vulkan
-device, libplacebo rendering, and GPU interoperability.
+device, libplacebo rendering, and GPU interoperability. `device.c` creates the
+Vulkan device with only the queues playback and wgpu use, then imports it into
+libplacebo, which would otherwise create every queue the driver offers.
 
 Linux hardware playback is validated. Windows Vulkan source and build preparation
 are present, but native Windows build and hardware validation are still pending.
@@ -20,6 +22,8 @@ See [BUILDING.md](../../BUILDING.md) for dependencies and commands.
 ## Decoding and fallback
 
 Decoder selection tries NVDEC, Vulkan Video, VA-API on Linux, then FFmpeg software decoding.
+The list of available hardware decoders is detected in the background the first time
+Preferences shows it, since creating CUDA and VA-API devices is slow.
 Preferences → Performance → Video decoder selects Auto, an available hardware
 backend, or Software. A hardware selection falls back to software for unsupported
 codecs. Switching decoders preserves position and pause state on seekable videos;

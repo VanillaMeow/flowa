@@ -137,7 +137,7 @@ mod tests {
 
     use crate::{
         app::{Command, Flowa, Launch},
-        services::{file_actions::Outcome, image_decode::decode},
+        services::{file_actions::Outcome, image_decode::decode, image_loader::Loader},
         settings::{Settings, Theme},
     };
 
@@ -165,6 +165,7 @@ mod tests {
             },
             None,
             launch,
+            Loader::new(Settings::default().memory_budget()),
             "Test".into(),
         );
         app.open(directory.path().join("0.png").canonicalize()?, &ctx);
@@ -210,7 +211,7 @@ mod tests {
         // File actions receive canonical paths from the scanned catalog
         let path = directory.path().join("0.png").canonicalize()?;
         let generation = app.image.generation();
-        let pending = decode(&path, 1024 * 1024)?;
+        let pending = decode(&path, crate::utils::units::MIB)?;
         app.slideshow.active = true;
         assert!(app.image.loading);
         assert!(app.settings.values.recent.contains(&path));

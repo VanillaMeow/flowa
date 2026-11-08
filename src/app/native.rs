@@ -4,7 +4,11 @@ use std::{path::PathBuf, sync::Arc};
 
 use eframe::{NativeOptions, egui_wgpu::WgpuSetup, wgpu::Backends};
 
-use crate::settings::{RendererPreference, Settings, SettingsStore};
+use crate::{
+    services::image_loader::Loader,
+    settings::{RendererPreference, Settings, SettingsStore},
+    viewer::catalog::is_video,
+};
 
 use super::{Flowa, Launch};
 
@@ -12,6 +16,7 @@ struct Startup {
     settings: Settings,
     config_path: Option<PathBuf>,
     launch: Launch,
+    loader: Loader,
 }
 
 pub(crate) fn run(
@@ -19,6 +24,14 @@ pub(crate) fn run(
     config_path: Option<PathBuf>,
     launch: Launch,
 ) -> eframe::Result {
+    // The launch image decodes while the graphics device is created below
+    let loader = Loader::new(settings.memory_budget());
+    if let Some(path) = launch.initial_path(&settings)
+        && !is_video(&path)
+    {
+        loader.preload(path);
+    }
+
     let window_size = settings.window_size;
     let mut options = native_options(window_size);
     let renderer = settings.renderer;
@@ -28,6 +41,7 @@ pub(crate) fn run(
         settings,
         config_path,
         launch,
+        loader,
     });
 
     if std::env::var_os("WGPU_BACKEND").is_some() {
@@ -123,6 +137,7 @@ fn run_once(options: NativeOptions, startup: &mut Option<Startup>) -> eframe::Re
                 startup.settings,
                 startup.config_path,
                 startup.launch,
+                startup.loader,
                 video_device,
             )))
         }),
@@ -227,6 +242,7 @@ mod tests {
                 info: false,
                 zoom: None,
             },
+            loader: Loader::new(Settings::default().memory_budget()),
         });
 
         reset_renderer(&mut startup);

@@ -6,6 +6,8 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+
+use crate::utils::units::MIB;
 use strum::{AsRefStr, EnumString, VariantArray};
 
 #[derive(
@@ -256,7 +258,7 @@ impl Settings {
 
     /// The decoded image memory limit in bytes
     pub fn memory_budget(&self) -> u64 {
-        self.memory_mb * 1024 * 1024
+        self.memory_mb * MIB
     }
 
     /// Moves an explicitly opened file or folder to the front of the recent list

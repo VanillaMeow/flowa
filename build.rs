@@ -98,7 +98,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     generate_ffmpeg_bindings(&libraries, &out_dir)?;
     generate_native_bindings(&libraries, &out_dir)?;
 
-    for source in ["gpu.c", "transfer.c"] {
+    for source in ["device.c", "gpu.c", "transfer.c"] {
         let path = format!("native/video/{source}");
         println!("cargo:rerun-if-changed={path}");
         compiler.file(path);

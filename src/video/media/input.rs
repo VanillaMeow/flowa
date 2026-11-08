@@ -12,6 +12,8 @@ use std::{
 
 use anyhow::{Result, ensure};
 
+use crate::utils::units::MIB;
+
 use super::{
     AudioBlock, AudioInfo, Packet, PacketKind, Receive, Sent, Stream, StreamInfo,
     audio::AudioDecoder, check, ffi, path_string, rational, stream_rotation,
@@ -69,7 +71,7 @@ impl<'a> Input<'a> {
             };
 
             if matches!(probe, Probe::Poster) {
-                (*handle).probesize = 2 * 1024 * 1024;
+                (*handle).probesize = (2 * MIB) as i64;
                 (*handle).max_analyze_duration = i64::from(ffi::AV_TIME_BASE);
             }
         }

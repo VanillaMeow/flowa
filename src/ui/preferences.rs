@@ -189,21 +189,26 @@ fn video_decoder(
     colors: Colors,
 ) {
     ui.label("Video decoder");
-    let label = if video.available() && !video.available_decoders().contains(selected) {
-        format!("{} (unavailable)", selected.as_ref())
-    } else {
-        selected.as_ref().to_owned()
+    let decoders = video.available_decoders();
+    let label = match decoders {
+        Some(available) if !available.contains(selected) => {
+            format!("{} (unavailable)", selected.as_ref())
+        }
+        _ => selected.as_ref().to_owned(),
     };
-    ui.add_enabled_ui(video.available(), |ui| {
+
+    ui.add_enabled_ui(decoders.is_some(), |ui| {
         egui::ComboBox::from_id_salt("video_decoder")
             .selected_text(label)
-            .show_ui(ui, |ui| decoder_choices(ui, selected, video));
+            .show_ui(ui, |ui| decoder_choices(ui, selected, decoders));
     });
 
-    let explanation = if video.available() {
-        "Unsupported codecs fall back to software decoding"
-    } else {
+    let explanation = if !video.available() {
         video.unavailable_reason()
+    } else if decoders.is_none() {
+        "Detecting hardware decoders…"
+    } else {
+        "Unsupported codecs fall back to software decoding"
     };
     ui.label(RichText::new(explanation).small().color(colors.muted));
 }
@@ -211,9 +216,9 @@ fn video_decoder(
 fn decoder_choices(
     ui: &mut egui::Ui,
     selected: &mut VideoDecoder,
-    video: &VideoSession,
+    decoders: Option<&[VideoDecoder]>,
 ) {
-    for &choice in video.available_decoders() {
+    for &choice in decoders.unwrap_or_default() {
         ui.selectable_value(selected, choice, choice.as_ref());
     }
 }

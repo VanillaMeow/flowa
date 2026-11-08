@@ -6,7 +6,7 @@ use std::{
     collections::VecDeque,
     path::PathBuf,
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicU64, Ordering},
         mpsc,
     },
@@ -46,22 +46,37 @@ pub struct Loader {
     sender: mpsc::Sender<Message>,
     pub results: mpsc::Receiver<LoadResult>,
     generation: Arc<AtomicU64>,
+    repaint: Arc<OnceLock<egui::Context>>,
 }
 
 impl Loader {
-    pub fn new(ctx: egui::Context) -> Self {
+    /// Starts the worker before the UI exists, so a launch image can decode during setup
+    pub fn new(budget: u64) -> Self {
         let (sender, requests) = mpsc::channel();
         let (completed, results) = mpsc::sync_channel(1);
         let generation = Arc::new(AtomicU64::new(0));
         let active_generation = Arc::clone(&generation);
+        let repaint = Arc::new(OnceLock::new());
+        let worker_repaint = Arc::clone(&repaint);
 
-        thread::spawn(move || run(requests, completed, active_generation, ctx));
+        thread::spawn(move || {
+            run(requests, completed, active_generation, worker_repaint)
+        });
 
-        Self {
+        let loader = Self {
             sender,
             results,
             generation,
-        }
+            repaint,
+        };
+        loader.set_budget(budget);
+
+        loader
+    }
+
+    /// Lets completed selections wake the UI once its context exists
+    pub fn attach(&self, ctx: egui::Context) {
+        let _ = self.repaint.set(ctx);
     }
 
     pub fn request(&self, request: LoadRequest) {
@@ -291,7 +306,7 @@ fn run(
     requests: mpsc::Receiver<Message>,
     completed: mpsc::SyncSender<LoadResult>,
     generation: Arc<AtomicU64>,
-    ctx: egui::Context,
+    repaint: Arc<OnceLock<egui::Context>>,
 ) {
     let mut queue = Queue::default();
 
@@ -336,7 +351,9 @@ fn run(
                 return;
             }
 
-            ctx.request_repaint();
+            if let Some(ctx) = repaint.get() {
+                ctx.request_repaint();
+            }
         }
     }
 }
@@ -349,7 +366,7 @@ mod tests {
 
     use super::{FileStamp, LoadRequest, Message, Queue};
 
-    const IMAGE_BUDGET: u64 = 1024 * 1024;
+    const IMAGE_BUDGET: u64 = crate::utils::units::MIB;
 
     fn save_image(path: &Path) -> Result<()> {
         image::RgbaImage::new(32, 16).save(path)?;

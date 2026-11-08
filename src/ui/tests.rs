@@ -225,7 +225,7 @@ mod filmstrip {
     use egui::{Event, MouseWheelUnit, Pos2, Rect, vec2};
 
     use crate::{
-        settings::{Accent, SortOrder, Theme},
+        settings::{Accent, Settings, SortOrder, Theme},
         ui::{filmstrip::Filmstrip, theme},
         viewer::{
             browser::Browser,
@@ -290,7 +290,8 @@ mod filmstrip {
             (vec2(-60., 0.), egui::MouseWheelSource::Trackpad),
         ] {
             let ctx = egui::Context::default();
-            let mut strip = Filmstrip::new(ctx.clone(), 256 * 1024 * 1024);
+            let mut strip =
+                Filmstrip::new(ctx.clone(), Settings::default().memory_budget());
             frame(&ctx, &mut strip, &browser, Vec::new());
             let initial = frame(&ctx, &mut strip, &browser, Vec::new());
 

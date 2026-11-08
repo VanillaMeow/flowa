@@ -10,7 +10,7 @@ use std::{
 use anyhow::{Result, ensure};
 use eframe::egui_wgpu::RenderState;
 
-use super::{Pipeline, Snapshot, Target, audio::AudioRuntime, decoder};
+use super::{Pipeline, Snapshot, Target, audio::AudioRuntime, decoder::DecoderProbe};
 use crate::{
     settings::VideoDecoder,
     video::{
@@ -144,7 +144,7 @@ pub(in crate::video) struct Player {
     status: Snapshot,
     displayed: Option<egui::TextureId>,
     target: Option<Target>,
-    decoders: Vec<VideoDecoder>,
+    decoders: DecoderProbe,
     audio_name: String,
     // Dropped on the UI thread after playback has joined and destroyed its SDL streams
     _audio: Option<AudioRuntime>,
@@ -160,7 +160,7 @@ impl Player {
                 log::warn!("Audio initialization: {error:#}");
             })
             .ok();
-        let decoders = decoder::available_decoders(&gpu);
+        let decoders = DecoderProbe::new(Arc::clone(&gpu), ctx.clone());
         let driver = if gpu.background_playback {
             let mailbox = Arc::new(Mailbox::default());
             let requests = Arc::clone(&mailbox);
@@ -248,8 +248,9 @@ impl Player {
         Ok(())
     }
 
-    pub fn available_decoders(&self) -> Vec<VideoDecoder> {
-        self.decoders.clone()
+    /// The decoders this device supports, or `None` while they are being detected
+    pub fn available_decoders(&self) -> Option<&[VideoDecoder]> {
+        self.decoders.decoders()
     }
 
     fn receive(&mut self) {
@@ -724,7 +725,7 @@ mod tests {
         if let Ok(expected) = std::env::var("FLOWA_TEST_VIDEO_DECODER") {
             let preference = hardware_preference(&expected)?;
             ensure!(
-                player.available_decoders().contains(&preference),
+                wait_for_decoders(&player)?.contains(&preference),
                 "The selected decoder device is unavailable"
             );
             player.command(PlayerCommand::Decoder(preference))?;
@@ -862,6 +863,19 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    fn wait_for_decoders(player: &Player) -> Result<Vec<VideoDecoder>> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+
+        loop {
+            if let Some(decoders) = player.available_decoders() {
+                return Ok(decoders.to_vec());
+            }
+
+            ensure!(Instant::now() < deadline, "Decoder detection timed out");
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 
     fn require_vulkan_validation(graphics: &RenderState) -> Result<()> {

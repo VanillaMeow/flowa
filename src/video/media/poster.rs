@@ -4,6 +4,8 @@ use std::{path::Path, ptr, ptr::NonNull};
 
 use anyhow::{Context, Result, ensure};
 
+use crate::utils::units::MIB;
+
 use super::{
     AvFrame, Codec, Receive, Sent, Threads, check, dimensions, ffi,
     input::{Input, Probe},
@@ -11,7 +13,7 @@ use super::{
 };
 
 const POSTER_PACKET_LIMIT: usize = 512;
-const POSTER_BYTE_LIMIT: usize = 32 * 1024 * 1024;
+const POSTER_BYTE_LIMIT: usize = 32 * MIB as usize;
 
 pub(in crate::video) struct Poster {
     pub pixels: Vec<u8>,

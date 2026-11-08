@@ -58,6 +58,7 @@ impl Flowa {
         settings: Settings,
         config_path: Option<PathBuf>,
         launch: Launch,
+        loader: Loader,
         video_device: bool,
     ) -> Self {
         let gpu = cc
@@ -70,8 +71,14 @@ impl Flowa {
             .unwrap_or_else(|| "wgpu".into());
         log::info!("Renderer: {gpu}");
 
-        let mut app =
-            Self::create(cc.egui_ctx.clone(), settings, config_path, launch, gpu);
+        let mut app = Self::create(
+            cc.egui_ctx.clone(),
+            settings,
+            config_path,
+            launch,
+            loader,
+            gpu,
+        );
 
         if video_device {
             app.video = VideoSession::new(cc);
@@ -92,6 +99,7 @@ impl Flowa {
         mut settings: Settings,
         config_path: Option<PathBuf>,
         launch: Launch,
+        loader: Loader,
         gpu: String,
     ) -> Self {
         settings.filmstrip |= launch.filmstrip;
@@ -101,16 +109,9 @@ impl Flowa {
         theme::apply(&ctx, colors);
         ctx.set_zoom_factor(settings.ui_scale);
 
-        // Older preferences have no last viewed file, only the recent list
-        let reopen = settings
-            .reopen_last
-            .then(|| {
-                settings
-                    .last_viewed
-                    .clone()
-                    .or_else(|| settings.recent.first().cloned())
-            })
-            .flatten();
+        let initial_path = launch.initial_path(&settings);
+        let explicit = launch.path.is_some();
+        loader.attach(ctx.clone());
 
         let mut app = Self {
             browser: Browser::new(),
@@ -119,7 +120,7 @@ impl Flowa {
             ui: ViewerUi::new(ctx.clone(), &settings, launch.preferences),
             settings: SettingsStore::new(settings, config_path),
             scanner: FolderScanner::new(),
-            loader: Loader::new(ctx.clone()),
+            loader,
             actions: Actions::new(ctx.clone()),
             slideshow: Slideshow::new(),
             busy: None,
@@ -130,10 +131,10 @@ impl Flowa {
             preload_hint: None,
         };
 
-        if let Some(path) = launch.path {
-            app.open(path, &ctx);
-        } else if let Some(path) = reopen {
-            app.open_path(path, &ctx);
+        match initial_path {
+            Some(path) if explicit => app.open(path, &ctx),
+            Some(path) => app.open_path(path, &ctx),
+            None => {}
         }
 
         app
@@ -146,9 +147,9 @@ impl Flowa {
     }
 
     /// Scans a folder, or a file's folder, and selects the file once the scan completes
+    ///
+    /// File stamps validate cached decodes, so a preload of this file stays usable
     pub(super) fn open_path(&mut self, path: PathBuf, ctx: &egui::Context) {
-        // Folder changes and refreshes may have replaced files behind cached decodes
-        self.loader.invalidate();
         self.begin_image_load();
 
         let generation = self.browser.begin_scan();

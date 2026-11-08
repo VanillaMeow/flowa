@@ -40,6 +40,9 @@ impl Drop for DeviceRef {
     }
 }
 
+/// The largest frame FFmpeg may allocate: 64 Mi pixels, such as 8192 × 8192
+const MAX_FRAME_PIXELS: i64 = 64 * 1024 * 1024;
+
 /// Decoder threading for video codecs; audio codecs keep FFmpeg's default
 #[derive(Clone, Copy)]
 pub(in crate::video) enum Threads {
@@ -194,7 +197,7 @@ impl Codec {
                 "Cannot copy codec parameters",
             )?;
             self.handle.as_mut().pkt_timebase = stream.time_base;
-            self.handle.as_mut().max_pixels = 64 * 1024 * 1024;
+            self.handle.as_mut().max_pixels = MAX_FRAME_PIXELS;
         }
 
         Ok(())

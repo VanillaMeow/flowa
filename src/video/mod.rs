@@ -126,7 +126,6 @@ pub(crate) struct VideoSession {
     pub texture: Option<egui::TextureId>,
     player: Option<player::Player>,
     unavailable: Option<String>,
-    decoders: Vec<VideoDecoder>,
 }
 
 impl VideoSession {
@@ -140,7 +139,6 @@ impl VideoSession {
 
         match player {
             Ok(player) => Self {
-                decoders: player.available_decoders(),
                 player: Some(player),
                 ..Default::default()
             },
@@ -230,8 +228,11 @@ impl VideoSession {
             .unwrap_or("Video playback needs the Vulkan renderer")
     }
 
-    pub fn available_decoders(&self) -> &[VideoDecoder] {
-        &self.decoders
+    /// Decoders this device supports, or `None` while detection runs or without video
+    ///
+    /// The first call starts detection in the background
+    pub fn available_decoders(&self) -> Option<&[VideoDecoder]> {
+        self.player.as_ref()?.available_decoders()
     }
 
     pub fn set_decoder(&mut self, preference: VideoDecoder) -> Result<()> {

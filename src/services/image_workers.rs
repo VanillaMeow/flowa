@@ -13,9 +13,15 @@ use std::{
 use egui::ColorImage;
 use image::RgbaImage;
 
-use super::image_decode::{color_image, thumbnail};
+use super::{
+    image_decode::{color_image, thumbnail},
+    resize::{self, Region},
+};
 
 pub const TILE_SIZE: u32 = 1024;
+
+/// The box every filmstrip thumbnail fits in, for images and video posters alike
+pub const THUMBNAIL_SIZE: [u32; 2] = [192, 128];
 
 const QUEUED_REQUESTS: usize = 24;
 const QUEUED_RESULTS: usize = 4;
@@ -136,17 +142,25 @@ fn build_tile(request: &TileRequest) -> Option<TileResult> {
         return None;
     }
 
-    let region =
-        image::imageops::crop_imm(request.pixels.as_ref(), x0, y0, x1 - x0, y1 - y0);
+    let region = Region {
+        x: x0,
+        y: y0,
+        width: x1 - x0,
+        height: y1 - y0,
+    };
     let tile = if stride == 1 {
-        region.to_image()
-    } else {
-        image::imageops::resize(
-            &*region,
-            (x1 - x0).div_ceil(stride),
-            (y1 - y0).div_ceil(stride),
-            image::imageops::FilterType::Triangle,
+        image::imageops::crop_imm(
+            request.pixels.as_ref(),
+            x0,
+            y0,
+            region.width,
+            region.height,
         )
+        .to_image()
+    } else {
+        let width = region.width.div_ceil(stride);
+        let height = region.height.div_ceil(stride);
+        resize::downscale(&request.pixels, Some(region), width, height).ok()?
     };
 
     Some(TileResult {

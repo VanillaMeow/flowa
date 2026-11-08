@@ -23,6 +23,8 @@ impl Flowa {
             Command::OpenPath(path) => self.open(path, ctx),
             Command::Refresh => {
                 if let Some(path) = self.browser.refresh_path() {
+                    // Refreshing rereads files even when their size and time look unchanged
+                    self.loader.invalidate();
                     self.open_path(path, ctx);
                 }
             }

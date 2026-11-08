@@ -31,7 +31,7 @@ pub(super) mod player {
             bail!(super::UNSUPPORTED)
         }
 
-        pub fn available_decoders(&self) -> Vec<VideoDecoder> {
+        pub fn available_decoders(&self) -> Option<&[VideoDecoder]> {
             match *self {}
         }
 

@@ -12,10 +12,13 @@ use super::{
     audio::{AudioOutput, BYTES_PER_SECOND},
     clock::{AudioTiming, Clock},
 };
-use crate::video::media::{InterruptFlags, Packet, Stream};
+use crate::{
+    utils::units::MIB,
+    video::media::{InterruptFlags, Packet, Stream},
+};
 
 pub(super) const PACKET_LIMIT: usize = 96;
-pub(super) const BYTE_LIMIT: usize = 32 * 1024 * 1024;
+pub(super) const BYTE_LIMIT: usize = 32 * MIB as usize;
 
 #[derive(Default)]
 pub(super) struct PacketQueue {

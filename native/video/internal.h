@@ -12,6 +12,30 @@
 #include <libplacebo/vulkan.h>
 #include <stdbool.h>
 
+#define FLOWA_MAX_DEVICE_EXTENSIONS 128
+
+// Feature structures enabled on a device that flowa creates, kept alive with it
+struct device_features {
+    VkPhysicalDeviceFeatures2 core;
+    VkPhysicalDeviceVulkan11Features v11;
+    VkPhysicalDeviceVulkan12Features v12;
+    VkPhysicalDeviceVulkan13Features v13;
+    VkPhysicalDeviceVideoMaintenance1FeaturesKHR video_maintenance1;
+#ifdef VK_KHR_video_maintenance2
+    VkPhysicalDeviceVideoMaintenance2FeaturesKHR video_maintenance2;
+#endif
+#ifdef VK_KHR_video_decode_vp9
+    VkPhysicalDeviceVideoDecodeVP9FeaturesKHR vp9;
+#endif
+#ifdef VK_EXT_swapchain_maintenance1
+    VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT swapchain_maintenance1;
+#endif
+#ifdef VK_EXT_host_image_copy
+    VkPhysicalDeviceHostImageCopyFeaturesEXT host_image_copy;
+#endif
+    VkPhysicalDeviceRobustness2FeaturesEXT robustness2;
+};
+
 struct gpu_flight {
     struct gpu_flight *next;
     VkSemaphore semaphore;
@@ -40,7 +64,24 @@ struct flowa_gpu {
     struct video_transfer *transfer;
     int flight_count;
     void (*logger)(int, const char *);
+
+    // Extensions and features enabled on the device, whichever path created it
+    const char *extensions[FLOWA_MAX_DEVICE_EXTENSIONS];
+    int num_extensions;
+    const VkPhysicalDeviceFeatures2 *enabled_features;
+
+    // Set when flowa created the device itself rather than through libplacebo
+    VkDevice device;
+    PFN_vkDestroyDevice destroy_device;
+    struct device_features features;
 };
+
+pl_vulkan video_gpu_create_vulkan(
+    struct flowa_gpu *gpu,
+    const struct flowa_gpu_init *init
+);
+void video_gpu_destroy_vulkan(struct flowa_gpu *gpu);
+bool video_gpu_has_extension(const struct flowa_gpu *gpu, const char *name);
 
 void video_gpu_clear_targets(struct flowa_gpu *gpu);
 void video_gpu_collect(struct flowa_gpu *gpu, bool finish);

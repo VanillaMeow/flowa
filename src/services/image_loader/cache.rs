@@ -6,10 +6,10 @@ use std::{
     time::SystemTime,
 };
 
-use crate::viewer::image_session::DecodedImage;
+use crate::{utils::units::MIB, viewer::image_session::DecodedImage};
 
 const MAX_CACHED_IMAGES: usize = 4;
-const MAX_CACHE_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_CACHE_BYTES: u64 = 512 * MIB;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct FileStamp {
@@ -108,7 +108,7 @@ mod tests {
     use anyhow::{Context, Result};
     use std::{fs::File, sync::Arc, time::Duration};
 
-    const IMAGE_BUDGET: u64 = 1024 * 1024;
+    const IMAGE_BUDGET: u64 = crate::utils::units::MIB;
 
     #[test]
     fn cache_reuses_pixels_rejects_modified_files_and_reserves_working_memory()

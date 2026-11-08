@@ -58,15 +58,6 @@ static void gpu_log(void *userdata, enum pl_log_level level, const char *message
         gpu->logger(level, message);
 }
 
-static bool has_extension(pl_vulkan vk, const char *name) {
-    for (int i = 0; i < vk->num_extensions; i++) {
-        if (!strcmp(vk->extensions[i], name))
-            return true;
-    }
-
-    return false;
-}
-
 static void create_ffmpeg_device(struct flowa_gpu *gpu) {
     AVBufferRef *reference = av_hwdevice_ctx_alloc(AV_HWDEVICE_TYPE_VULKAN);
     if (!reference)
@@ -78,9 +69,9 @@ static void create_ffmpeg_device(struct flowa_gpu *gpu) {
     context->phys_dev = gpu->vk->phys_device;
     context->act_dev = gpu->vk->device;
     context->get_proc_addr = gpu->vk->get_proc_addr;
-    context->device_features = *gpu->vk->features;
-    context->enabled_dev_extensions = gpu->vk->extensions;
-    context->nb_enabled_dev_extensions = gpu->vk->num_extensions;
+    context->device_features = *gpu->enabled_features;
+    context->enabled_dev_extensions = gpu->extensions;
+    context->nb_enabled_dev_extensions = gpu->num_extensions;
 
     PFN_vkGetPhysicalDeviceQueueFamilyProperties get_queues =
         (void *)gpu->vk->get_proc_addr(
@@ -144,75 +135,7 @@ struct flowa_gpu *flowa_gpu_create(
         )
     );
 
-    // Query core features before appending wgpu's additional feature requests
-    VkPhysicalDeviceVulkan13Features v13 = {
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
-    };
-    VkPhysicalDeviceVulkan12Features v12 = {
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
-        .pNext = &v13,
-    };
-    VkPhysicalDeviceVulkan11Features v11 = {
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
-        .pNext = &v12,
-    };
-    VkPhysicalDeviceVideoMaintenance1FeaturesKHR video = {
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_MAINTENANCE_1_FEATURES_KHR,
-        .pNext = &v11,
-    };
-#ifdef VK_KHR_video_maintenance2
-    VkPhysicalDeviceVideoMaintenance2FeaturesKHR video2 = {
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_MAINTENANCE_2_FEATURES_KHR,
-        .pNext = &video,
-    };
-#endif
-#ifdef VK_KHR_video_decode_vp9
-    VkPhysicalDeviceVideoDecodeVP9FeaturesKHR vp9 = {
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_DECODE_VP9_FEATURES_KHR,
-        .pNext = &video,
-    };
-#endif
-    VkPhysicalDeviceFeatures2 features = {
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-        .pNext = &video,
-    };
-#ifdef VK_KHR_video_maintenance2
-    features.pNext = &video2;
-#endif
-#ifdef VK_KHR_video_decode_vp9
-    vp9.pNext = features.pNext;
-    features.pNext = &vp9;
-#endif
-    PFN_vkGetPhysicalDeviceFeatures2 get_features =
-        (void *)init->get_proc_addr(init->instance, "vkGetPhysicalDeviceFeatures2");
-    get_features(init->physical_device, &features);
-    v13.pNext = init->features ? init->features->pNext : NULL;
-
-    int optional_count = 0;
-    const char **optional = av_vk_get_optional_device_extensions(&optional_count);
-    int decode_count = 0;
-
-    // Encoding extensions make FFmpeg add incompatible encode usage to decoder images
-    for (int index = 0; index < optional_count; index++) {
-        if (!strstr(optional[index], "video_encode"))
-            optional[decode_count++] = optional[index];
-    }
-    gpu->vk = pl_vulkan_create(
-        gpu->log,
-        pl_vulkan_params(
-            .instance = init->instance,
-            .device = init->physical_device,
-            .get_proc_addr = init->get_proc_addr,
-            .extensions = init->extensions,
-            .num_extensions = init->num_extensions,
-            .opt_extensions = optional,
-            .num_opt_extensions = decode_count,
-            .features = &features,
-            .queue_count = 1,
-            .extra_queues = VK_QUEUE_VIDEO_DECODE_BIT_KHR
-        )
-    );
-    av_free(optional);
+    gpu->vk = video_gpu_create_vulkan(gpu, init);
 
     if (!gpu->vk) {
         snprintf(error, error_size, "Cannot create the shared Vulkan video device");
@@ -229,9 +152,9 @@ struct flowa_gpu *flowa_gpu_create(
 
     create_ffmpeg_device(gpu);
     gpu->video_queue &=
-        has_extension(gpu->vk, VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME);
+        video_gpu_has_extension(gpu, VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME);
 
-    if (has_extension(gpu->vk, VK_EXT_PHYSICAL_DEVICE_DRM_EXTENSION_NAME)) {
+    if (video_gpu_has_extension(gpu, VK_EXT_PHYSICAL_DEVICE_DRM_EXTENSION_NAME)) {
         VkPhysicalDeviceDrmPropertiesEXT drm = {
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRM_PROPERTIES_EXT,
         };
@@ -278,9 +201,9 @@ void flowa_gpu_get_info(struct flowa_gpu *gpu, struct flowa_gpu_info *info) {
         .device = gpu->vk->device,
         .graphics_family = gpu->vk->queue_graphics.index,
         .graphics_queue = graphics_queue,
-        .extensions = gpu->vk->extensions,
-        .num_extensions = gpu->vk->num_extensions,
-        .features = gpu->vk->features,
+        .extensions = gpu->extensions,
+        .num_extensions = gpu->num_extensions,
+        .features = gpu->enabled_features,
     };
 }
 
@@ -346,7 +269,7 @@ void flowa_gpu_destroy(struct flowa_gpu *gpu) {
         video_gpu_destroy_transfer(gpu);
         av_buffer_unref(&gpu->av_device);
         pl_renderer_destroy(&gpu->renderer);
-        pl_vulkan_destroy(&gpu->vk);
+        video_gpu_destroy_vulkan(gpu);
     }
 
     pl_log_destroy(&gpu->log);

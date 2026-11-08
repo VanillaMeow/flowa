@@ -2,6 +2,7 @@
 
 pub(crate) mod filename;
 pub(crate) mod format;
+pub(crate) mod units;
 
 #[cfg(test)]
 mod tests;

@@ -24,6 +24,8 @@ mod folder_scan {
 mod image_decode {
     use std::{fs::File, time::Duration};
 
+    use crate::utils::units::MIB;
+
     use anyhow::Result;
     use image::RgbaImage;
 
@@ -42,7 +44,7 @@ mod image_decode {
         });
         pixels.save(&input)?;
         let original = std::fs::read(&input)?;
-        let loaded = decode(&input, 32 * 1024 * 1024)?;
+        let loaded = decode(&input, 32 * MIB)?;
         assert_eq!(loaded.frames[0].pixels.as_ref(), &pixels);
 
         // Source rows are ABC / DEF; a clockwise turn produces DA / EB / FC
@@ -78,7 +80,7 @@ mod image_decode {
         let dir = tempfile::tempdir()?;
         let path = dir.path().join("bad.png");
         std::fs::write(&path, b"not an image")?;
-        assert!(decode(&path, 32 * 1024 * 1024).is_err());
+        assert!(decode(&path, 32 * MIB).is_err());
         Ok(())
     }
 
@@ -93,7 +95,7 @@ mod image_decode {
             .expect("Decode exceeded its budget");
         assert!(format!("{error:#}").to_ascii_lowercase().contains("limit"));
 
-        let loaded = decode(&path, 32 * 1024 * 1024)?;
+        let loaded = decode(&path, 32 * MIB)?;
         assert_eq!(loaded.frames[0].preview.size, [640, 320]);
         assert_eq!(loaded.thumbnail.size, [192, 96]);
 
@@ -108,7 +110,7 @@ mod image_decode {
             &path,
             r##"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><rect width="20" height="10" fill="#ff0000" opacity="0.5"/></svg>"##,
         )?;
-        let decoded = decode(&path, 32 * 1024 * 1024)?;
+        let decoded = decode(&path, 32 * MIB)?;
         let px = decoded.frames[0].pixels.get_pixel(5, 5);
         assert_eq!(px[0], 255);
         assert!((126..=129).contains(&px[3]));
@@ -129,7 +131,7 @@ mod image_decode {
             ))?;
         }
         drop(encoder);
-        let decoded = decode(&path, 1024 * 1024)?;
+        let decoded = decode(&path, MIB)?;
         assert_eq!(decoded.frames.len(), 2);
         assert_eq!(decoded.frames[0].delay, Duration::from_millis(100));
         Ok(())
@@ -155,6 +157,57 @@ mod system_trash {
         assert!(link.is_symlink());
         assert_eq!(std::fs::read(target)?, b"Keep the original image");
 
+        Ok(())
+    }
+}
+
+mod resize {
+    use anyhow::Result;
+    use image::{Rgba, RgbaImage};
+
+    use crate::services::resize::{Region, downscale, fit_within};
+
+    #[test]
+    fn fitting_keeps_aspect_ratio_and_never_enlarges() {
+        assert_eq!(fit_within(6000, 4000, 2048, 2048), [2048, 1365]);
+        assert_eq!(fit_within(640, 320, 192, 192), [192, 96]);
+        assert_eq!(fit_within(100, 50, 192, 128), [100, 50]);
+        assert_eq!(fit_within(1, 10_000, 192, 128), [1, 128]);
+    }
+
+    #[test]
+    fn transparent_pixels_do_not_tint_their_neighbors() -> Result<()> {
+        let mut pixels = RgbaImage::new(2, 1);
+        pixels.put_pixel(0, 0, Rgba([255, 0, 0, 255]));
+        pixels.put_pixel(1, 0, Rgba([0, 255, 0, 0]));
+
+        let averaged = downscale(&pixels, None, 1, 1)?;
+        let [red, green, _, alpha] = averaged.get_pixel(0, 0).0;
+
+        assert!(red > 245, "Red was {red}");
+        assert!(
+            green < 10,
+            "A transparent green pixel tinted the result: {green}"
+        );
+        assert!((120..=135).contains(&alpha));
+        Ok(())
+    }
+
+    #[test]
+    fn regions_select_source_pixels() -> Result<()> {
+        let pixels = RgbaImage::from_fn(4, 2, |x, _| {
+            Rgba([if x < 2 { 0 } else { 200 }, 0, 0, 255])
+        });
+        let region = Region {
+            x: 2,
+            y: 0,
+            width: 2,
+            height: 2,
+        };
+
+        let tile = downscale(&pixels, Some(region), 1, 1)?;
+
+        assert_eq!(tile.get_pixel(0, 0).0, [200, 0, 0, 255]);
         Ok(())
     }
 }

@@ -5,6 +5,7 @@ pub(crate) mod folder_scan;
 pub(crate) mod image_decode;
 pub(crate) mod image_loader;
 pub(crate) mod image_workers;
+pub(crate) mod resize;
 pub(crate) mod system_trash;
 
 #[cfg(test)]

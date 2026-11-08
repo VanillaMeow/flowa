@@ -1,5 +1,7 @@
 //! Human-readable formatting without UI dependencies
 
+use super::units::{GIB, KIB, MIB};
+
 /// Formats playback times without losing the hour component of long videos
 pub fn media_time(seconds: f64) -> String {
     let seconds = if seconds.is_finite() {
@@ -18,10 +20,6 @@ pub fn media_time(seconds: f64) -> String {
 
 /// Formats sizes with binary (IEC) units, matching how the memory limit is measured
 pub fn file_size(bytes: u64) -> String {
-    const KIB: u64 = 1024;
-    const MIB: u64 = KIB * 1024;
-    const GIB: u64 = MIB * 1024;
-
     match bytes {
         0..KIB => format!("{bytes} B"),
         KIB..MIB => format!("{:.1} KiB", bytes as f64 / KIB as f64),
