@@ -208,7 +208,7 @@ fn video_decoder(
     } else if decoders.is_none() {
         "Detecting hardware decoders…"
     } else {
-        "Unsupported codecs fall back to software decoding"
+        "Videos a decoder can't play fall back to another decoder"
     };
     ui.label(RichText::new(explanation).small().color(colors.muted));
 }

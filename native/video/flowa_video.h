@@ -7,6 +7,10 @@
 
 #define FLOWA_VIDEO_SLOTS 3
 
+// Returned by flowa_gpu_render when the renderer cannot import a decoded frame, so
+// playback can switch to another decoder
+#define FLOWA_RENDER_UNSUPPORTED_FRAME -2
+
 struct flowa_gpu;
 struct AVFrame;
 struct AVStream;

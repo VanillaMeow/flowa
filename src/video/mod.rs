@@ -44,6 +44,27 @@ pub(crate) struct AudioInfo {
     pub bit_rate: u64,
 }
 
+/// A decoder that couldn't play the video and the one that took over
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DecoderFallback {
+    pub from: VideoDecoder,
+    pub to: VideoDecoder,
+}
+
+impl DecoderFallback {
+    pub fn message(self) -> String {
+        let replacement = match self.to {
+            VideoDecoder::Software => "software decoding".to_owned(),
+            hardware => hardware.as_ref().to_owned(),
+        };
+
+        format!(
+            "Switched to {replacement} because {} couldn't play this video",
+            self.from.as_ref()
+        )
+    }
+}
+
 /// Playback properties reported by the FFmpeg player
 ///
 /// Times are seconds, volume is a percentage, and size includes display aspect ratio
@@ -59,6 +80,8 @@ pub(crate) struct VideoState {
     pub size: [u32; 2],
     /// The decoder producing frames, or `None` while candidates are still being tried
     pub decoder: Option<VideoDecoder>,
+    /// Set once frames come from a different decoder than expected
+    pub fallback: Option<DecoderFallback>,
     pub codec: &'static str,
     pub audio: Option<AudioInfo>,
     pub error: Option<String>,
@@ -103,6 +126,7 @@ impl Default for VideoState {
             volume: 100.,
             size: [0; 2],
             decoder: None,
+            fallback: None,
             codec: "",
             audio: None,
             error: None,
@@ -126,6 +150,7 @@ pub(crate) struct VideoSession {
     pub texture: Option<egui::TextureId>,
     player: Option<player::Player>,
     unavailable: Option<String>,
+    notice: Option<String>,
 }
 
 impl VideoSession {
@@ -199,8 +224,15 @@ impl VideoSession {
             return;
         };
 
+        let previous_fallback = self.state.fallback;
         player.poll(&mut self.state);
         let repaint_after = player.repaint_after();
+
+        if let Some(fallback) = self.state.fallback
+            && previous_fallback != Some(fallback)
+        {
+            self.notice = Some(fallback.message());
+        }
 
         if self.state.ready() {
             match player.render(self.state.size) {
@@ -214,6 +246,11 @@ impl VideoSession {
         if self.state.active && playing && self.state.error.is_none() {
             ctx.request_repaint_after(repaint_after);
         }
+    }
+
+    /// A message for the user about a change playback made on its own, shown once
+    pub fn take_notice(&mut self) -> Option<String> {
+        self.notice.take()
     }
 
     /// Reports whether this window has an initialized Vulkan playback backend

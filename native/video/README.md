@@ -24,10 +24,11 @@ the shim during the build.
 
 ## Decoding
 
-Auto tries NVDEC, Vulkan Video, VA-API, then software decoding. Users can pick a
-decoder in Preferences → Performance; unsupported codecs still fall back to
-software. If a hardware decoder fails mid-playback, flowa switches to software and
-seeks back to the same position.
+Auto tries NVDEC, Vulkan Video, VA-API, then software decoding. Choosing NVDEC or
+VA-API in Preferences → Performance falls back to Vulkan Video, then software.
+A decoder that fails to decode, or whose frames the renderer can't import, hands
+over to the next one, which resumes at the same position. Switching away from the
+chosen decoder, or from one that failed during playback, shows a notice.
 
 Hardware frames stay on the GPU. Software frames upload into reusable textures.
 Both go through the same libplacebo color conversion and tone mapping to SDR.
@@ -77,7 +78,7 @@ Other ignored tests:
 
 ```sh
 cargo test unsupported_hardware_falls_back_to_software -- --ignored --nocapture
-cargo test hardware_failure_recovers_with_software_frames -- --ignored --nocapture
+cargo test hardware_failure_recovers_with_the_next_decoder -- --ignored --nocapture
 cargo test video_posters_handle -- --ignored --nocapture
 cargo test seek_recovers_after_an_interrupted_avio_read -- --ignored --nocapture
 ```

@@ -342,6 +342,10 @@ impl Flowa {
         self.poll(ctx);
         self.video.poll(ctx);
 
+        if let Some(notice) = self.video.take_notice() {
+            self.ui.dialogs.notify(notice, false);
+        }
+
         let commands =
             keyboard::read(ctx, self.ui.dialogs.is_open(), self.ui.preferences.open);
         self.handle_commands(commands, ctx);

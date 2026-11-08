@@ -1,8 +1,9 @@
 //! Declarations for the Vulkan/libplacebo shim and SDL3 audio, generated from their headers
 
-use std::ffi::{CStr, c_char, c_int};
-
-use anyhow::{Result, ensure};
+use std::{
+    ffi::{CStr, c_char, c_int},
+    fmt,
+};
 
 mod bindings {
     #![allow(
@@ -34,12 +35,38 @@ pub(super) use bindings::*;
 /// The header defines this as a cast expression, which bindgen cannot translate
 pub(super) const SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK: SDL_AudioDeviceID = 0xFFFF_FFFF;
 
-/// Preserves the native error while keeping all temporary C buffers inside the call
-pub(super) fn check(call: impl FnOnce(*mut c_char, usize) -> c_int) -> Result<c_int> {
+/// A negative status from the shim with the message it wrote
+#[derive(Debug)]
+pub(super) struct NativeError {
+    pub status: c_int,
+    message: String,
+}
+
+impl fmt::Display for NativeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for NativeError {}
+
+/// Runs a shim call that reports failures as a negative status plus a message
+///
+/// The message buffer lives only for the duration of the call
+pub(super) fn call(
+    call: impl FnOnce(*mut c_char, usize) -> c_int,
+) -> Result<c_int, NativeError> {
     let mut error = [0; 768];
-    let result = call(error.as_mut_ptr(), error.len());
-    ensure!(result >= 0, "{}", error_message(&error));
-    Ok(result)
+    let status = call(error.as_mut_ptr(), error.len());
+
+    if status < 0 {
+        return Err(NativeError {
+            status,
+            message: error_message(&error),
+        });
+    }
+
+    Ok(status)
 }
 
 fn error_message(error: &[c_char]) -> String {

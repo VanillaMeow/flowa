@@ -289,14 +289,17 @@ impl Engine {
         }
     }
 
-    pub fn render(&mut self, target: &native::flowa_video_target) -> Result<()> {
-        let current = self
-            .current
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No video frame is available"))?;
+    /// Draws the current frame into the target, returning whether anything was drawn
+    ///
+    /// A frame the renderer cannot import switches to the next decoder instead of failing
+    pub fn render(&mut self, target: &native::flowa_video_target) -> Result<bool> {
+        let Some(current) = &self.current else {
+            return Ok(false);
+        };
         let shared = self
             .shared
             .as_ref()
+            .map(Arc::clone)
             .ok_or_else(|| anyhow::anyhow!("No media is open"))?;
         let stream = shared
             .lock()
@@ -306,7 +309,7 @@ impl Engine {
             .ok_or_else(|| anyhow::anyhow!("No video stream is available"))?;
 
         // SAFETY: Borrowed frames and stream parameters outlive the call; C retains GPU-flight references
-        let result = native::check(|error, size| unsafe {
+        let result = native::call(|error, size| unsafe {
             native::flowa_gpu_render(
                 self.gpu.handle.as_ptr(),
                 current.frame.raw(),
@@ -316,11 +319,32 @@ impl Engine {
                 size,
             )
         });
+
+        let error = match result {
+            Ok(status) => {
+                ensure!(status > 0, "The video frame could not be rendered");
+                return Ok(true);
+            }
+            Err(error) => error,
+        };
+
+        let unsupported = error.status == native::FLOWA_RENDER_UNSUPPORTED_FRAME;
+        let result = if unsupported && self.can_fallback() {
+            // The frame can never be shown, so wait for the next decoder's frames
+            self.current = None;
+            self.recover_decoder(&shared, error.into())
+        } else {
+            Err(error.into())
+        };
+
         if let Err(error) = &result {
-            shared.fail(error);
+            shared.fail(format!("{error:#}"));
         }
-        ensure!(result? > 0, "The video frame could not be rendered");
-        Ok(())
+        result.map(|()| false)
+    }
+
+    fn can_fallback(&self) -> bool {
+        self.decoder.as_ref().is_some_and(Decoder::can_fallback)
     }
 
     fn prepare(&mut self, shared: &Shared) -> Result<bool> {
@@ -432,17 +456,25 @@ impl Engine {
         Ok(())
     }
 
+    /// Restarts decoding at the current position with the next decoder candidate
     fn recover_decoder(&mut self, shared: &Shared, error: anyhow::Error) -> Result<()> {
-        if !self.decoder.as_ref().is_some_and(Decoder::can_fallback) {
+        let Some(failed) = self
+            .decoder
+            .as_ref()
+            .filter(|decoder| decoder.can_fallback())
+            .map(Decoder::backend_name)
+        else {
             return Err(error);
-        }
+        };
 
         let position = shared.lock().position(Instant::now())?;
         self.seek(position)?;
-        log::warn!("Hardware video decoding failed: {error:#}. Retrying in software");
+        log::warn!(
+            "{failed} video decoding failed: {error:#}. Trying the next decoder"
+        );
 
         if let Some(decoder) = &mut self.decoder {
-            decoder.use_software()?;
+            decoder.fall_back()?;
         }
         self.pending = None;
 
@@ -524,6 +556,7 @@ impl Engine {
             volume: state.volume,
             size,
             decoder: self.decoder.as_ref().and_then(|decoder| decoder.selected),
+            fallback: self.decoder.as_ref().and_then(|decoder| decoder.fallback),
             codec: info.map_or("", |info| info.codec),
             audio: info.and_then(|info| info.audio),
             error: state.error.clone(),
@@ -574,7 +607,7 @@ mod tests {
 
     #[test]
     #[ignore = "Requires Vulkan, a hardware H.264 decoder, and ffmpeg with libx264"]
-    fn hardware_failure_recovers_with_software_frames() -> Result<()> {
+    fn hardware_failure_recovers_with_the_next_decoder() -> Result<()> {
         let folder = tempfile::tempdir()?;
         let clip = folder.path().join("recovery.mp4");
         let generated = std::process::Command::new("ffmpeg")
@@ -633,7 +666,11 @@ mod tests {
         );
 
         let state = pump(&mut engine, |state| {
-            state.video.decoder == Some(VideoDecoder::Software) && !state.video.seeking
+            state
+                .video
+                .decoder
+                .is_some_and(|decoder| decoder != hardware)
+                && !state.video.seeking
         })?
         .video;
         ensure!(state.paused, "Recovery changed pause state");
@@ -642,6 +679,12 @@ mod tests {
             "Recovery lost the playback position"
         );
         ensure!(state.size == [320, 180], "Recovery lost frame dimensions");
+        ensure!(
+            state
+                .fallback
+                .is_some_and(|fallback| fallback.from == hardware),
+            "The decoder switch was not reported"
+        );
 
         // A terminal import failure stops the demux worker and latches the UI error
         shared.fail("Injected frame import failure");

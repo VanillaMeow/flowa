@@ -19,6 +19,7 @@ use super::{
 use crate::{
     settings::VideoDecoder,
     video::{
+        DecoderFallback,
         gpu::NativeGpu,
         media::{DeviceRef, Packet, Receive, Sent, Stream},
         native,
@@ -43,9 +44,10 @@ impl Backend {
     fn candidates(preference: VideoDecoder) -> &'static [Self] {
         match preference {
             VideoDecoder::Auto => Self::VARIANTS,
-            VideoDecoder::Nvdec => &[Self::Nvdec, Self::Software],
+            // Vulkan Video runs on any GPU with a video queue, so it backs up the others
+            VideoDecoder::Nvdec => &[Self::Nvdec, Self::Vulkan, Self::Software],
             VideoDecoder::Vulkan => &[Self::Vulkan, Self::Software],
-            VideoDecoder::Vaapi => &[Self::Vaapi, Self::Software],
+            VideoDecoder::Vaapi => &[Self::Vaapi, Self::Vulkan, Self::Software],
             VideoDecoder::Software => &[Self::Software],
         }
     }
@@ -187,6 +189,10 @@ pub(super) struct Decoder {
     backend: Option<Backend>,
     /// The backend that produced the first frame, once probing has finished
     pub selected: Option<VideoDecoder>,
+    /// The decoder the user chose, or the one that failed during playback
+    expected: Option<VideoDecoder>,
+    /// Set when the selected backend differs from the expected one
+    pub fallback: Option<DecoderFallback>,
     probe: Vec<Packet>,
     probe_bytes: usize,
     replay: usize,
@@ -210,6 +216,12 @@ impl Decoder {
             candidates: Backend::candidates(preference),
             backend: None,
             selected: None,
+            // Auto quietly skips decoders this computer lacks, so only explicit choices count
+            expected: match preference {
+                VideoDecoder::Auto | VideoDecoder::Software => None,
+                hardware => Some(hardware),
+            },
+            fallback: None,
             probe: Vec::new(),
             probe_bytes: 0,
             replay: 0,
@@ -230,6 +242,7 @@ impl Decoder {
         self.eof = false;
     }
 
+    /// Hardware backends are always followed by at least the software decoder
     pub fn can_fallback(&self) -> bool {
         matches!(
             self.backend,
@@ -237,12 +250,19 @@ impl Decoder {
         )
     }
 
-    pub fn use_software(&mut self) -> Result<()> {
+    /// The active backend's name, for logs
+    pub fn backend_name(&self) -> &'static str {
+        self.backend.map_or("no decoder", Into::into)
+    }
+
+    /// Replaces the active backend with the next candidate after it failed
+    ///
+    /// The caller seeks afterwards so the new decoder starts from a keyframe
+    pub fn fall_back(&mut self) -> Result<()> {
+        self.expected = self.backend.map(Backend::preference);
         self.clear_probe();
         self.probing = true;
         self.selected = None;
-        self.candidates = &[Backend::Software];
-        self.candidate = 0;
         self.open_next()
     }
 
@@ -264,6 +284,7 @@ impl Decoder {
                         self.selected = self.backend.map(Backend::preference);
                         self.probing = false;
                         self.clear_probe();
+                        self.note_fallback();
                     }
                     return Ok(Some(frame));
                 }
@@ -415,6 +436,16 @@ impl Decoder {
         )
     }
 
+    fn note_fallback(&mut self) {
+        let (Some(from), Some(to)) = (self.expected.take(), self.selected) else {
+            return;
+        };
+
+        if from != to {
+            self.fallback = Some(DecoderFallback { from, to });
+        }
+    }
+
     fn clear_probe(&mut self) {
         self.probe.clear();
         self.probe_bytes = 0;
@@ -437,11 +468,11 @@ mod tests {
     }
 
     #[test]
-    fn an_explicit_decoder_only_falls_back_to_software() {
+    fn an_explicit_decoder_falls_back_through_vulkan_to_software() {
         for (preference, expected) in [
-            (VideoDecoder::Nvdec, vec!["nvdec", "software"]),
+            (VideoDecoder::Nvdec, vec!["nvdec", "vulkan", "software"]),
             (VideoDecoder::Vulkan, vec!["vulkan", "software"]),
-            (VideoDecoder::Vaapi, vec!["vaapi", "software"]),
+            (VideoDecoder::Vaapi, vec!["vaapi", "vulkan", "software"]),
             (VideoDecoder::Software, vec!["software"]),
         ] {
             let names: Vec<&'static str> = Backend::candidates(preference)

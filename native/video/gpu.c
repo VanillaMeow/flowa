@@ -16,6 +16,12 @@ static int video_error(char *error, size_t size, const char *format, ...) {
     return -1;
 }
 
+static int unsupported_frame(char *error, size_t size, const char *message) {
+    video_error(error, size, "%s", message);
+
+    return FLOWA_RENDER_UNSUPPORTED_FRAME;
+}
+
 struct AVBufferRef *flowa_gpu_create_decoder_device(
     struct flowa_gpu *gpu,
     enum flowa_decoder_backend backend
@@ -411,7 +417,7 @@ int flowa_gpu_render(
     if (source->format == AV_PIX_FMT_CUDA) {
         converted = map_cuda_frame(gpu, source);
         if (!converted) {
-            return video_error(
+            return unsupported_frame(
                 error,
                 error_size,
                 "Cannot transfer the NVDEC frame to Vulkan without CPU readback"
@@ -433,7 +439,7 @@ int flowa_gpu_render(
         if (needs_plane_copy) {
             converted = video_gpu_transfer_vulkan(gpu, source, &transfer);
             if (!converted) {
-                return video_error(
+                return unsupported_frame(
                     error,
                     error_size,
                     "Cannot copy Vulkan decode planes without CPU readback"
@@ -457,7 +463,7 @@ int flowa_gpu_render(
     ) {
         pl_gpu_finish(device);
         free_converted_frame(gpu, &converted, transfer);
-        return video_error(
+        return unsupported_frame(
             error,
             error_size,
             "Cannot map the video frame into the Vulkan renderer"

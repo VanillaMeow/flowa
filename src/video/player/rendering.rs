@@ -79,7 +79,10 @@ impl Pipeline {
             wait_value: ready,
             signal_value: self.timeline,
         };
-        self.engine.render(&frame)?;
+        // Without a drawn frame there is no signal to wait for, and the slot stays free
+        if !self.engine.render(&frame)? {
+            return Ok(());
+        }
 
         // Add the wait only after native rendering has submitted its GPU work
         // UI submissions can continue while the worker prepares shaders and frames
