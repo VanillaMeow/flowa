@@ -1,13 +1,12 @@
 # Building
 
-Run `just` to list commands.
+Run `just` to list every command.
 
-## Local build
+## Requirements
 
-Requires Rust 1.99+, Just, a C compiler, and pkg-config. Video binding generation
-also requires Clang/libclang. Linux video builds need FFmpeg 9+, libplacebo 7.360+,
-SDL3, and Vulkan headers. AVIF and HEIC support need
-dav1d and libheif 1.17+ with an HEVC decoder.
+Rust 1.99+, Just, a C compiler, pkg-config, and Clang. For video, AVIF, and HEIC
+you also need FFmpeg 9+, libplacebo 7.360+, SDL3, Vulkan headers, dav1d, and
+libheif 1.17+ with an HEVC decoder.
 
 On Arch Linux:
 
@@ -16,133 +15,62 @@ sudo pacman -S --needed rust just base-devel pkgconf clang cmake wayland \
     libxkbcommon dav1d libheif ffmpeg libplacebo sdl3 vulkan-headers
 ```
 
-Build and run:
+## Build and install
 
 ```sh
-just build
-./target/release/flowa /path/to/file
+just install    # Build for this computer's CPU and install under ~/.local
+just uninstall  # Remove it again, keeping your settings
 ```
 
-Cargo generates FFmpeg bindings from the installed SDK and compiles the C GPU
-shim automatically. Local builds use system media libraries and are optimized for
-this computer's CPU. To share a build with other machines that have the same
-system libraries, build without CPU-specific instructions instead:
+| Build | Install | Output | Use it for |
+| --- | --- | --- | --- |
+| `just build` | `just install` | `target/release` | This computer |
+| `just build-generic` | `just install-generic` | `target/generic` | Other computers with the same libraries |
+| `just portable` | `just install-portable` | `target/x86_64-unknown-linux-gnu/portable` | Any x86_64 Linux |
+| `just portable-native` | `just install-portable-native` | `target/x86_64-unknown-linux-gnu/portable-native` | This computer, without installing system libraries |
 
-```sh
-just build-generic
-./target/generic/flowa /path/to/file
-```
+Each build type keeps its own output folder, so switching between them doesn't
+trigger a rebuild. `just run /path/to/file` builds and opens a debug build.
 
-Each flavor uses its own Cargo profile and output folder, so switching between
-them does not rebuild the other.
-
-`just run /path/to/file` builds and runs a debug version. Plain Cargo commands work
-as well. To build without video, AVIF, or HEIF:
+To build without video, AVIF, or HEIC, which needs none of the media libraries:
 
 ```sh
 cargo build --release --no-default-features
 ```
 
-On Windows, use that command with Rust MSVC and the Visual Studio C++ build tools.
+## Portable builds
 
-Linux file dialogs and trash operations need a working desktop portal and D-Bus.
+Portable builds need only Just and Podman (or Docker, with
+`CONTAINER_ENGINE=docker`). They produce a single executable with the media
+libraries built in. It runs on glibc 2.39+ and needs a Vulkan driver and an
+audio backend.
 
-## Windows Vulkan build preparation
+`just portable-native` is tuned for the CPU it's built on, so it may not run on
+other machines. It suits image-based distributions such as Aurora, where adding
+system packages is awkward.
 
-The video source path is enabled for Windows, with Vulkan as the primary GUI and
-video renderer. Native Windows compilation, packaging, and GPU playback have not
-yet been validated. This is not a completed Windows release milestone.
+Builds use every CPU core. Set `CARGO_BUILD_JOBS` to use fewer if the machine runs
+out of memory. Downloaded sources are cached in `.cache/portable-deps`.
 
-Use an x64 MSVC developer environment with Rust, Clang/libclang, pkg-config, and
-an SDK containing FFmpeg 9+, libplacebo 7.360+, SDL3 3.2+, and Vulkan headers.
-The SDK must provide matching headers, MSVC-compatible import libraries, runtime
-DLLs, and `.pc` files with valid include and library paths. Configure
-`PKG_CONFIG_PATH` for that SDK and `LIBCLANG_PATH` if libclang is outside its normal
-search path. Put runtime DLLs on `PATH` or alongside the executable.
+The portable build patches FFmpeg to fix Vulkan Video decoding. See the
+[video backend notes](native/video/README.md) for details.
 
-Build the video path without requiring the optional AVIF/HEIF SDKs:
+## Windows
+
+Windows support is untested. With Rust MSVC, Clang, and an SDK that provides the
+video libraries through pkg-config, try:
 
 ```sh
 cargo build --locked --release --no-default-features --features video
 ```
 
-FFmpeg must be built with the intended hardware paths. NVDEC needs the compatible
-NVIDIA driver and CUDA/Vulkan interoperability; Vulkan Video needs the matching
-driver and codec capabilities. VA-API is skipped on Windows. Run the native tests
-from the [video guide](native/video/README.md#validation) on Windows hardware before
-declaring any GPU/codec combination supported.
-
-Auto tries Vulkan first and retries DX12 for GUI startup if necessary. Video on a
-DX12 renderer remains planned work. `static-video` currently supports Linux only;
-Windows DLL assembly and deployment remain part of native validation and packaging.
-
-## Portable Linux build
-
-Requires Just and Podman or Docker. The container supplies Rust and the native SDK;
-Ubuntu 24.04's system FFmpeg is too old for a local video build.
-
-```sh
-just portable
-```
-
-Output: `target/x86_64-unknown-linux-gnu/portable/flowa`
-
-This is one x86_64 executable with statically linked media libraries. It requires
-glibc 2.39+, a Vulkan loader, GPU drivers, and a host audio backend. Video decoding
-prefers compatible hardware and falls back to CPU decoding. Rendering still
-requires Vulkan, including when decoding on the CPU.
-
-Sources are checksum-verified and cached in `.cache/portable-deps`. Builds use every
-CPU core; set `CARGO_BUILD_JOBS` to limit them on machines with little memory. `just portable` uses the generic
-x86-64 CPU baseline. `CONTAINER_ENGINE=docker` selects Docker explicitly.
-
-`just portable-native` builds the same self-contained executable tuned for the
-computer running the build, into `target/x86_64-unknown-linux-gnu/portable-native/flowa`.
-Containers see the host's CPU, so the tuning matches the machine. The result may
-not run on other CPUs, so build it on the computer that will use it. This suits
-image-based distributions such as Aurora, where adding system packages is awkward:
-only Podman and Just are needed, and `just install-portable-native` builds and
-installs it in one step. Media libraries stay generic and already choose
-SIMD instructions at runtime, so both flavors share one dependency cache.
-The build checks the executable's shared dependencies, RPATH, and glibc baseline.
-
-FFmpeg remains pinned to 9.0, validated with NVIDIA 580 and its CUDA 13.0 driver
-API. Revalidate NVDEC before changing the FFmpeg or NVIDIA codec-header versions.
-The local FFmpeg 9.0.2-100 package has a separate CUDA 13.0 compatibility patch;
-its playback results do not establish compatibility for unpatched 9.0.2 builds.
-
-The portable SDK applies `tools/portable/ffmpeg-vulkan-frames.patch` before building
-FFmpeg. It restricts Vulkan decode-image flags to those supported by the video
-profile and fixes access-mask bookkeeping and decoder synchronization. Native
-system-library builds need equivalent fixes for affected drivers. CUDA compatibility
-patches alone do not resolve this Vulkan allocation issue.
-
-`just portable-host` runs the same build on an already prepared Linux host, and
-`FLOWA_PORTABLE_CPU=native just portable-host` tunes it for that host.
-The required SDK packages are listed in `tools/portable/Containerfile`.
-
 ## Development
 
 | Command | Action |
 | --- | --- |
-| `just fmt` | Format Rust and C |
-| `just check` | Check Rust formatting, run Clippy, and check the minimal feature build |
-| `just test` | Run ordinary tests |
+| `just fmt` | Format Rust and C (C needs Uncrustify) |
+| `just check` | Check formatting, run Clippy, and check the build without optional features |
+| `just test` | Run tests |
 
-Install Uncrustify to format C with `just fmt`. `UNCRUSTIFY` can select an alternate
-executable. Cargo compiles the C shim during video builds.
-
-C formatting follows `uncrustify.cfg`. For editor formatting, pass the buffer to
-`uncrustify -q -c /path/to/flowa/uncrustify.cfg -l C`. Clangd's built-in formatter
-is disabled so it cannot undo the vertical header layout.
-
-See [video validation](native/video/README.md#validation) for hardware tests.
-
-## Install on Linux
-
-`just install` builds for this computer and installs under `~/.local`, including
-the desktop entry and icon. `just install-generic` installs the generic build
-instead, and `just install-portable` or `just install-portable-native` builds and
-installs the matching portable executable. Builds are cached, so installing again
-without changes does not recompile. `just uninstall` removes the installation and preserves
-preferences.
+C code follows `uncrustify.cfg`. Hardware playback tests are described in the
+[video backend notes](native/video/README.md#validation).

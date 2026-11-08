@@ -1,4 +1,4 @@
-//! Shares a libplacebo-created Vulkan device with wgpu and FFmpeg
+//! Shares the shim's Vulkan device with wgpu
 
 use std::{
     collections::HashMap,

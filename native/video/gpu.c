@@ -1,4 +1,4 @@
-// Shared Vulkan device creation and hardware and software frame rendering
+// FFmpeg hardware devices and libplacebo rendering of hardware and software frames
 #include "internal.h"
 
 #include <libplacebo/utils/libav.h>
