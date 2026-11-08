@@ -27,9 +27,13 @@ run *args:
 portable:
     tools/portable/container.sh
 
-# Build portable on a prepared host, including the builder container
-[private]
+# Build the single executable for this computer's CPU in the pinned Linux container
 portable-native:
+    FLOWA_PORTABLE_CPU=native tools/portable/container.sh
+
+# Build portable on a prepared host without the container; set FLOWA_PORTABLE_CPU=native to tune
+[private]
+portable-host:
     tools/portable/build.sh
 
 # Format Rust and C sources
@@ -56,9 +60,13 @@ install: build
 install-generic: build-generic
     tools/install.sh install {{ quote(target_dir / "generic/flowa") }}
 
-# Install the last portable build without rebuilding it
-install-portable:
+# Build the portable executable and install it locally
+install-portable: portable
     tools/install.sh install {{ quote(target_dir / "x86_64-unknown-linux-gnu/portable/flowa") }}
+
+# Build the portable executable for this computer's CPU and install it locally
+install-portable-native: portable-native
+    tools/install.sh install {{ quote(target_dir / "x86_64-unknown-linux-gnu/portable-native/flowa") }}
 
 # Remove the local installation, preserving preferences
 uninstall:

@@ -10,6 +10,22 @@ if [[ $# -gt 1 || ($# == 1 && $1 != --print-native-cache-key) ]]; then
     exit 2
 fi
 
+# Generic executables run on any x86-64 CPU; native ones only on the CPU that built them
+case ${FLOWA_PORTABLE_CPU:-generic} in
+    generic)
+        target_cpu=x86-64
+        profile=portable
+        ;;
+    native)
+        target_cpu=native
+        profile=portable-native
+        ;;
+    *)
+        printf '%s\n' 'FLOWA_PORTABLE_CPU must be generic or native.' >&2
+        exit 2
+        ;;
+esac
+
 if [[ $(uname -s) != Linux || $(rustc -vV | sed -n 's/^host: //p') != x86_64-unknown-linux-gnu ]]; then
     printf '%s\n' 'Portable builds require native x86_64 GNU/Linux.' >&2
     exit 1
@@ -69,11 +85,12 @@ export SYSTEM_DEPS_DAV1D_LINK=static
 export SYSTEM_DEPS_DAV1D_BUILD_INTERNAL=never
 export SYSTEM_DEPS_LIBHEIF_LINK=static
 
-# Portable artifacts keep the generic CPU baseline regardless of local settings
-export CARGO_ENCODED_RUSTFLAGS=$'-C\x1ftarget-cpu=x86-64'
-cargo build --locked --profile portable --target x86_64-unknown-linux-gnu \
+# The CPU target replaces local Rust flags; media libraries above stay generic and
+# choose SIMD at runtime, so both flavors share one dependency cache
+export CARGO_ENCODED_RUSTFLAGS="-C"$'\x1f'"target-cpu=$target_cpu"
+cargo build --locked --profile "$profile" --target x86_64-unknown-linux-gnu \
     --no-default-features --features avif,heif,static-video
 
-binary="$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/portable/flowa"
+binary="$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/$profile/flowa"
 "$project_dir/tools/checks/portable.sh" "$binary" "${FLOWA_MAX_GLIBC:-2.39}"
 printf 'Portable executable: %s\n' "$binary"

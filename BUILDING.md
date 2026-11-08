@@ -93,8 +93,17 @@ prefers compatible hardware and falls back to CPU decoding. Rendering still
 requires Vulkan, including when decoding on the CPU.
 
 Sources are checksum-verified and cached in `.cache/portable-deps`. Builds use two
-jobs by default; override with `CARGO_BUILD_JOBS`. Portable builds always use the
-generic x86-64 CPU baseline. `CONTAINER_ENGINE=docker` selects Docker explicitly.
+jobs by default; override with `CARGO_BUILD_JOBS`. `just portable` uses the generic
+x86-64 CPU baseline. `CONTAINER_ENGINE=docker` selects Docker explicitly.
+
+`just portable-native` builds the same self-contained executable tuned for the
+computer running the build, into `target/x86_64-unknown-linux-gnu/portable-native/flowa`.
+Containers see the host's CPU, so the tuning matches the machine. The result may
+not run on other CPUs, so build it on the computer that will use it. This suits
+image-based distributions such as Aurora, where adding system packages is awkward:
+only Podman and Just are needed, and `just install-portable-native` builds and
+installs it in one step. Media libraries stay generic and already choose
+SIMD instructions at runtime, so both flavors share one dependency cache.
 The build checks the executable's shared dependencies, RPATH, and glibc baseline.
 
 FFmpeg remains pinned to 9.0, validated with NVIDIA 580 and its CUDA 13.0 driver
@@ -108,7 +117,8 @@ profile and fixes access-mask bookkeeping and decoder synchronization. Native
 system-library builds need equivalent fixes for affected drivers. CUDA compatibility
 patches alone do not resolve this Vulkan allocation issue.
 
-`just portable-native` runs the same build on an already prepared Linux host.
+`just portable-host` runs the same build on an already prepared Linux host, and
+`FLOWA_PORTABLE_CPU=native just portable-host` tunes it for that host.
 The required SDK packages are listed in `tools/portable/Containerfile`.
 
 ## Development
@@ -132,6 +142,7 @@ See [video validation](native/video/README.md#validation) for hardware tests.
 
 `just install` builds for this computer and installs under `~/.local`, including
 the desktop entry and icon. `just install-generic` installs the generic build
-instead, and `just install-portable` installs the last `just portable` build
-without rebuilding it. `just uninstall` removes the installation and preserves
+instead, and `just install-portable` or `just install-portable-native` builds and
+installs the matching portable executable. Builds are cached, so installing again
+without changes does not recompile. `just uninstall` removes the installation and preserves
 preferences.

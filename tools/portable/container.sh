@@ -34,4 +34,5 @@ fi
 "$engine" run --rm "${user_flags[@]}" \
     -e CARGO_HOME=/work/target/portable-cargo \
     -e CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" \
+    -e FLOWA_PORTABLE_CPU="${FLOWA_PORTABLE_CPU:-generic}" \
     -v "$project_dir:/work:Z" flowa-portable-builder

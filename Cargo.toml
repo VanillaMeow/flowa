@@ -71,5 +71,9 @@ inherits = "release"
 [profile.portable]
 inherits = "release"
 
+# Build with just portable-native for a static executable tuned to this computer's CPU
+[profile.portable-native]
+inherits = "portable"
+
 [lints.clippy]
 unwrap_used = "warn"
