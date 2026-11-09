@@ -277,3 +277,25 @@ mod worker {
         );
     }
 }
+
+mod tiles {
+    use std::sync::Arc;
+
+    use crate::services::tiles::{TileSource, tile_level, tile_span};
+
+    #[test]
+    fn tile_levels_supply_at_least_the_requested_density() {
+        assert_eq!(tile_level(1.0), 0);
+        assert_eq!(tile_level(0.3), 1);
+        assert_eq!(tile_level(40.0), -6);
+        assert_eq!(tile_level(100_000.0), -9);
+        assert_eq!(tile_span(-3), 128.0);
+    }
+
+    #[test]
+    fn raster_tiles_stop_at_one_sample_per_pixel() {
+        let raster = TileSource::Raster(Arc::new(image::RgbaImage::new(1, 1)));
+
+        assert_eq!(raster.max_density(), 1.0);
+    }
+}
