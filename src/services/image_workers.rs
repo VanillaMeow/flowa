@@ -14,10 +14,13 @@ use egui::{ColorImage, Pos2, Rect, Vec2, pos2, vec2};
 use image::RgbaImage;
 
 use super::{
-    image_decode::{VectorImage, color_image, thumbnail},
+    image_decode::{color_image, thumbnail},
     resize::{self, Region},
 };
-use crate::viewer::image_session::{DecodedFrame, DecodedImage};
+use crate::viewer::{
+    image_session::{DecodedFrame, DecodedImage},
+    vector::VectorImage,
+};
 
 pub const TILE_SIZE: u32 = 1024;
 
@@ -243,9 +246,8 @@ fn raster_tile(
         );
         crop.to_image()
     } else {
-        let width = region.width.div_ceil(stride);
-        let height = region.height.div_ceil(stride);
-        resize::downscale(pixels, Some(region), width, height).ok()?
+        let size = [region.width, region.height].map(|edge| edge.div_ceil(stride));
+        resize::downscale(pixels, Some(region), size).ok()?
     };
 
     Some((tile, bounds))
@@ -313,6 +315,7 @@ mod tests {
     use std::sync::Arc;
 
     use egui::{pos2, vec2};
+    use resvg::usvg::{Options, Tree};
 
     use super::{TileKey, TileSource, VectorImage, tile_level, tile_span};
 
@@ -357,13 +360,9 @@ mod tests {
 
     #[test]
     fn enlarged_vector_tiles_render_at_their_level() -> anyhow::Result<()> {
-        let dir = tempfile::tempdir()?;
-        let path = dir.path().join("blank.svg");
-        std::fs::write(
-            &path,
-            r#"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"/>"#,
-        )?;
-        let source = TileSource::Vector(Arc::new(VectorImage::open(&path)?));
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"/>"#;
+        let tree = Tree::from_str(svg, &Options::default())?;
+        let source = TileSource::Vector(Arc::new(VectorImage::new(tree, 16384.0)));
 
         let tile = source.build(key(-3, 0, 0)).expect("Visible tile");
         assert_eq!(tile.image.size, [160, 80]);

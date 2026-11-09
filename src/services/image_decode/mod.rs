@@ -13,44 +13,40 @@ use image::RgbaImage;
 
 pub use export::{apply_view, export};
 pub use raster::PreloadEstimate;
-pub use vector::VectorImage;
 
 use crate::{
-    utils::units::MIB,
-    viewer::image_session::{DecodedFrame, DecodedImage},
+    utils::{
+        size::{self, rgba_bytes},
+        units::MIB,
+    },
+    viewer::{
+        image_session::{DecodedFrame, DecodedImage},
+        vector::VectorImage,
+    },
 };
 
 use super::{image_workers::THUMBNAIL_SIZE, resize};
 use raster::RasterFile;
+use vector::VectorFile;
 
 const PREVIEW_EDGE: u32 = 2048;
 
 /// Decodes the full image, its preview, and its thumbnail within `budget` bytes
 pub fn decode(path: &Path, budget: u64) -> Result<DecodedImage> {
-    let budget = Budget(budget);
-    let decoded = if vector::is_svg(path) {
-        VectorImage::open(path)?.decode(budget)?
-    } else {
-        RasterFile::new(path, budget).decode()?
-    };
-
-    decoded.into_image(path)
+    ImageFile::new(path, budget).decode()?.into_image(path)
 }
 
 /// Decodes a filmstrip thumbnail within `budget` bytes
 pub fn thumbnail(path: &Path, budget: u64) -> Result<ColorImage> {
-    if vector::is_svg(path) {
-        return Ok(color_image(
-            &VectorImage::open(path)?.render_fitted(THUMBNAIL_SIZE)?,
-        ));
-    }
-
-    RasterFile::new(path, Budget(budget)).thumbnail()
+    ImageFile::new(path, budget).thumbnail()
 }
 
 /// Estimates memory for speculative decoding, or `None` for formats that are never preloaded
 pub fn preload_estimate(path: &Path, budget: u64) -> Result<Option<PreloadEstimate>> {
-    RasterFile::new(path, Budget(budget)).preload_estimate()
+    match ImageFile::new(path, budget) {
+        ImageFile::Raster(file) => file.preload_estimate(),
+        ImageFile::Vector(_) => Ok(None),
+    }
 }
 
 pub fn color_image(pixels: &RgbaImage) -> ColorImage {
@@ -58,6 +54,50 @@ pub fn color_image(pixels: &RgbaImage) -> ColorImage {
         [pixels.width() as usize, pixels.height() as usize],
         pixels.as_raw(),
     )
+}
+
+/// Converts pixels for the GPU, shrinking them first when they exceed `bounds`
+pub fn color_image_within(pixels: &RgbaImage, bounds: [u32; 2]) -> Result<ColorImage> {
+    let full = pixels.dimensions().into();
+    let fitted = size::shrink_to_fit(full, bounds);
+
+    if fitted == full {
+        return Ok(color_image(pixels));
+    }
+
+    Ok(color_image(&resize::downscale(pixels, None, fitted)?))
+}
+
+/// A file chosen by format, with the decoder that reads it
+enum ImageFile<'a> {
+    Raster(RasterFile<'a>),
+    Vector(VectorFile<'a>),
+}
+
+impl<'a> ImageFile<'a> {
+    fn new(path: &'a Path, budget: u64) -> Self {
+        let budget = Budget(budget);
+
+        if VectorFile::matches(path) {
+            Self::Vector(VectorFile::new(path, budget))
+        } else {
+            Self::Raster(RasterFile::new(path, budget))
+        }
+    }
+
+    fn decode(&self) -> Result<Decoded> {
+        match self {
+            Self::Raster(file) => file.decode(),
+            Self::Vector(file) => file.decode(),
+        }
+    }
+
+    fn thumbnail(&self) -> Result<ColorImage> {
+        match self {
+            Self::Raster(file) => file.thumbnail(),
+            Self::Vector(file) => file.thumbnail(),
+        }
+    }
 }
 
 /// The memory, in bytes, that decoding one image may use
@@ -78,10 +118,10 @@ impl Budget {
     }
 
     /// Fails when the RGBA pixels of an image this size would exceed the budget
-    fn check_pixels(self, width: u32, height: u32) -> Result<()> {
-        ensure!(width > 0 && height > 0, "The image has no pixels");
+    fn check_pixels(self, size: [u32; 2]) -> Result<()> {
+        ensure!(size[0] > 0 && size[1] > 0, "The image has no pixels");
 
-        let bytes = u64::from(width) * u64::from(height) * 4;
+        let bytes = rgba_bytes(size);
         ensure!(
             self.allows(bytes),
             "This image needs at least {} MiB of decoded memory. Increase the image memory limit in Preferences.",
@@ -105,7 +145,7 @@ impl Decoded {
             .frames
             .first()
             .context("The image contains no frames")?;
-        let size = [first.pixels.width(), first.pixels.height()];
+        let size = first.pixels.dimensions().into();
         let thumbnail = thumbnail_from_preview(&first.preview)?;
 
         Ok(DecodedImage {
@@ -123,13 +163,7 @@ impl Decoded {
 
 /// Pairs decoded pixels with a downscaled preview for the GPU
 fn make_frame(pixels: RgbaImage, delay: Duration) -> Result<DecodedFrame> {
-    let [width, height] =
-        resize::fit_within(pixels.width(), pixels.height(), PREVIEW_EDGE, PREVIEW_EDGE);
-    let preview = if [width, height] == [pixels.width(), pixels.height()] {
-        color_image(&pixels)
-    } else {
-        color_image(&resize::downscale(&pixels, None, width, height)?)
-    };
+    let preview = color_image_within(&pixels, [PREVIEW_EDGE, PREVIEW_EDGE])?;
 
     Ok(DecodedFrame {
         pixels: Arc::new(pixels),
@@ -140,15 +174,14 @@ fn make_frame(pixels: RgbaImage, delay: Duration) -> Result<DecodedFrame> {
 
 /// Builds the filmstrip thumbnail from a preview, which is far smaller than the source
 fn thumbnail_from_preview(preview: &ColorImage) -> Result<ColorImage> {
-    let [width, height] = [preview.size[0] as u32, preview.size[1] as u32];
-    let [thumbnail_width, thumbnail_height] =
-        resize::fit_within(width, height, THUMBNAIL_SIZE[0], THUMBNAIL_SIZE[1]);
+    let full = preview.size.map(|edge| edge as u32);
+    let thumbnail_size = size::shrink_to_fit(full, THUMBNAIL_SIZE);
 
-    if [thumbnail_width, thumbnail_height] == [width, height] {
+    if thumbnail_size == full {
         return Ok(preview.clone());
     }
 
-    resize::downscale_premultiplied(preview, thumbnail_width, thumbnail_height)
+    resize::downscale_premultiplied(preview, thumbnail_size)
 }
 
 fn format_name(path: &Path) -> String {

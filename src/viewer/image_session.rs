@@ -9,8 +9,7 @@ use anyhow::Result;
 use egui::ColorImage;
 use image::RgbaImage;
 
-use super::playback::Animation;
-use crate::services::image_decode::VectorImage;
+use super::{playback::Animation, vector::VectorImage};
 
 pub struct DecodedFrame {
     pub pixels: Arc<RgbaImage>,

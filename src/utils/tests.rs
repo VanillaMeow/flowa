@@ -54,3 +54,27 @@ mod filename {
         assert!(is_valid("summer photo 01.png"));
     }
 }
+
+mod size {
+    use crate::utils::size::{rgba_bytes, scale_to_fit, shrink_to_fit};
+
+    #[test]
+    fn shrinking_keeps_aspect_ratio_and_never_enlarges() {
+        assert_eq!(shrink_to_fit([6000, 4000], [2048, 2048]), [2048, 1365]);
+        assert_eq!(shrink_to_fit([640, 320], [192, 192]), [192, 96]);
+        assert_eq!(shrink_to_fit([100, 50], [192, 128]), [100, 50]);
+        assert_eq!(shrink_to_fit([1, 10_000], [192, 128]), [1, 128]);
+    }
+
+    #[test]
+    fn scaling_enlarges_small_sizes_to_fill_one_axis() {
+        assert_eq!(scale_to_fit([20, 10], [2048, 2048]), [2048, 1024]);
+        assert_eq!(scale_to_fit([24, 24], [192, 128]), [128, 128]);
+        assert_eq!(scale_to_fit([6000, 4000], [2048, 2048]), [2048, 1365]);
+    }
+
+    #[test]
+    fn rgba_sizes_count_four_bytes_per_pixel() {
+        assert_eq!(rgba_bytes([100_000, 100_000]), 40_000_000_000);
+    }
+}

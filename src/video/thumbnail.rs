@@ -10,7 +10,9 @@ use anyhow::{Context, Result, ensure};
 use image::DynamicImage;
 
 use super::media;
-use crate::services::image_workers::THUMBNAIL_SIZE;
+use crate::services::{
+    image_decode::color_image_within, image_workers::THUMBNAIL_SIZE,
+};
 
 struct Cancellation<'a> {
     generation: &'a AtomicU64,
@@ -56,9 +58,9 @@ pub(super) fn extract(
         3 => image.rotate270(),
         _ => image,
     };
-    let image = image.thumbnail(max_width, max_height).into_rgba8();
 
-    Ok(crate::services::image_decode::color_image(&image))
+    // Quarter turns can leave a poster taller than the box it was scaled for
+    color_image_within(&image.into_rgba8(), THUMBNAIL_SIZE)
 }
 
 #[cfg(test)]

@@ -12,7 +12,7 @@ use image::{
 
 use super::{
     Budget, Decoded, PREVIEW_EDGE, THUMBNAIL_SIZE, color::ColorConversion, color_image,
-    make_frame, resize,
+    make_frame, resize, rgba_bytes, size,
 };
 
 const MAX_ANIMATION_FRAMES: usize = 2000;
@@ -29,14 +29,13 @@ pub struct PreloadEstimate {
 }
 
 impl PreloadEstimate {
-    fn new(width: u32, height: u32, source_bytes: u64) -> Self {
-        let pixels = u64::from(width) * u64::from(height) * 4;
-        let preview = u64::from(width.min(PREVIEW_EDGE))
-            * u64::from(height.min(PREVIEW_EDGE))
-            * 4;
-        let thumbnail = u64::from(width.min(THUMBNAIL_SIZE[0]))
-            * u64::from(height.min(THUMBNAIL_SIZE[1]))
-            * 4;
+    fn new(size: [u32; 2], source_bytes: u64) -> Self {
+        let pixels = rgba_bytes(size);
+        let preview = preview_bytes(size);
+        let thumbnail = rgba_bytes([
+            size[0].min(THUMBNAIL_SIZE[0]),
+            size[1].min(THUMBNAIL_SIZE[1]),
+        ]);
         let retained = pixels.saturating_add(preview).saturating_add(thumbnail);
 
         // Decoding holds the source buffer, its RGBA conversion, and an oriented copy at once
@@ -68,8 +67,7 @@ impl<'a> RasterFile<'a> {
         match reader.format() {
             Some(ImageFormat::Gif) => {
                 let decoder = self.gif()?;
-                let (width, height) = decoder.dimensions();
-                self.budget.check_pixels(width, height)?;
+                self.budget.check_pixels(decoder.dimensions().into())?;
 
                 self.animation(decoder.into_frames(), ColorConversion::new(None))
             }
@@ -102,13 +100,9 @@ impl<'a> RasterFile<'a> {
     /// Decodes the first frame straight to filmstrip size, converting only the small copy
     pub fn thumbnail(&self) -> Result<ColorImage> {
         let (pixels, conversion) = self.upright(self.reader()?.into_decoder()?)?;
-        let [width, height] = resize::fit_within(
-            pixels.width(),
-            pixels.height(),
-            THUMBNAIL_SIZE[0],
-            THUMBNAIL_SIZE[1],
-        );
-        let mut small = resize::downscale(&pixels, None, width, height)?;
+        let thumbnail_size =
+            size::shrink_to_fit(pixels.dimensions().into(), THUMBNAIL_SIZE);
+        let mut small = resize::downscale(&pixels, None, thumbnail_size)?;
 
         conversion.apply(&mut small);
         Ok(color_image(&small))
@@ -119,7 +113,7 @@ impl<'a> RasterFile<'a> {
     pub fn preload_estimate(&self) -> Result<Option<PreloadEstimate>> {
         let reader = self.reader()?;
 
-        let (width, height, source_bytes) = match reader.format() {
+        let (size, source_bytes): ([u32; 2], u64) = match reader.format() {
             Some(ImageFormat::Png) => {
                 let decoder = self.png()?;
 
@@ -127,8 +121,7 @@ impl<'a> RasterFile<'a> {
                     return Ok(None);
                 }
 
-                let (width, height) = decoder.dimensions();
-                (width, height, decoder.total_bytes())
+                (decoder.dimensions().into(), decoder.total_bytes())
             }
             Some(ImageFormat::WebP) => {
                 let decoder = self.webp()?;
@@ -137,22 +130,20 @@ impl<'a> RasterFile<'a> {
                     return Ok(None);
                 }
 
-                let (width, height) = decoder.dimensions();
-                (width, height, decoder.total_bytes())
+                (decoder.dimensions().into(), decoder.total_bytes())
             }
             Some(ImageFormat::Jpeg | ImageFormat::Bmp | ImageFormat::Qoi) => {
                 let decoder = reader.into_decoder()?;
-                let (width, height) = decoder.dimensions();
-                (width, height, decoder.total_bytes())
+                (decoder.dimensions().into(), decoder.total_bytes())
             }
             _ => return Ok(None),
         };
 
-        if width == 0 || height == 0 {
+        if size.contains(&0) {
             return Ok(None);
         }
 
-        Ok(Some(PreloadEstimate::new(width, height, source_bytes)))
+        Ok(Some(PreloadEstimate::new(size, source_bytes)))
     }
 
     fn still(&self, decoder: impl ImageDecoder) -> Result<Decoded> {
@@ -172,8 +163,7 @@ impl<'a> RasterFile<'a> {
         mut decoder: impl ImageDecoder,
     ) -> Result<(RgbaImage, ColorConversion)> {
         decoder.set_limits(self.budget.limits())?;
-        let (width, height) = decoder.dimensions();
-        self.budget.check_pixels(width, height)?;
+        self.budget.check_pixels(decoder.dimensions().into())?;
 
         let conversion =
             ColorConversion::new(decoder.icc_profile().ok().flatten().as_deref());
@@ -207,9 +197,7 @@ impl<'a> RasterFile<'a> {
             conversion.apply(&mut pixels);
 
             // Account for both source pixels and the preview retained for each frame
-            let preview = u64::from(pixels.width().min(PREVIEW_EDGE))
-                * u64::from(pixels.height().min(PREVIEW_EDGE))
-                * 4;
+            let preview = preview_bytes(pixels.dimensions().into());
             used = used
                 .saturating_add(pixels.as_raw().len() as u64)
                 .saturating_add(preview);
@@ -258,4 +246,9 @@ impl<'a> RasterFile<'a> {
     fn png(&self) -> Result<PngDecoder<FileReader>> {
         Ok(PngDecoder::with_limits(self.file()?, self.budget.limits())?)
     }
+}
+
+/// An upper bound on the memory a frame's preview keeps
+fn preview_bytes(size: [u32; 2]) -> u64 {
+    rgba_bytes(size.map(|edge| edge.min(PREVIEW_EDGE)))
 }

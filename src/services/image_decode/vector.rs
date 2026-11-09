@@ -1,4 +1,4 @@
-//! SVG documents that render sharply at any scale
+//! SVG files parsed into vector images
 
 use std::{
     path::Path,
@@ -6,96 +6,45 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, Result, ensure};
-use egui::Pos2;
-use image::RgbaImage;
-use resvg::{
-    tiny_skia::{Pixmap, Transform},
-    usvg::{Options, Tree, fontdb},
-};
+use anyhow::{Result, ensure};
+use egui::{ColorImage, Pos2};
+use resvg::usvg::{Options, Tree, fontdb};
 
-use super::{Budget, Decoded, PREVIEW_EDGE, color_image};
-use crate::{utils::units::MIB, viewer::image_session::DecodedFrame};
+use super::{Budget, Decoded, PREVIEW_EDGE, THUMBNAIL_SIZE, color_image};
+use crate::{
+    utils::units::MIB,
+    viewer::{image_session::DecodedFrame, vector::VectorImage},
+};
 
 const MAX_SOURCE_BYTES: u64 = 32 * MIB;
 /// The longest edge of the pixels kept for copying and exporting
 const MAX_PIXEL_EDGE: f32 = 16384.0;
 
-pub(super) fn is_svg(path: &Path) -> bool {
-    path.extension().is_some_and(|ext| {
-        ext.eq_ignore_ascii_case("svg") || ext.eq_ignore_ascii_case("svgz")
-    })
+/// One SVG file, decoded within a memory budget
+pub(super) struct VectorFile<'a> {
+    path: &'a Path,
+    budget: Budget,
 }
 
-/// A parsed SVG, measured in image pixels at its intrinsic size
-pub struct VectorImage {
-    tree: Tree,
-    /// Image pixels per SVG unit, below one only for SVGs beyond the pixel limit
-    units: f32,
-    size: [u32; 2],
-}
-
-impl VectorImage {
-    pub fn open(path: &Path) -> Result<Self> {
-        let too_large = "SVG source exceeds the 32 MiB limit";
-        ensure!(path.metadata()?.len() <= MAX_SOURCE_BYTES, too_large);
-
-        // The file can grow between the size check and the read
-        let data = std::fs::read(path)?;
-        ensure!(data.len() as u64 <= MAX_SOURCE_BYTES, too_large);
-
-        let tree = Tree::from_data(&data, &options(path, &data))?;
-        let intrinsic = tree.size();
-        let units =
-            (MAX_PIXEL_EDGE / intrinsic.width().max(intrinsic.height())).min(1.0);
-        let size = [intrinsic.width(), intrinsic.height()]
-            .map(|edge| (edge * units).ceil().max(1.0) as u32);
-
-        Ok(Self { tree, units, size })
+impl<'a> VectorFile<'a> {
+    pub fn new(path: &'a Path, budget: Budget) -> Self {
+        Self { path, budget }
     }
 
-    pub fn size(&self) -> [u32; 2] {
-        self.size
+    pub fn matches(path: &Path) -> bool {
+        path.extension().is_some_and(|ext| {
+            ext.eq_ignore_ascii_case("svg") || ext.eq_ignore_ascii_case("svgz")
+        })
     }
 
-    /// Renders `size` output pixels from image position `origin`, at `scale` output
-    /// pixels per image pixel
-    pub fn render(
-        &self,
-        origin: Pos2,
-        scale: f32,
-        size: [u32; 2],
-    ) -> Result<RgbaImage> {
-        let [width, height] = size;
-        let mut pixmap =
-            Pixmap::new(width, height).context("Could not allocate SVG pixels")?;
-        let units = self.units * scale;
-        let transform = Transform::from_scale(units, units)
-            .post_translate(-origin.x * scale, -origin.y * scale);
-
-        resvg::render(&self.tree, transform, &mut pixmap.as_mut());
-        unpremultiply(&mut pixmap);
-
-        RgbaImage::from_raw(width, height, pixmap.take())
-            .context("Invalid SVG pixel buffer")
-    }
-
-    /// Renders the whole image as large as fits within `bounds`, enlarging small SVGs
-    pub fn render_fitted(&self, bounds: [u32; 2]) -> Result<RgbaImage> {
-        let [width, height] = self.size.map(|edge| edge as f32);
-        let scale = (bounds[0] as f32 / width).min(bounds[1] as f32 / height);
-        let size = [width, height].map(|edge| ((edge * scale).round() as u32).max(1));
-
-        self.render(Pos2::ZERO, scale, size)
-    }
-
-    /// Keeps pixels at the intrinsic size for copying and exporting, while the tree
+    /// Keeps pixels at the intrinsic size for copying and exporting, while the vector
     /// serves the preview and zoomed tiles
-    pub(super) fn decode(self, budget: Budget) -> Result<Decoded> {
-        budget.check_pixels(self.size[0], self.size[1])?;
+    pub fn decode(&self) -> Result<Decoded> {
+        let vector = self.open()?;
+        self.budget.check_pixels(vector.size())?;
 
-        let pixels = self.render(Pos2::ZERO, 1.0, self.size)?;
-        let preview = self.render_fitted([PREVIEW_EDGE, PREVIEW_EDGE])?;
+        let pixels = vector.render(Pos2::ZERO, 1.0, vector.size())?;
+        let preview = vector.render_fitted([PREVIEW_EDGE, PREVIEW_EDGE])?;
         let frame = DecodedFrame {
             pixels: Arc::new(pixels),
             preview: color_image(&preview),
@@ -104,27 +53,46 @@ impl VectorImage {
 
         Ok(Decoded {
             frames: vec![frame],
-            vector: Some(Arc::new(self)),
+            vector: Some(Arc::new(vector)),
             color: "sRGB · vector SVG",
         })
     }
-}
 
-fn options(path: &Path, data: &[u8]) -> Options<'static> {
-    let mut options = Options::default();
-
-    // Plain SVGs without text can skip expensive system-font discovery
-    let compressed = path
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("svgz"));
-    if compressed || data.windows(5).any(|window| window == b"<text") {
-        options.fontdb = system_fonts();
+    /// Fills the filmstrip box regardless of the SVG's intrinsic size
+    pub fn thumbnail(&self) -> Result<ColorImage> {
+        Ok(color_image(&self.open()?.render_fitted(THUMBNAIL_SIZE)?))
     }
 
-    // Allow embedded images, but never resolve files referenced by the SVG
-    options.image_href_resolver.resolve_string = Box::new(|_, _| None);
+    fn open(&self) -> Result<VectorImage> {
+        let too_large = "SVG source exceeds the 32 MiB limit";
+        ensure!(self.path.metadata()?.len() <= MAX_SOURCE_BYTES, too_large);
 
-    options
+        // The file can grow between the size check and the read
+        let data = std::fs::read(self.path)?;
+        ensure!(data.len() as u64 <= MAX_SOURCE_BYTES, too_large);
+
+        let tree = Tree::from_data(&data, &self.options(&data))?;
+
+        Ok(VectorImage::new(tree, MAX_PIXEL_EDGE))
+    }
+
+    fn options(&self, data: &[u8]) -> Options<'static> {
+        let mut options = Options::default();
+
+        // Plain SVGs without text can skip expensive system-font discovery
+        let compressed = self
+            .path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("svgz"));
+        if compressed || data.windows(5).any(|window| window == b"<text") {
+            options.fontdb = system_fonts();
+        }
+
+        // Allow embedded images, but never resolve files referenced by the SVG
+        options.image_href_resolver.resolve_string = Box::new(|_, _| None);
+
+        options
+    }
 }
 
 fn system_fonts() -> Arc<fontdb::Database> {
@@ -137,18 +105,4 @@ fn system_fonts() -> Arc<fontdb::Database> {
             Arc::new(fonts)
         })
         .clone()
-}
-
-/// Tiny-skia premultiplies alpha; the viewer expects straight-alpha pixels
-fn unpremultiply(pixmap: &mut Pixmap) {
-    for rgba in pixmap.data_mut().as_chunks_mut::<4>().0 {
-        let alpha = u32::from(rgba[3]);
-
-        for channel in &mut rgba[..3] {
-            *channel = (u32::from(*channel) * 255 + alpha / 2)
-                .checked_div(alpha)
-                .unwrap_or(0)
-                .min(255) as u8;
-        }
-    }
 }

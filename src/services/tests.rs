@@ -201,15 +201,7 @@ mod resize {
     use anyhow::Result;
     use image::{Rgba, RgbaImage};
 
-    use crate::services::resize::{Region, downscale, fit_within};
-
-    #[test]
-    fn fitting_keeps_aspect_ratio_and_never_enlarges() {
-        assert_eq!(fit_within(6000, 4000, 2048, 2048), [2048, 1365]);
-        assert_eq!(fit_within(640, 320, 192, 192), [192, 96]);
-        assert_eq!(fit_within(100, 50, 192, 128), [100, 50]);
-        assert_eq!(fit_within(1, 10_000, 192, 128), [1, 128]);
-    }
+    use crate::services::resize::{Region, downscale};
 
     #[test]
     fn transparent_pixels_do_not_tint_their_neighbors() -> Result<()> {
@@ -217,7 +209,7 @@ mod resize {
         pixels.put_pixel(0, 0, Rgba([255, 0, 0, 255]));
         pixels.put_pixel(1, 0, Rgba([0, 255, 0, 0]));
 
-        let averaged = downscale(&pixels, None, 1, 1)?;
+        let averaged = downscale(&pixels, None, [1, 1])?;
         let [red, green, _, alpha] = averaged.get_pixel(0, 0).0;
 
         assert!(red > 245, "Red was {red}");
@@ -241,7 +233,7 @@ mod resize {
             height: 2,
         };
 
-        let tile = downscale(&pixels, Some(region), 1, 1)?;
+        let tile = downscale(&pixels, Some(region), [1, 1])?;
 
         assert_eq!(tile.get_pixel(0, 0).0, [200, 0, 0, 255]);
         Ok(())

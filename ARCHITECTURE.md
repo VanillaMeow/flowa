@@ -7,13 +7,13 @@ Flowa is one Rust crate. `src/main.rs` handles the native entry point, codec reg
 | Folder | Responsibility | Main files |
 | --- | --- | --- |
 | `app/` | Application construction and coordination | `application.rs`, `native.rs`, `command.rs`, `command_handler.rs`, `worker_results.rs`, `launch.rs` |
-| `viewer/` | Viewing state and rules | `browser.rs`, `catalog.rs`, `image_session.rs`, `playback.rs`, `transform.rs` |
+| `viewer/` | Viewing state and rules | `browser.rs`, `catalog.rs`, `image_session.rs`, `playback.rs`, `transform.rs`, `vector.rs` |
 | `ui/` | Egui components, styling, input, and drawing | `viewer_ui.rs`, `canvas.rs`, `filmstrip.rs`, `toolbar.rs`, `inspector.rs`, `dialogs.rs`, `preferences.rs`, `keyboard.rs`, `theme.rs`, `style.rs`, `widgets.rs`, `icons.rs` |
 | `ui/rendering/` | GPU textures and drawing geometry | `image_renderer.rs`, `icon_cache.rs`, `geometry.rs` |
 | `services/` | Filesystem access, codecs, desktop integration, and background workers | `folder_scan.rs`, `image_decode/`, `image_loader/mod.rs`, `image_workers.rs`, `file_actions.rs` |
 | `video/` | FFmpeg media ownership, playback workers, and native GPU presentation | `media/`, `player/`, `gpu.rs`, `native.rs`, `thumbnail.rs` |
 | `settings/` | Configuration values and persistence | `model.rs`, `store.rs` |
-| `utils/` | General helpers with no application, viewer, or UI dependencies | `format.rs`, `filename.rs` |
+| `utils/` | General helpers with no application, viewer, or UI dependencies | `format.rs`, `filename.rs`, `size.rs` |
 
 `app/application.rs` defines `Flowa`, constructs its owned components, coordinates selection changes, and implements the eframe lifecycle. `app/command.rs` defines commands; `app/command_handler.rs` executes them. `app/worker_results.rs` coordinates background results that affect several owners.
 
@@ -122,9 +122,11 @@ Each tile has a source rectangle and a texture. The renderer calculates visible 
 
 ## Decoding
 
-`services/image_decode/` exposes `decode`, `thumbnail`, and `preload_estimate`, and dispatches on format. `raster.rs` wraps one file and its memory `Budget` in `RasterFile`, whose methods handle stills, animations, thumbnails, and preload estimates. `color.rs` converts embedded ICC profiles to sRGB, and `export.rs` writes transformed copies.
+`services/image_decode/` exposes `decode`, `thumbnail`, and `preload_estimate`. An `ImageFile` picks the decoder by format: `RasterFile` in `raster.rs` or `VectorFile` in `vector.rs`, each wrapping one path and its memory `Budget`. `color.rs` converts embedded ICC profiles to sRGB, and `export.rs` writes transformed copies. Services depend on viewer types such as `DecodedImage` and `View`, never the reverse.
 
-`vector.rs` parses SVGs into a `VectorImage`, which renders any region at any scale. A decoded SVG keeps it beside pixels at the intrinsic size, which copying and exporting use. Its preview and thumbnail are rendered to fill their full size, and fitting always enlarges it. A `TileSource` is either raster pixels, which stop adding detail at one sample per pixel, or a `VectorImage`, which renders tiles at finer levels past 100% zoom so SVGs stay sharp at any magnification.
+Pixel sizes are `[u32; 2]` outside the UI, which uses egui's `Vec2`. `utils/size.rs` fits sizes into boxes, either shrinking only or scaling both ways, and `services/resize.rs` resamples pixels.
+
+`VectorFile` parses SVGs into a `viewer/vector.rs` `VectorImage`, which renders any region at any scale. A decoded SVG keeps it beside pixels at the intrinsic size, which copying and exporting use. Its preview and thumbnail are rendered to fill their full size, and fitting always enlarges it. A `TileSource` is either raster pixels, which stop adding detail at one sample per pixel, or a `VectorImage`, which renders tiles at finer levels past 100% zoom so SVGs stay sharp at any magnification.
 
 ## Persistence and file operations
 
