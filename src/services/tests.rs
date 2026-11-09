@@ -30,7 +30,7 @@ mod image_decode {
     use image::RgbaImage;
 
     use crate::{
-        services::image_decode::{decode, export},
+        services::image_decode::{decode, export, thumbnail},
         viewer::transform::View,
     };
 
@@ -114,6 +114,42 @@ mod image_decode {
         let px = decoded.frames[0].pixels.get_pixel(5, 5);
         assert_eq!(px[0], 255);
         assert!((126..=129).contains(&px[3]));
+        Ok(())
+    }
+
+    const SPLIT_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><rect width="10" height="10" fill="#ff0000"/><rect x="10" width="10" height="10" fill="#0000ff"/></svg>"##;
+
+    #[test]
+    fn small_svg_keeps_its_size_with_an_enlarged_preview() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("small.svg");
+        std::fs::write(&path, SPLIT_SVG)?;
+
+        let decoded = decode(&path, 32 * MIB)?;
+        assert_eq!(decoded.size, [20, 10]);
+        assert!(decoded.vector.is_some());
+        assert_eq!(decoded.frames[0].preview.size, [2048, 1024]);
+        assert_eq!(decoded.thumbnail.size, [192, 96]);
+        assert_eq!(thumbnail(&path, 32 * MIB)?.size, [192, 96]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn vector_rendering_stays_sharp_when_enlarged() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("split.svg");
+        std::fs::write(&path, SPLIT_SVG)?;
+        let decoded = decode(&path, 32 * MIB)?;
+        let vector = decoded
+            .vector
+            .expect("SVG decodes keep their vector source");
+
+        // Sixty-four samples per image pixel around the color boundary at x = 10
+        let pixels = vector.render(egui::pos2(9.5, 0.0), 64.0, [64, 8])?;
+        assert_eq!(pixels.get_pixel(31, 4).0, [255, 0, 0, 255]);
+        assert_eq!(pixels.get_pixel(32, 4).0, [0, 0, 255, 255]);
+
         Ok(())
     }
 

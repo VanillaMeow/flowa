@@ -73,6 +73,7 @@ mod image_session {
                 preview: egui::ColorImage::filled([1, 1], egui::Color32::TRANSPARENT),
                 delay: Duration::from_millis(100),
             }],
+            vector: None,
             thumbnail: egui::ColorImage::filled([1, 1], egui::Color32::TRANSPARENT),
             size: [1, 1],
             format: "PNG".into(),

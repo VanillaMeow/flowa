@@ -36,6 +36,20 @@ pub(crate) struct CanvasContent<'a> {
     pub fullscreen: bool,
 }
 
+impl CanvasContent<'_> {
+    /// Vectors stay sharp at any size, so fitting always enlarges them
+    fn fit_enlarges(&self) -> bool {
+        let vector = !self.video.state.active
+            && self
+                .image
+                .decoded
+                .as_ref()
+                .is_some_and(|image| image.vector.is_some());
+
+        self.settings.fit_small || vector
+    }
+}
+
 pub(crate) struct ImageCanvas {
     pub view: View,
     pub rect: Rect,
@@ -274,13 +288,11 @@ impl ImageCanvas {
         }
 
         let padding = if content.fullscreen { 0. } else { 24. };
-        let settings = content.settings;
-        self.view.zoom =
-            self.view
-                .fit_zoom(self.rect.size(), size, settings.fit_small, padding);
+        let enlarge = content.fit_enlarges();
+        self.view.zoom = self.view.fit_zoom(self.rect.size(), size, enlarge, padding);
 
         // Small images should not be enlarged on high-DPI displays
-        if !settings.fit_small {
+        if !enlarge {
             self.view.zoom = self.view.zoom.min(1.0 / pixels_per_point);
         }
 

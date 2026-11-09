@@ -10,7 +10,7 @@ Flowa is one Rust crate. `src/main.rs` handles the native entry point, codec reg
 | `viewer/` | Viewing state and rules | `browser.rs`, `catalog.rs`, `image_session.rs`, `playback.rs`, `transform.rs` |
 | `ui/` | Egui components, styling, input, and drawing | `viewer_ui.rs`, `canvas.rs`, `filmstrip.rs`, `toolbar.rs`, `inspector.rs`, `dialogs.rs`, `preferences.rs`, `keyboard.rs`, `theme.rs`, `style.rs`, `widgets.rs`, `icons.rs` |
 | `ui/rendering/` | GPU textures and drawing geometry | `image_renderer.rs`, `icon_cache.rs`, `geometry.rs` |
-| `services/` | Filesystem access, codecs, desktop integration, and background workers | `folder_scan.rs`, `image_decode.rs`, `image_loader/mod.rs`, `image_workers.rs`, `file_actions.rs` |
+| `services/` | Filesystem access, codecs, desktop integration, and background workers | `folder_scan.rs`, `image_decode/`, `image_loader/mod.rs`, `image_workers.rs`, `file_actions.rs` |
 | `video/` | FFmpeg media ownership, playback workers, and native GPU presentation | `media/`, `player/`, `gpu.rs`, `native.rs`, `thumbnail.rs` |
 | `settings/` | Configuration values and persistence | `model.rs`, `store.rs` |
 | `utils/` | General helpers with no application, viewer, or UI dependencies | `format.rs`, `filename.rs` |
@@ -119,6 +119,12 @@ remain in the [backend roadmap](native/video/BACKENDS.md).
 The image is centered in the canvas. Horizontal/vertical flips apply in source coordinates, followed by clockwise quarter-turn rotation, zoom, and pan. Source-to-screen and screen-to-source transforms are inverses. Pointer-centered zoom adjusts pan so the image point underneath the pointer stays fixed. The actual-pixels action accounts for native display scale.
 
 Each tile has a source rectangle and a texture. The renderer calculates visible source bounds, picks a power-of-two resolution level, and paints transformed quads. A one-sample overlap provides neighboring pixels for bilinear filtering. Painting a tile first restores the canvas/checkerboard in its core region so semitransparent pixels do not blend twice over the underlying preview.
+
+## Decoding
+
+`services/image_decode/` exposes `decode`, `thumbnail`, and `preload_estimate`, and dispatches on format. `raster.rs` wraps one file and its memory `Budget` in `RasterFile`, whose methods handle stills, animations, thumbnails, and preload estimates. `color.rs` converts embedded ICC profiles to sRGB, and `export.rs` writes transformed copies.
+
+`vector.rs` parses SVGs into a `VectorImage`, which renders any region at any scale. A decoded SVG keeps it beside pixels at the intrinsic size, which copying and exporting use. Its preview and thumbnail are rendered to fill their full size, and fitting always enlarges it. A `TileSource` is either raster pixels, which stop adding detail at one sample per pixel, or a `VectorImage`, which renders tiles at finer levels past 100% zoom so SVGs stay sharp at any magnification.
 
 ## Persistence and file operations
 

@@ -2,15 +2,14 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, atomic::Ordering},
+    sync::atomic::Ordering,
     time::Duration,
 };
 
-use egui::{Color32, Pos2, Rect, TextureHandle, TextureOptions, Vec2, pos2, vec2};
-use image::RgbaImage;
+use egui::{Color32, Pos2, Rect, TextureHandle, TextureOptions, Vec2, vec2};
 
 use crate::{
-    services::image_workers::{self, TileKey, TileRequest, TileWorker},
+    services::image_workers::{self, TileKey, TileRequest, TileSource, TileWorker},
     settings::{Canvas, Settings},
     ui::theme::{self, Colors},
     viewer::{image_session::ImageSession, transform::View},
@@ -248,22 +247,18 @@ impl ImageRenderer {
             return;
         };
 
-        if decoded_frame.preview.size
-            == [decoded.size[0] as usize, decoded.size[1] as usize]
-        {
+        // Tiles are needed only where the screen samples more finely than the preview
+        let source = TileSource::new(decoded, decoded_frame);
+        let density =
+            (frame.view.zoom * ctx.pixels_per_point()).min(source.max_density());
+        let preview_density = decoded_frame.preview.size[0] as f32 / size.x;
+
+        if density <= preview_density * 1.02 {
             return;
         }
 
-        let scale = frame.view.zoom * ctx.pixels_per_point();
-        let preview_scale = decoded_frame.preview.size[0] as f32 / size.x;
-
-        if scale <= preview_scale * 1.02 {
-            return;
-        }
-
-        // Choose the coarsest tile level that still supplies a sample per screen pixel
-        let level = (1.0 / scale).log2().floor().clamp(0.0, 7.0) as u8;
-        let span = image_workers::TILE_SIZE * (1_u32 << level);
+        let level = image_workers::tile_level(density);
+        let span = image_workers::tile_span(level);
         let visible = frame.view.visible_source(size, canvas);
 
         if !visible.is_positive() {
@@ -271,16 +266,14 @@ impl ImageRenderer {
         }
 
         let keys = visible_tile_keys(frame, size, level, span, visible);
-        let source_pixels = &decoded_frame.pixels;
-
         let mut requests = 0;
 
         for key in keys {
             if let Some(tile) = self.tiles.get_mut(&key) {
                 tile.touched = self.paint_counter;
-                paint_resident_tile(painter, tile, key, frame, size, span, base);
+                paint_resident_tile(painter, tile, key, frame, size, base);
             } else if requests < TILE_REQUESTS_PER_FRAME
-                && self.request_tile(key, source_pixels)
+                && self.request_tile(key, &source)
             {
                 requests += 1;
             }
@@ -291,14 +284,14 @@ impl ImageRenderer {
         }
     }
 
-    fn request_tile(&mut self, key: TileKey, pixels: &Arc<RgbaImage>) -> bool {
+    fn request_tile(&mut self, key: TileKey, source: &TileSource) -> bool {
         if self.pending_tiles.contains(&key) {
             return false;
         }
 
         let request = TileRequest {
             key,
-            pixels: Arc::clone(pixels),
+            source: source.clone(),
         };
 
         if self.worker.requests.try_send(request).is_err() {
@@ -313,16 +306,13 @@ impl ImageRenderer {
 fn visible_tile_keys(
     frame: &RenderFrame<'_>,
     size: Vec2,
-    level: u8,
-    span: u32,
+    level: i8,
+    span: f32,
     visible: Rect,
 ) -> Vec<TileKey> {
-    let x0 = (visible.min.x.max(0.) as u32) / span;
-    let y0 = (visible.min.y.max(0.) as u32) / span;
-    let x1 = ((visible.max.x.ceil() as u32).div_ceil(span))
-        .min((size.x as u32).div_ceil(span));
-    let y1 = ((visible.max.y.ceil() as u32).div_ceil(span))
-        .min((size.y as u32).div_ceil(span));
+    let first = (visible.min.max(Pos2::ZERO) / span).floor();
+    let end = (visible.max.min(size.to_pos2()) / span).ceil();
+    let [x0, y0, x1, y1] = [first.x, first.y, end.x, end.y].map(|edge| edge as u32);
 
     let mut keys = Vec::new();
     for y in y0..y1 {
@@ -339,8 +329,8 @@ fn visible_tile_keys(
 
     // Resolve the center first so detail appears where the user is looking
     keys.sort_by_key(|key| {
-        let dx = (key.x * span + span / 2) as f32 - visible.center().x;
-        let dy = (key.y * span + span / 2) as f32 - visible.center().y;
+        let dx = (key.x as f32 + 0.5) * span - visible.center().x;
+        let dy = (key.y as f32 + 0.5) * span - visible.center().y;
         (dx * dx + dy * dy) as u64
     });
 
@@ -353,20 +343,13 @@ fn paint_resident_tile(
     key: TileKey,
     frame: &RenderFrame<'_>,
     size: Vec2,
-    span: u32,
     base: Color32,
 ) {
     let canvas = frame.canvas;
     let image_rect = frame.view.image_rect(size, canvas);
     let texture_id = tile.texture.id();
     let source = tile.source;
-    let core = Rect::from_min_max(
-        pos2((key.x * span) as f32, (key.y * span) as f32),
-        pos2(
-            ((key.x + 1) * span).min(size.x as u32) as f32,
-            ((key.y + 1) * span).min(size.y as u32) as f32,
-        ),
-    );
+    let core = key.core(size);
     let core_points = [
         core.left_top(),
         core.right_top(),

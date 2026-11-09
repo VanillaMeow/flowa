@@ -10,6 +10,7 @@ use egui::ColorImage;
 use image::RgbaImage;
 
 use super::playback::Animation;
+use crate::services::image_decode::VectorImage;
 
 pub struct DecodedFrame {
     pub pixels: Arc<RgbaImage>,
@@ -19,6 +20,8 @@ pub struct DecodedFrame {
 
 pub struct DecodedImage {
     pub frames: Vec<DecodedFrame>,
+    /// The source of vector formats, which zoomed views render from instead of pixels
+    pub vector: Option<Arc<VectorImage>>,
     pub thumbnail: ColorImage,
     pub size: [u32; 2],
     pub format: String,
