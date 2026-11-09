@@ -3,7 +3,6 @@
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
-    sync::atomic::Ordering,
 };
 
 use egui::{
@@ -13,7 +12,10 @@ use egui::{
 
 use crate::{
     app::Command,
-    services::image_workers::{ThumbnailRequest, ThumbnailWorker},
+    services::{
+        thumbnails::{ThumbnailRequest, ThumbnailWorker},
+        worker::Generation,
+    },
     viewer::{browser::Browser, catalog::Entry},
 };
 
@@ -33,7 +35,7 @@ const STRIP_HEIGHT: f32 = 116.;
 
 pub(crate) struct Filmstrip {
     worker: ThumbnailWorker,
-    generation: u64,
+    generation: Generation,
     /// The image memory limit in bytes, applied to thumbnail decodes
     budget: u64,
     textures: HashMap<PathBuf, Option<TextureHandle>>,
@@ -44,9 +46,11 @@ pub(crate) struct Filmstrip {
 
 impl Filmstrip {
     pub fn new(ctx: egui::Context, budget: u64) -> Self {
+        let generation = Generation::default();
+
         Self {
-            worker: ThumbnailWorker::new(ctx),
-            generation: 0,
+            worker: ThumbnailWorker::new(ctx, &generation),
+            generation,
             budget,
             textures: HashMap::new(),
             pending: HashSet::new(),
@@ -56,8 +60,7 @@ impl Filmstrip {
     }
 
     pub fn reset(&mut self, generation: u64) {
-        self.generation = generation;
-        self.worker.generation.store(generation, Ordering::Relaxed);
+        self.generation.set(generation);
         self.textures.clear();
         self.pending.clear();
         self.order.clear();
@@ -82,7 +85,7 @@ impl Filmstrip {
                 break;
             };
 
-            if result.generation != self.generation {
+            if !self.generation.is_current(result.generation) {
                 continue;
             }
 
@@ -264,11 +267,11 @@ impl Filmstrip {
 
         let request = ThumbnailRequest {
             path: path.to_path_buf(),
-            generation: self.generation,
+            generation: self.generation.get(),
             budget: self.budget,
         };
 
-        if self.worker.requests.try_send(request).is_ok() {
+        if self.worker.request(request) {
             self.pending.insert(path.to_path_buf());
         }
     }

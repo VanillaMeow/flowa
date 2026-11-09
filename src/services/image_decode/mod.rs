@@ -25,7 +25,7 @@ use crate::{
     },
 };
 
-use super::{image_workers::THUMBNAIL_SIZE, resize};
+use super::{resize, thumbnails::THUMBNAIL_SIZE};
 use raster::RasterFile;
 use vector::VectorFile;
 

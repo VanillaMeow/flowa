@@ -154,8 +154,11 @@ impl Flowa {
             return;
         }
 
-        self.busy = Some(status.into());
-        self.actions.request(task);
+        if self.actions.request(task) {
+            self.busy = Some(status.into());
+        } else {
+            self.ui.dialogs.notify("File actions are unavailable", true);
+        }
     }
 
     fn pick(&mut self, folder: bool) {

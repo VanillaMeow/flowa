@@ -21,7 +21,7 @@ use crate::{
 
 #[derive(Default)]
 struct Requests {
-    /// A new file (or `None` to stop), tagged with the UI's epoch
+    /// A new file (or `None` to stop), tagged with the UI's source generation
     source: Option<(u64, Option<PathBuf>)>,
     commands: Vec<PlayerCommand>,
     /// A requested playback step, optionally with the target texture size
@@ -58,8 +58,8 @@ impl Mailbox {
 }
 
 impl Requests {
-    fn replace_source(&mut self, epoch: u64, path: Option<PathBuf>) {
-        self.source = Some((epoch, path));
+    fn replace_source(&mut self, generation: u64, path: Option<PathBuf>) {
+        self.source = Some((generation, path));
         self.tick = self.tick.map(|_| None);
         self.commands.retain(|command| {
             matches!(
@@ -85,7 +85,7 @@ impl Requests {
 }
 
 struct Completed {
-    epoch: u64,
+    generation: u64,
     status: Snapshot,
     target: Option<Target>,
     retired: Vec<Target>,
@@ -139,7 +139,7 @@ pub(in crate::video) struct Player {
     driver: Driver,
     graphics: RenderState,
     ctx: egui::Context,
-    epoch: u64,
+    generation: u64,
     requested_size: Option<[u32; 2]>,
     status: Snapshot,
     displayed: Option<egui::TextureId>,
@@ -188,7 +188,7 @@ impl Player {
             driver,
             graphics: graphics.clone(),
             ctx: ctx.clone(),
-            epoch: 0,
+            generation: 0,
             requested_size: None,
             status: Snapshot::default(),
             displayed: None,
@@ -211,7 +211,7 @@ impl Player {
     }
 
     fn replace_source(&mut self, path: Option<&Path>) -> Result<()> {
-        self.epoch += 1;
+        self.generation += 1;
         self.displayed = None;
         self.target = None;
         self.requested_size = None;
@@ -225,7 +225,7 @@ impl Player {
         };
         match &mut self.driver {
             Driver::Background(worker) => worker.mailbox.update(|requests| {
-                requests.replace_source(self.epoch, path.map(Path::to_owned));
+                requests.replace_source(self.generation, path.map(Path::to_owned));
             }),
             Driver::Inline(playback) => {
                 if let Some(path) = path {
@@ -269,11 +269,11 @@ impl Player {
             },
             Driver::Inline(playback) => {
                 playback.poll();
-                Some(completion(playback, self.epoch))
+                Some(completion(playback, self.generation))
             }
         };
         let Some(completed) = completed else { return };
-        if completed.epoch == self.epoch {
+        if completed.generation == self.generation {
             self.status = completed.status;
             self.displayed = completed.target.as_ref().map(|target| target.id);
             self.target = completed.target;
@@ -302,7 +302,7 @@ impl Player {
         self.requested_size = Some(size);
         if let Driver::Inline(playback) = &mut self.driver {
             playback.render(size)?;
-            let completed = completion(playback, self.epoch);
+            let completed = completion(playback, self.generation);
             self.displayed = completed.target.as_ref().map(|target| target.id);
             self.target = completed.target;
             self.free_targets(completed.retired);
@@ -389,9 +389,9 @@ fn delay(status: &Snapshot) -> Duration {
     })
 }
 
-fn completion(playback: &mut Pipeline, epoch: u64) -> Completed {
+fn completion(playback: &mut Pipeline, generation: u64) -> Completed {
     Completed {
-        epoch,
+        generation,
         status: playback.status.clone(),
         target: playback
             .targets
@@ -418,7 +418,7 @@ fn run(
             return Vec::new();
         }
     };
-    let mut epoch = 0;
+    let mut generation = 0;
     let mut failure = None;
 
     loop {
@@ -427,8 +427,8 @@ fn run(
             break;
         }
 
-        if let Some((next_epoch, path)) = work.source {
-            epoch = next_epoch;
+        if let Some((next_generation, path)) = work.source {
+            generation = next_generation;
             failure = if let Some(path) = path {
                 playback.load(&path).err()
             } else {
@@ -482,7 +482,7 @@ fn run(
             video.error.is_none() && (video.loading || video.seeking || !video.paused);
         let next = delay(&playback.status);
 
-        if results.send(completion(&mut playback, epoch)).is_err() {
+        if results.send(completion(&mut playback, generation)).is_err() {
             break;
         }
 
@@ -572,7 +572,7 @@ mod tests {
                 .expect("UI requests blocked behind the stalled worker");
             results
                 .send(Completed {
-                    epoch: 1,
+                    generation: 1,
                     status: Snapshot::default(),
                     target: None,
                     retired: Vec::new(),
@@ -613,7 +613,10 @@ mod tests {
 
         release.send(())?;
         assert_eq!(
-            worker.results.recv_timeout(Duration::from_secs(5))?.epoch,
+            worker
+                .results
+                .recv_timeout(Duration::from_secs(5))?
+                .generation,
             1
         );
         assert!(

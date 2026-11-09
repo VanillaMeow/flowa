@@ -2,14 +2,16 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    sync::atomic::Ordering,
     time::Duration,
 };
 
 use egui::{Color32, Pos2, Rect, TextureHandle, TextureOptions, Vec2, vec2};
 
 use crate::{
-    services::image_workers::{self, TileKey, TileRequest, TileSource, TileWorker},
+    services::{
+        tiles::{self, TileKey, TileRequest, TileSource, TileWorker},
+        worker::Generation,
+    },
     settings::{Canvas, Settings},
     ui::theme::{self, Colors},
     viewer::{image_session::ImageSession, transform::View},
@@ -74,6 +76,7 @@ pub(crate) struct ImageRenderer {
     preview: Option<TextureHandle>,
     preview_frame: usize,
     worker: TileWorker,
+    generation: Generation,
     tiles: HashMap<TileKey, TileTexture>,
     pending_tiles: HashSet<TileKey>,
     paint_counter: u64,
@@ -82,10 +85,13 @@ pub(crate) struct ImageRenderer {
 
 impl ImageRenderer {
     pub fn new(ctx: egui::Context, nearest: bool) -> Self {
+        let generation = Generation::default();
+
         Self {
             preview: None,
             preview_frame: usize::MAX,
-            worker: TileWorker::new(ctx),
+            worker: TileWorker::new(ctx, &generation),
+            generation,
             tiles: HashMap::new(),
             pending_tiles: HashSet::new(),
             paint_counter: 0,
@@ -94,7 +100,7 @@ impl ImageRenderer {
     }
 
     pub fn reset(&mut self, generation: u64) {
-        self.worker.generation.store(generation, Ordering::Relaxed);
+        self.generation.set(generation);
         self.preview = None;
         self.preview_frame = usize::MAX;
         self.tiles.clear();
@@ -259,8 +265,8 @@ impl ImageRenderer {
             return;
         }
 
-        let level = image_workers::tile_level(density);
-        let span = image_workers::tile_span(level);
+        let level = tiles::tile_level(density);
+        let span = tiles::tile_span(level);
         let visible = frame.view.visible_source(size, canvas);
 
         if !visible.is_positive() {
@@ -296,7 +302,7 @@ impl ImageRenderer {
             source: source.clone(),
         };
 
-        if self.worker.requests.try_send(request).is_err() {
+        if !self.worker.request(request) {
             return false;
         }
 

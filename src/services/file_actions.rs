@@ -3,8 +3,7 @@
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
-    sync::{Arc, mpsc},
-    thread,
+    sync::Arc,
 };
 
 use anyhow::{Context, Result, ensure};
@@ -15,7 +14,7 @@ use crate::{
     viewer::{catalog, transform::View},
 };
 
-use super::{image_decode, system_trash};
+use super::{image_decode, system_trash, worker::Worker};
 
 pub enum Task {
     Pick {
@@ -51,36 +50,16 @@ pub enum Outcome {
     Trashed(PathBuf),
 }
 
-pub struct Actions {
-    sender: mpsc::Sender<Task>,
-    pub results: mpsc::Receiver<Result<Outcome>>,
-}
+pub type Actions = Worker<Task, Result<Outcome>>;
 
 impl Actions {
     pub fn new(ctx: egui::Context) -> Self {
-        let (sender, rx) = mpsc::channel();
-        let (tx, results) = mpsc::channel();
+        // Keep clipboard ownership alive between copy requests, including on X11
+        let mut clipboard = None;
 
-        thread::spawn(move || {
-            // Keep clipboard ownership alive between copy requests, including on X11
-            let mut clipboard = None;
-
-            while let Ok(task) = rx.recv() {
-                let result = perform(task, &mut clipboard);
-
-                if tx.send(result).is_err() {
-                    break;
-                }
-
-                ctx.request_repaint();
-            }
-        });
-
-        Self { sender, results }
-    }
-
-    pub fn request(&self, task: Task) {
-        let _ = self.sender.send(task);
+        Self::spawn("file-actions", ctx, move |task| {
+            Some(perform(task, &mut clipboard))
+        })
     }
 }
 

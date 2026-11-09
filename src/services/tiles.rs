@@ -1,21 +1,14 @@
-//! Bounded background workers for image tiles and thumbnails
+//! Tiles of the visible image region at the resolution the zoom needs
 
-use std::{
-    path::PathBuf,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-        mpsc,
-    },
-    thread,
-};
+use std::sync::Arc;
 
 use egui::{ColorImage, Pos2, Rect, Vec2, pos2, vec2};
 use image::RgbaImage;
 
 use super::{
-    image_decode::{color_image, thumbnail},
+    image_decode::color_image,
     resize::{self, Region},
+    worker::{Generation, Tagged, Worker},
 };
 use crate::viewer::{
     image_session::{DecodedFrame, DecodedImage},
@@ -27,76 +20,6 @@ pub const TILE_SIZE: u32 = 1024;
 /// The finest tile level, which only vectors reach, at 512 samples per image pixel
 const FINEST_LEVEL: i8 = -9;
 const COARSEST_LEVEL: i8 = 7;
-
-/// The box every filmstrip thumbnail fits in, for images and video posters alike
-pub const THUMBNAIL_SIZE: [u32; 2] = [192, 128];
-
-const QUEUED_REQUESTS: usize = 24;
-const QUEUED_RESULTS: usize = 4;
-
-/// Requests carry the generation of the image or folder they were made for
-pub trait Tagged {
-    fn generation(&self) -> u64;
-}
-
-/// One background thread with bounded queues that skips work for stale generations
-///
-/// The owner stores the active generation; requests from older generations are
-/// dropped before and after the expensive work
-pub struct Worker<Request, Response> {
-    pub requests: mpsc::SyncSender<Request>,
-    pub results: mpsc::Receiver<Response>,
-    pub generation: Arc<AtomicU64>,
-}
-
-impl<Request, Response> Worker<Request, Response>
-where
-    Request: Tagged + Send + 'static,
-    Response: Send + 'static,
-{
-    fn spawn(
-        ctx: egui::Context,
-        mut process: impl FnMut(Request, &AtomicU64) -> Option<Response> + Send + 'static,
-    ) -> Self {
-        let (requests, pending) = mpsc::sync_channel::<Request>(QUEUED_REQUESTS);
-        let (completed, results) = mpsc::sync_channel(QUEUED_RESULTS);
-        let generation = Arc::new(AtomicU64::new(0));
-        let active = Arc::clone(&generation);
-
-        thread::spawn(move || {
-            let current = |generation| active.load(Ordering::Relaxed) == generation;
-
-            while let Ok(request) = pending.recv() {
-                let generation = request.generation();
-
-                if !current(generation) {
-                    continue;
-                }
-
-                let Some(response) = process(request, &active) else {
-                    continue;
-                };
-
-                // Drop work for an image or folder that was replaced meanwhile
-                if !current(generation) {
-                    continue;
-                }
-
-                if completed.send(response).is_err() {
-                    break;
-                }
-
-                ctx.request_repaint();
-            }
-        });
-
-        Self {
-            requests,
-            results,
-            generation,
-        }
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TileKey {
@@ -216,8 +139,10 @@ pub struct TileResult {
 pub type TileWorker = Worker<TileRequest, TileResult>;
 
 impl TileWorker {
-    pub fn new(ctx: egui::Context) -> Self {
-        Self::spawn(ctx, |request, _| request.source.build(request.key))
+    pub fn new(ctx: egui::Context, generation: &Generation) -> Self {
+        Self::spawn_tagged("tiles", ctx, generation, |request: TileRequest| {
+            request.source.build(request.key)
+        })
     }
 }
 
@@ -268,46 +193,6 @@ fn vector_tile(
     let covered = vec2(size[0] as f32, size[1] as f32) * stride;
 
     Some((tile, Rect::from_min_size(bounds.min, covered)))
-}
-
-pub struct ThumbnailRequest {
-    pub path: PathBuf,
-    pub generation: u64,
-    /// The image memory limit in bytes
-    pub budget: u64,
-}
-
-impl Tagged for ThumbnailRequest {
-    fn generation(&self) -> u64 {
-        self.generation
-    }
-}
-
-pub struct ThumbnailResult {
-    pub path: PathBuf,
-    pub generation: u64,
-    /// `None` when the file could not be decoded, so it is not retried
-    pub image: Option<ColorImage>,
-}
-
-pub type ThumbnailWorker = Worker<ThumbnailRequest, ThumbnailResult>;
-
-impl ThumbnailWorker {
-    pub fn new(ctx: egui::Context) -> Self {
-        Self::spawn(ctx, |request, active| {
-            let image = if crate::viewer::catalog::is_video(&request.path) {
-                crate::video::thumbnail(&request.path, active, request.generation)
-            } else {
-                thumbnail(&request.path, request.budget)
-            };
-
-            Some(ThumbnailResult {
-                path: request.path,
-                generation: request.generation,
-                image: image.ok(),
-            })
-        })
-    }
 }
 
 #[cfg(test)]

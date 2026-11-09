@@ -20,16 +20,16 @@ pub(crate) use unsupported::gpu;
 #[cfg(not(video_playback))]
 use unsupported::{player, thumbnail};
 
-use std::{path::Path, sync::atomic::AtomicU64};
+use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 
-use crate::settings::VideoDecoder;
+use crate::{services::worker::Generation, settings::VideoDecoder};
 
 /// Extracts filmstrip pixels without requiring an initialized playback device
 pub(crate) fn thumbnail(
     path: &Path,
-    generation: &AtomicU64,
+    generation: &Generation,
     expected: u64,
 ) -> Result<egui::ColorImage> {
     thumbnail::extract(path, generation, expected)

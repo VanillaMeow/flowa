@@ -62,13 +62,15 @@ pub(super) mod player {
 }
 
 pub(super) mod thumbnail {
-    use std::{path::Path, sync::atomic::AtomicU64};
+    use std::path::Path;
+
+    use crate::services::worker::Generation;
 
     use anyhow::{Result, bail};
 
     pub(in crate::video) fn extract(
         _path: &Path,
-        _generation: &AtomicU64,
+        _generation: &Generation,
         _expected: u64,
     ) -> Result<egui::ColorImage> {
         bail!(super::UNSUPPORTED)

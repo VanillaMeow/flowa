@@ -5,19 +5,17 @@ mod cache;
 use std::{
     collections::VecDeque,
     path::PathBuf,
-    sync::{
-        Arc, OnceLock,
-        atomic::{AtomicU64, Ordering},
-        mpsc,
-    },
-    thread,
+    sync::{Arc, OnceLock, mpsc},
 };
 
 use anyhow::{Context, Result};
 
 use crate::viewer::image_session::DecodedImage;
 
-use super::image_decode::{decode, preload_estimate};
+use super::{
+    image_decode::{decode, preload_estimate},
+    worker::{self, Generation},
+};
 use cache::{FileStamp, ImageCache};
 
 pub struct LoadRequest {
@@ -45,7 +43,7 @@ enum Message {
 pub struct Loader {
     sender: mpsc::Sender<Message>,
     pub results: mpsc::Receiver<LoadResult>,
-    generation: Arc<AtomicU64>,
+    generation: Generation,
     repaint: Arc<OnceLock<egui::Context>>,
 }
 
@@ -54,12 +52,12 @@ impl Loader {
     pub fn new(budget: u64) -> Self {
         let (sender, requests) = mpsc::channel();
         let (completed, results) = mpsc::sync_channel(1);
-        let generation = Arc::new(AtomicU64::new(0));
-        let active_generation = Arc::clone(&generation);
+        let generation = Generation::default();
+        let active_generation = generation.clone();
         let repaint = Arc::new(OnceLock::new());
         let worker_repaint = Arc::clone(&repaint);
 
-        thread::spawn(move || {
+        worker::spawn("image-loader", move || {
             run(requests, completed, active_generation, worker_repaint)
         });
 
@@ -80,29 +78,35 @@ impl Loader {
     }
 
     pub fn request(&self, request: LoadRequest) {
-        self.generation.store(request.generation, Ordering::Relaxed);
-        let _ = self.sender.send(Message::Select(request));
+        self.generation.set(request.generation);
+        self.send(Message::Select(request));
     }
 
     pub fn preload(&self, path: PathBuf) {
-        let _ = self.sender.send(Message::Hover(path));
+        self.send(Message::Hover(path));
     }
 
     pub fn preload_neighbors(&self, paths: Vec<PathBuf>) {
-        let _ = self.sender.send(Message::Neighbors(paths));
+        self.send(Message::Neighbors(paths));
     }
 
     pub fn set_budget(&self, budget: u64) {
-        let _ = self.sender.send(Message::Budget(budget));
+        self.send(Message::Budget(budget));
     }
 
     pub fn invalidate(&self) {
-        let _ = self.sender.send(Message::Invalidate);
+        self.send(Message::Invalidate);
     }
 
     pub fn cancel(&self, generation: u64) {
-        self.generation.store(generation, Ordering::Relaxed);
-        let _ = self.sender.send(Message::Cancel);
+        self.generation.set(generation);
+        self.send(Message::Cancel);
+    }
+
+    fn send(&self, message: Message) {
+        if self.sender.send(message).is_err() {
+            log::error!("The image-loader worker stopped");
+        }
     }
 }
 
@@ -305,7 +309,7 @@ impl Queue {
 fn run(
     requests: mpsc::Receiver<Message>,
     completed: mpsc::SyncSender<LoadResult>,
-    generation: Arc<AtomicU64>,
+    generation: Generation,
     repaint: Arc<OnceLock<egui::Context>>,
 ) {
     let mut queue = Queue::default();
@@ -323,7 +327,7 @@ fn run(
 
         if request
             .generation
-            .is_some_and(|requested| requested != generation.load(Ordering::Relaxed))
+            .is_some_and(|requested| !generation.is_current(requested))
         {
             continue;
         }
@@ -338,13 +342,7 @@ fn run(
 
         // A click during preloading adopts the completed decode without starting it again
         queue.drain(&requests);
-        let result = queue.finish(
-            request,
-            stamp,
-            revision,
-            result,
-            generation.load(Ordering::Relaxed),
-        );
+        let result = queue.finish(request, stamp, revision, result, generation.get());
 
         if let Some(result) = result {
             if completed.send(result).is_err() {

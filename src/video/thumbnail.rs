@@ -2,7 +2,6 @@
 
 use std::{
     path::Path,
-    sync::atomic::{AtomicU64, Ordering},
     time::{Duration, Instant},
 };
 
@@ -11,25 +10,24 @@ use image::DynamicImage;
 
 use super::media;
 use crate::services::{
-    image_decode::color_image_within, image_workers::THUMBNAIL_SIZE,
+    image_decode::color_image_within, thumbnails::THUMBNAIL_SIZE, worker::Generation,
 };
 
 struct Cancellation<'a> {
-    generation: &'a AtomicU64,
+    generation: &'a Generation,
     expected: u64,
     deadline: Instant,
 }
 
 impl Cancellation<'_> {
     fn cancelled(&self) -> bool {
-        self.generation.load(Ordering::Relaxed) != self.expected
-            || Instant::now() >= self.deadline
+        !self.generation.is_current(self.expected) || Instant::now() >= self.deadline
     }
 }
 
 pub(super) fn extract(
     path: &Path,
-    generation: &AtomicU64,
+    generation: &Generation,
     expected: u64,
 ) -> Result<egui::ColorImage> {
     let cancellation = Cancellation {
@@ -69,7 +67,8 @@ mod tests {
 
     #[test]
     fn thumbnail_cancellation_checks_generation_and_deadline() {
-        let generation = AtomicU64::new(4);
+        let generation = Generation::default();
+        generation.set(4);
         let mut cancellation = Cancellation {
             generation: &generation,
             expected: 4,
@@ -77,7 +76,7 @@ mod tests {
         };
         assert!(!cancellation.cancelled());
 
-        generation.store(5, Ordering::Relaxed);
+        generation.set(5);
         assert!(cancellation.cancelled());
 
         cancellation.expected = 5;
@@ -101,7 +100,7 @@ mod tests {
             .arg(&clip)
             .status()?;
         ensure!(generated.success(), "Could not generate the poster fixture");
-        let generation = AtomicU64::new(0);
+        let generation = Generation::default();
         let started = Instant::now();
         let poster = extract(&clip, &generation, 0)?;
         assert_eq!(poster.size, [192, 54]);
@@ -133,7 +132,7 @@ mod tests {
         assert!(poster[(18, 15)].b() > 200);
         assert!(poster[(18, 110)].r() > 200);
 
-        generation.store(1, Ordering::Relaxed);
+        generation.set(1);
         assert!(extract(&clip, &generation, 0).is_err());
         let invalid = folder.path().join("invalid.mp4");
         std::fs::write(&invalid, b"Not a video")?;

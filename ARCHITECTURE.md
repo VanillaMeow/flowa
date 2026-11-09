@@ -10,7 +10,7 @@ Flowa is one Rust crate. `src/main.rs` handles the native entry point, codec reg
 | `viewer/` | Viewing state and rules | `browser.rs`, `catalog.rs`, `image_session.rs`, `playback.rs`, `transform.rs`, `vector.rs` |
 | `ui/` | Egui components, styling, input, and drawing | `viewer_ui.rs`, `canvas.rs`, `filmstrip.rs`, `toolbar.rs`, `inspector.rs`, `dialogs.rs`, `preferences.rs`, `keyboard.rs`, `theme.rs`, `style.rs`, `widgets.rs`, `icons.rs` |
 | `ui/rendering/` | GPU textures and drawing geometry | `image_renderer.rs`, `icon_cache.rs`, `geometry.rs` |
-| `services/` | Filesystem access, codecs, desktop integration, and background workers | `folder_scan.rs`, `image_decode/`, `image_loader/mod.rs`, `image_workers.rs`, `file_actions.rs` |
+| `services/` | Filesystem access, codecs, desktop integration, and background workers | `folder_scan.rs`, `image_decode/`, `image_loader/mod.rs`, `worker.rs`, `tiles.rs`, `thumbnails.rs`, `file_actions.rs` |
 | `video/` | FFmpeg media ownership, playback workers, and native GPU presentation | `media/`, `player/`, `gpu.rs`, `native.rs`, `thumbnail.rs` |
 | `settings/` | Configuration values and persistence | `model.rs`, `store.rs` |
 | `utils/` | General helpers with no application, viewer, or UI dependencies | `format.rs`, `filename.rs`, `size.rs` |
@@ -75,7 +75,9 @@ The loader retains at most four decoded images in CPU memory, within a quarter o
 
 During navigation, the canvas retains only the previous preview texture and its view transform. This frozen preview is separate from the selected image and cannot be copied or exported. The loading indicator waits 150 ms and fades in over 100 ms. The new image appears as soon as it is available, with no minimum indicator duration or image fade.
 
-Decoded RGBA frames are shared through `Arc`. They are not copied just to send them between workers. The tile worker crops and downsamples visible regions, and a separate thumbnail worker loads visible filmstrip entries. Both have bounded request and result queues. They check the active generation before and after expensive work.
+Decoded RGBA frames are shared through `Arc`. They are not copied just to send them between workers. The tile worker in `services/tiles.rs` crops and downsamples visible regions, and a separate thumbnail worker in `services/thumbnails.rs` loads visible filmstrip entries.
+
+`services/worker.rs` holds what background threads share. `spawn` names every thread `flowa-…`. `Worker` handles requests in order on one thread with bounded queues, wakes the UI with each result, and refuses requests instead of blocking when full. Owners keep a `Generation` they advance when they replace their image or folder; `Worker::spawn_tagged` skips requests from other generations before and after the work. The tile, thumbnail, and file action workers use `Worker`. The image loader keeps its own loop for its priority queue, and folder scans run one thread each so a slow folder never delays a newer one, but both use the same `Generation` and thread naming. A request to a stopped worker is logged; a result nobody receives is dropped.
 
 GPU resources are created and evicted on the UI thread. The image renderer retains one preview texture and a bounded set of detailed tile textures. The filmstrip owns its separate bounded thumbnail cache. Each component uploads at most four completed results per UI pass. Native file dialogs, exports, trash, renames, and clipboard transfers run on a separate action worker. That worker retains clipboard ownership across requests for X11.
 

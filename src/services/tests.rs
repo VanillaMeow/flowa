@@ -239,3 +239,41 @@ mod resize {
         Ok(())
     }
 }
+
+mod worker {
+    use std::time::Duration;
+
+    use crate::services::worker::{Generation, Tagged, Worker};
+
+    struct Job(u64);
+
+    impl Tagged for Job {
+        fn generation(&self) -> u64 {
+            self.0
+        }
+    }
+
+    #[test]
+    fn tagged_workers_skip_requests_from_other_generations() {
+        let generation = Generation::default();
+        generation.set(2);
+        let worker = Worker::spawn_tagged(
+            "test",
+            egui::Context::default(),
+            &generation,
+            |job: Job| Some(job.0),
+        );
+
+        assert!(worker.request(Job(1)));
+        assert!(worker.request(Job(2)));
+
+        let received = worker.results.recv_timeout(Duration::from_secs(3));
+        assert_eq!(received.ok(), Some(2));
+        assert!(
+            worker
+                .results
+                .recv_timeout(Duration::from_millis(50))
+                .is_err()
+        );
+    }
+}

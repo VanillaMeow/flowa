@@ -8,6 +8,7 @@ use std::{
 
 use anyhow::{Context, Result, ensure};
 
+use super::worker;
 use crate::viewer::catalog::{Entry, ScannedFolder, supported};
 
 struct ScanResult {
@@ -31,11 +32,13 @@ impl FolderScanner {
         let sender = self.sender.clone();
         let ctx = ctx.clone();
 
-        std::thread::spawn(move || {
+        // Each scan gets its own thread, so a slow network folder never delays a newer one
+        worker::spawn("folder-scan", move || {
             let result = scan_path(path);
-            let _ = sender.send(ScanResult { generation, result });
 
-            ctx.request_repaint();
+            if sender.send(ScanResult { generation, result }).is_ok() {
+                ctx.request_repaint();
+            }
         });
     }
 
