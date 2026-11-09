@@ -212,10 +212,12 @@ impl Flowa {
             return;
         };
 
-        // A percentage counts physical pixels, while egui zoom is in logical points
-        let view = &mut self.ui.canvas.view;
-        view.fit = false;
-        view.zoom = percent / 100.0 / ctx.pixels_per_point();
+        // A percentage counts physical pixels
+        let scale = percent / 100.0;
+        self.ui
+            .canvas
+            .view
+            .set_pixel_scale(scale, ctx.pixels_per_point());
     }
 
     pub(super) fn navigate(&mut self, delta: isize, ctx: &egui::Context) {

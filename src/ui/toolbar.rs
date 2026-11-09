@@ -280,9 +280,7 @@ fn view_buttons(
             .button(
                 ui,
                 Icon::Actual,
-                !state.canvas.view.fit
-                    && (state.canvas.view.zoom * ctx.pixels_per_point() - 1.).abs()
-                        < 0.001,
+                state.canvas.view.is_actual_pixels(ctx.pixels_per_point()),
             )
             .clicked()
     {
@@ -294,7 +292,7 @@ fn view_buttons(
     }
     let percentage = format!(
         "{:.0}%",
-        state.canvas.view.zoom * ctx.pixels_per_point() * 100.
+        state.canvas.view.pixel_scale(ctx.pixels_per_point()) * 100.
     );
     if ui
         .add_sized(

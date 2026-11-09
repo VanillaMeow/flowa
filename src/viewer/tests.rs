@@ -157,4 +157,34 @@ mod transform {
         let screen = view.image_to_screen(point, size, rect);
         assert!((point - view.screen_to_image(screen, size, rect)).length() < 0.001);
     }
+
+    #[test]
+    fn fitting_respects_rotation_and_the_zoom_ceiling() {
+        let mut view = View {
+            rotation: 1,
+            pan: vec2(40.0, 10.0),
+            ..Default::default()
+        };
+
+        view.fit_within(vec2(800.0, 600.0), vec2(300.0, 100.0), f32::INFINITY);
+        assert_eq!(view.zoom, 2.0);
+        assert_eq!(view.pan, egui::Vec2::ZERO);
+
+        view.fit_within(vec2(800.0, 600.0), vec2(300.0, 100.0), 0.5);
+        assert_eq!(view.zoom, 0.5);
+    }
+
+    #[test]
+    fn actual_pixels_count_physical_pixels() {
+        let mut view = View::default();
+
+        view.show_actual_pixels(2.0);
+        assert_eq!(view.zoom, 0.5);
+        assert!(view.is_actual_pixels(2.0));
+        assert_eq!(view.pixel_scale(2.0), 1.0);
+
+        view.set_pixel_scale(3.0, 2.0);
+        assert_eq!(view.zoom, 1.5);
+        assert!(!view.is_actual_pixels(2.0));
+    }
 }

@@ -249,8 +249,10 @@ impl ImageRenderer {
 
         // Tiles are needed only where the screen samples more finely than the preview
         let source = TileSource::new(decoded, decoded_frame);
-        let density =
-            (frame.view.zoom * ctx.pixels_per_point()).min(source.max_density());
+        let density = frame
+            .view
+            .pixel_scale(ctx.pixels_per_point())
+            .min(source.max_density());
         let preview_density = decoded_frame.preview.size[0] as f32 / size.x;
 
         if density <= preview_density * 1.02 {

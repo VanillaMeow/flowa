@@ -80,20 +80,18 @@ impl Flowa {
             }
 
             Command::Fit => self.ui.canvas.view.reset(),
-            Command::ActualPixels => self.ui.canvas.actual_pixels(ctx),
+            Command::ActualPixels => self
+                .ui
+                .canvas
+                .view
+                .show_actual_pixels(ctx.pixels_per_point()),
             Command::Zoom(factor) => self.ui.canvas.zoom(factor),
-            Command::RotateClockwise => {
-                self.ui.canvas.view.rotation = (self.ui.canvas.view.rotation + 1) % 4;
-            }
+            Command::RotateClockwise => self.ui.canvas.view.rotate_clockwise(),
             Command::RotateCounterclockwise => {
-                self.ui.canvas.view.rotation = (self.ui.canvas.view.rotation + 3) % 4;
+                self.ui.canvas.view.rotate_counterclockwise()
             }
-            Command::FlipHorizontal => {
-                self.ui.canvas.view.flip_x = !self.ui.canvas.view.flip_x
-            }
-            Command::FlipVertical => {
-                self.ui.canvas.view.flip_y = !self.ui.canvas.view.flip_y
-            }
+            Command::FlipHorizontal => self.ui.canvas.view.flip_horizontal(),
+            Command::FlipVertical => self.ui.canvas.view.flip_vertical(),
 
             Command::TogglePlay => {
                 if self.video.state.active {

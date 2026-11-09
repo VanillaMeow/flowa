@@ -10,7 +10,7 @@ use crate::{
     video::VideoSession,
     viewer::{
         image_session::{DecodedImage, ImageSession},
-        transform::View,
+        transform::{MAX_ZOOM, View},
     },
 };
 
@@ -91,13 +91,6 @@ impl ImageCanvas {
         self.previous = None;
         self.displayed_size = None;
         self.renderer.reset(generation);
-    }
-
-    pub fn actual_pixels(&mut self, ctx: &egui::Context) {
-        // Egui measures in logical points, but 100% means one physical pixel
-        self.view.fit = false;
-        self.view.zoom = 1.0 / ctx.pixels_per_point();
-        self.view.pan = Vec2::ZERO;
     }
 
     pub fn zoom(&mut self, factor: f32) {
@@ -288,15 +281,16 @@ impl ImageCanvas {
         }
 
         let padding = if content.fullscreen { 0. } else { 24. };
-        let enlarge = content.fit_enlarges();
-        self.view.zoom = self.view.fit_zoom(self.rect.size(), size, enlarge, padding);
+        let area = self.rect.size() - Vec2::splat(padding * 2.);
 
-        // Small images should not be enlarged on high-DPI displays
-        if !enlarge {
-            self.view.zoom = self.view.zoom.min(1.0 / pixels_per_point);
-        }
+        // Without enlarging, small images stop at one image pixel per screen pixel
+        let max_zoom = if content.fit_enlarges() {
+            MAX_ZOOM
+        } else {
+            View::actual_pixels_zoom(pixels_per_point)
+        };
 
-        self.view.pan = Vec2::ZERO;
+        self.view.fit_within(area, size, max_zoom);
     }
 }
 
