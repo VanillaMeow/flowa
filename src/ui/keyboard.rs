@@ -4,7 +4,7 @@ use crate::app::Command;
 
 use super::actions;
 
-pub(crate) fn read(
+pub fn read(
     ctx: &egui::Context,
     modal_open: bool,
     mut preferences_open: bool,

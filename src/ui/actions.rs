@@ -8,7 +8,7 @@ use crate::app::{
 
 use super::icons::{self, Icon};
 
-pub(crate) struct Action {
+pub struct Action {
     pub label: &'static str,
     pub command: Command,
     shortcuts: &'static [KeyboardShortcut],

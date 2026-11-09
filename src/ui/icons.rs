@@ -38,7 +38,7 @@ pub enum Icon {
 }
 
 impl Icon {
-    pub(crate) fn svg(self) -> &'static str {
+    pub fn svg(self) -> &'static str {
         match self {
             Self::Open => include_str!("../../assets/icons/lucide/folder-open.svg"),
             Self::Left => include_str!("../../assets/icons/lucide/chevron-left.svg"),
@@ -68,7 +68,7 @@ impl Icon {
     }
 
     /// Outline icons drawn solid, keeping the vendored Lucide files unchanged
-    pub(crate) fn filled(self) -> bool {
+    pub fn filled(self) -> bool {
         matches!(self, Self::Heart)
     }
 }

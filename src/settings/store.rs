@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 
 use crate::settings::Settings;
 
-pub(crate) struct SettingsStore {
+pub struct SettingsStore {
     pub values: Settings,
     path: Option<PathBuf>,
     /// The values last written to disk, so unchanged settings are not rewritten

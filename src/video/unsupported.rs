@@ -8,7 +8,7 @@ pub(crate) mod gpu {
     use anyhow::{Result, bail};
     use eframe::egui_wgpu::WgpuSetup;
 
-    pub(crate) fn setup() -> Result<WgpuSetup> {
+    pub fn setup() -> Result<WgpuSetup> {
         bail!(super::UNSUPPORTED)
     }
 }

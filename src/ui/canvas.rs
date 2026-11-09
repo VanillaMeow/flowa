@@ -27,7 +27,7 @@ use super::{
 const LOADING_DELAY: Duration = Duration::from_millis(150);
 const LOADING_FADE: Duration = Duration::from_millis(100);
 
-pub(crate) struct CanvasContent<'a> {
+pub struct CanvasContent<'a> {
     pub image: &'a ImageSession,
     pub video: &'a VideoSession,
     pub settings: &'a Settings,
@@ -50,7 +50,7 @@ impl CanvasContent<'_> {
     }
 }
 
-pub(crate) struct ImageCanvas {
+pub struct ImageCanvas {
     pub view: View,
     pub rect: Rect,
     pub renderer: ImageRenderer,

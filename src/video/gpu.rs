@@ -40,7 +40,7 @@ impl Drop for NativeGpu {
     }
 }
 
-pub(crate) fn setup() -> Result<WgpuSetup> {
+pub fn setup() -> Result<WgpuSetup> {
     let instance = create_instance()?;
     let adapter =
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {

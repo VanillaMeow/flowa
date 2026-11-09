@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use super::image_session::DecodedFrame;
 
-pub(crate) struct Animation {
+pub struct Animation {
     pub frame_index: usize,
     pub playing: bool,
     deadline: Instant,
@@ -49,7 +49,7 @@ impl Animation {
     }
 }
 
-pub(crate) struct Slideshow {
+pub struct Slideshow {
     pub active: bool,
     next_slide: Instant,
 }

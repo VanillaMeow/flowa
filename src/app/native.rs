@@ -19,7 +19,7 @@ struct Startup {
     loader: Loader,
 }
 
-pub(crate) fn run(
+pub fn run(
     settings: Settings,
     config_path: Option<PathBuf>,
     launch: Launch,

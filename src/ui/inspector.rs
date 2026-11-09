@@ -15,7 +15,7 @@ use super::{
     widgets,
 };
 
-pub(crate) fn show(
+pub fn show(
     root: &mut egui::Ui,
     entry: Option<&Entry>,
     decoded: Option<&DecodedImage>,

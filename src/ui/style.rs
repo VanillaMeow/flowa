@@ -8,7 +8,7 @@ use std::time::Duration;
 use egui::Margin;
 
 /// Gaps between and inside components, in points
-pub mod space {
+pub(crate) mod space {
     pub const XS: f32 = 4.;
     pub const SM: f32 = 8.;
     pub const MD: f32 = 12.;
@@ -17,7 +17,7 @@ pub mod space {
 }
 
 /// Inner margins of panels and floating surfaces
-pub mod margin {
+pub(crate) mod margin {
     use super::Margin;
 
     pub const TOOLBAR: Margin = Margin::symmetric(14, 9);
@@ -29,7 +29,7 @@ pub mod margin {
 }
 
 /// Corner radii, in points
-pub mod radius {
+pub(crate) mod radius {
     /// Buttons, inputs, and thumbnails
     pub const CONTROL: u8 = 7;
     /// Sections and notices
@@ -38,7 +38,7 @@ pub mod radius {
 }
 
 /// Fixed component sizes, in points
-pub mod size {
+pub(crate) mod size {
     /// Icon buttons and the height of control rows
     pub const CONTROL: f32 = 34.;
     pub const ICON: f32 = 18.;
@@ -48,7 +48,7 @@ pub mod size {
 }
 
 /// Font sizes, in points
-pub mod text {
+pub(crate) mod text {
     /// Uppercase labels above values and sections
     pub const CAPTION: f32 = 11.;
     pub const SMALL: f32 = 12.;
@@ -60,7 +60,7 @@ pub mod text {
 }
 
 /// Animation and notification timing
-pub mod motion {
+pub(crate) mod motion {
     use super::Duration;
 
     /// Egui's fade-in for windows, menus, and tooltips, in seconds

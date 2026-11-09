@@ -36,7 +36,7 @@ enum Dialog {
 }
 
 #[derive(Default)]
-pub(crate) struct Dialogs {
+pub struct Dialogs {
     active: Option<Dialog>,
     /// A dialog that was just closed, drawn while it fades out
     closing: Option<Dialog>,

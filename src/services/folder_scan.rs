@@ -16,7 +16,7 @@ struct ScanResult {
     result: Result<ScannedFolder>,
 }
 
-pub(crate) struct FolderScanner {
+pub struct FolderScanner {
     sender: mpsc::Sender<ScanResult>,
     results: mpsc::Receiver<ScanResult>,
 }

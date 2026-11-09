@@ -22,7 +22,7 @@ use super::{
 /// The flower fills most of its button, like an app icon
 const MENU_LOGO_SIZE: f32 = 24.;
 
-pub(crate) struct ToolbarState<'a> {
+pub struct ToolbarState<'a> {
     pub browser: &'a Browser,
     pub image: &'a ImageSession,
     pub video: &'a VideoState,
@@ -36,7 +36,7 @@ pub(crate) struct ToolbarState<'a> {
     pub slideshow: bool,
 }
 
-pub(crate) fn show(
+pub fn show(
     root: &mut egui::Ui,
     state: &ToolbarState<'_>,
     commands: &mut Vec<Command>,
@@ -300,7 +300,7 @@ fn zoom_percentage(ui: &mut egui::Ui, pixel_scale: f32, commands: &mut Vec<Comma
     }
 }
 
-pub(crate) fn status(root: &mut egui::Ui, state: &ToolbarState<'_>) {
+pub fn status(root: &mut egui::Ui, state: &ToolbarState<'_>) {
     if state.browser.current().is_none() {
         return;
     }
@@ -375,7 +375,7 @@ fn status_label(ui: &mut egui::Ui, label: &str, colors: Colors) {
     ui.label(RichText::new(label).size(text::SMALL).color(colors.muted));
 }
 
-pub(crate) fn context_menu(
+pub fn context_menu(
     ui: &mut egui::Ui,
     state: &ToolbarState<'_>,
     commands: &mut Vec<Command>,

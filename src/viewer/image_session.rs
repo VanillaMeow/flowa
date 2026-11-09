@@ -45,7 +45,7 @@ impl DecodedImage {
     }
 }
 
-pub(crate) struct ImageSession {
+pub struct ImageSession {
     generation: u64,
     pub decoded: Option<DecodedImage>,
     pub loading: bool,

@@ -8,7 +8,7 @@ use crate::{app::Launch, settings::Theme};
 
 #[derive(Parser)]
 #[command(name = "flowa", version, about, args_override_self = true)]
-pub(crate) struct Cli {
+pub struct Cli {
     /// Image, video, or folder to open
     #[arg(value_name = "FILE_OR_FOLDER")]
     path: Option<PathBuf>,

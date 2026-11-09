@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use crate::settings::SortOrder;
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Command {
+pub enum Command {
     File(FileCommand),
     Browse(BrowseCommand),
     View(ViewCommand),
@@ -15,7 +15,7 @@ pub(crate) enum Command {
 
 /// Opening, copying, exporting, and changing files
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum FileCommand {
+pub enum FileCommand {
     OpenFile,
     OpenFolder,
     OpenPath(PathBuf),
@@ -32,7 +32,7 @@ pub(crate) enum FileCommand {
 
 /// Moving through and ordering the current folder
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum BrowseCommand {
+pub enum BrowseCommand {
     Navigate(isize),
     Select(usize),
     Preload(usize),
@@ -43,7 +43,7 @@ pub(crate) enum BrowseCommand {
 
 /// Zooming, rotating, and flipping the canvas
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum ViewCommand {
+pub enum ViewCommand {
     Fit,
     ActualPixels,
     Zoom(f32),
@@ -55,7 +55,7 @@ pub(crate) enum ViewCommand {
 
 /// Videos, animations, and slideshows
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum PlaybackCommand {
+pub enum PlaybackCommand {
     TogglePlay,
     Seek(f64),
     SetVolume(f64),
@@ -64,7 +64,7 @@ pub(crate) enum PlaybackCommand {
 
 /// Panels, windows, and leaving the app
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum WindowCommand {
+pub enum WindowCommand {
     ToggleFullscreen,
     ToggleFilmstrip,
     ToggleInspector,

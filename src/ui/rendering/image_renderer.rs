@@ -30,7 +30,7 @@ struct TileTexture {
     touched: u64,
 }
 
-pub(crate) struct FrozenPreview {
+pub struct FrozenPreview {
     texture: TextureHandle,
     size: Vec2,
     view: View,
@@ -64,7 +64,7 @@ impl FrozenPreview {
     }
 }
 
-pub(crate) struct RenderFrame<'a> {
+pub struct RenderFrame<'a> {
     pub image: &'a ImageSession,
     pub view: &'a View,
     pub canvas: Rect,
@@ -72,7 +72,7 @@ pub(crate) struct RenderFrame<'a> {
     pub colors: Colors,
 }
 
-pub(crate) struct ImageRenderer {
+pub struct ImageRenderer {
     preview: Option<TextureHandle>,
     preview_frame: usize,
     worker: TileWorker,
@@ -382,7 +382,7 @@ fn texture_options(nearest: bool) -> TextureOptions {
     }
 }
 
-pub(crate) fn canvas_color(settings: &Settings, colors: Colors) -> Color32 {
+pub fn canvas_color(settings: &Settings, colors: Colors) -> Color32 {
     match settings.canvas {
         Canvas::Theme => colors.canvas,
         Canvas::Dark => Color32::from_rgb(24, 24, 26),
@@ -447,7 +447,7 @@ fn paint_backdrop(
     }
 }
 
-pub(crate) fn paint_source(
+pub fn paint_source(
     painter: &egui::Painter,
     texture: egui::TextureId,
     source: Rect,

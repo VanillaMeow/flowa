@@ -59,6 +59,8 @@ Separate logical steps with blank lines. Egui closures establish layout scopes a
 
 The filmstrip separates viewport calculation, item interaction, thumbnail painting, captions, outlines, and worker requests. The canvas separates pointer gestures, image fitting, rendering, and its empty states. Dialog forms and notification rows have their own helpers. The application frame handler calls named update, drawing, and maintenance phases in execution order.
 
+Modules declare how far they reach: `pub(crate) mod`, or a private `mod` with `pub(crate) use` re-exports. Items inside use plain `pub`, or `pub(super)` and `pub(in …)` to stay within a subsystem, and never repeat `pub(crate)`.
+
 ## Loading and ownership
 
 Folder scanning runs outside the event loop and returns generation-tagged catalogs. The main decode worker serializes full-image decoding, drains queued requests to the latest requested image, and drops stale results. This avoids decoding every intermediate image during rapid navigation. The UI rejects any stale generation.

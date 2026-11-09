@@ -27,7 +27,7 @@ use anyhow::{Context, Result, bail};
 use crate::{services::worker::Generation, settings::VideoDecoder};
 
 /// Extracts filmstrip pixels without requiring an initialized playback device
-pub(crate) fn thumbnail(
+pub fn thumbnail(
     path: &Path,
     generation: &Generation,
     expected: u64,
@@ -37,7 +37,7 @@ pub(crate) fn thumbnail(
 
 /// Source audio properties before playback resampling
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct AudioInfo {
+pub struct AudioInfo {
     pub codec: &'static str,
     pub channels: u32,
     pub sample_rate: u32,
@@ -46,7 +46,7 @@ pub(crate) struct AudioInfo {
 
 /// A decoder that couldn't play the video and the one that took over
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct DecoderFallback {
+pub struct DecoderFallback {
     pub from: VideoDecoder,
     pub to: VideoDecoder,
 }
@@ -69,7 +69,7 @@ impl DecoderFallback {
 ///
 /// Times are seconds, volume is a percentage, and size includes display aspect ratio
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct VideoState {
+pub struct VideoState {
     pub active: bool,
     pub loading: bool,
     pub seeking: bool,
@@ -145,7 +145,7 @@ pub(super) enum PlayerCommand {
 
 /// Coordinates playback state and the texture displayed by the image canvas
 #[derive(Default)]
-pub(crate) struct VideoSession {
+pub struct VideoSession {
     pub state: VideoState,
     pub texture: Option<egui::TextureId>,
     player: Option<player::Player>,

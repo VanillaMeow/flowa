@@ -11,7 +11,7 @@ use super::{
 const TOOLBAR_REVEAL_HEIGHT: f32 = 60.;
 const VIDEO_CONTROLS_REVEAL_HEIGHT: f32 = 240.;
 
-pub(crate) struct ViewerUi {
+pub struct ViewerUi {
     pub canvas: ImageCanvas,
     pub filmstrip: Filmstrip,
     pub video_controls: VideoControls,

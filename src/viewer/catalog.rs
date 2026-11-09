@@ -70,7 +70,7 @@ pub struct Entry {
 }
 
 // Scan data has no worker or filesystem dependencies
-pub(crate) struct ScannedFolder {
+pub struct ScannedFolder {
     pub folder: PathBuf,
     pub selected: Option<PathBuf>,
     pub entries: Vec<Entry>,

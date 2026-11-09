@@ -78,7 +78,7 @@ impl egui::cache::CacheTrait for IconCache {
     }
 }
 
-pub(crate) fn paint(
+pub fn paint(
     painter: &egui::Painter,
     icon: Icon,
     center: Pos2,

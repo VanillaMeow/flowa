@@ -6,7 +6,7 @@ use crate::settings::SortOrder;
 
 use super::catalog::{self, Entry, ScannedFolder};
 
-pub(crate) struct Browser {
+pub struct Browser {
     entries: Vec<Entry>,
     folder: Option<PathBuf>,
     index: usize,

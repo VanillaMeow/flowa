@@ -33,7 +33,7 @@ const ITEM_HEIGHT: f32 = 86.;
 /// Items, panel margins, and room for the horizontal scroll bar
 const STRIP_HEIGHT: f32 = 116.;
 
-pub(crate) struct Filmstrip {
+pub struct Filmstrip {
     worker: ThumbnailWorker,
     generation: Generation,
     /// The image memory limit in bytes, applied to thumbnail decodes
