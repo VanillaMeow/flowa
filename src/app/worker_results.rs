@@ -136,7 +136,7 @@ mod tests {
     use egui::vec2;
 
     use crate::{
-        app::{Command, Flowa, Launch},
+        app::{BrowseCommand, Command, Flowa, Launch},
         services::{file_actions::Outcome, image_decode::decode, image_loader::Loader},
         settings::{Settings, Theme},
     };
@@ -186,7 +186,7 @@ mod tests {
         app.ui.canvas.view.pan = vec2(30., 20.);
         app.ui.canvas.view.fit = false;
         app.ui.canvas.view.zoom = 2.;
-        app.handle(Command::Navigate(1), &ctx);
+        app.handle(Command::Browse(BrowseCommand::Navigate(1)), &ctx);
 
         assert_eq!(app.browser.index(), 1);
         assert!(app.image.generation() > generation);
@@ -198,7 +198,7 @@ mod tests {
         app.settings.values.remember_view = true;
         app.ui.canvas.view.rotation = 3;
         app.ui.canvas.view.zoom = 2.;
-        app.handle(Command::Navigate(-1), &ctx);
+        app.handle(Command::Browse(BrowseCommand::Navigate(-1)), &ctx);
         assert_eq!(app.browser.index(), 0);
         assert_eq!(app.ui.canvas.view.rotation, 3);
         assert_eq!(app.ui.canvas.view.zoom, 2.);

@@ -4,7 +4,10 @@ use std::{path::PathBuf, time::Instant};
 
 use egui::{Color32, Id, RichText, Stroke, vec2};
 
-use crate::{app::Command, utils::filename};
+use crate::{
+    app::{Command, FileCommand},
+    utils::filename,
+};
 
 use super::{
     icons::{self, Icon},
@@ -224,10 +227,11 @@ fn rename_form(
         let rename = ui.add_enabled(valid, egui::Button::new("Rename")).clicked();
 
         if rename || (valid && submit) {
-            commands.push(Command::ConfirmRename {
+            let confirm = FileCommand::ConfirmRename {
                 path: path.to_path_buf(),
                 name: name.clone(),
-            });
+            };
+            commands.push(confirm.into());
             keep_open = false;
         }
 
@@ -254,7 +258,7 @@ fn trash_confirmation(
         }
 
         if ui.button("Move to trash").clicked() {
-            commands.push(Command::ConfirmTrash(path.to_path_buf()));
+            commands.push(FileCommand::ConfirmTrash(path.to_path_buf()).into());
             keep_open = false;
         }
 

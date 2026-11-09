@@ -4,7 +4,11 @@ use std::time::{Duration, Instant};
 
 use egui::{Align, Id, Layout, Response, RichText, style::HandleShape, vec2};
 
-use crate::{app::Command, utils::format::media_time, video::VideoState};
+use crate::{
+    app::{Command, PlaybackCommand},
+    utils::format::media_time,
+    video::VideoState,
+};
 
 use super::{
     actions,
@@ -184,7 +188,7 @@ impl VideoControls {
                 seconds: position,
                 submitted: Some(Instant::now()),
             });
-            commands.push(Command::SeekVideo(position));
+            commands.push(PlaybackCommand::Seek(position).into());
         }
 
         response.on_hover_text(format!("Seek · {}", media_time(position)));
@@ -295,7 +299,7 @@ impl VideoControls {
             } else {
                 0.
             };
-            commands.push(Command::SetVideoVolume(volume));
+            commands.push(PlaybackCommand::SetVolume(volume).into());
         }
     }
 
@@ -318,11 +322,8 @@ impl VideoControls {
 fn play_button(ui: &mut egui::Ui, paused: bool, commands: &mut Vec<Command>) {
     let icon = if paused { Icon::Play } else { Icon::Pause };
     let verb = if paused { "Play" } else { "Pause" };
-    let label = format!("{verb} · {}", actions::PLAY.shortcut_text(ui.ctx()));
 
-    if icons::button(ui, icon, &label, false).clicked() {
-        commands.push(Command::TogglePlay);
-    }
+    actions::PLAY.button_label(ui, icon, verb, false, commands);
 }
 
 fn volume_slider(
@@ -342,7 +343,7 @@ fn volume_slider(
     remember_slider(ui.ctx(), response.id, false);
 
     if response.changed() {
-        commands.push(Command::SetVideoVolume(volume));
+        commands.push(PlaybackCommand::SetVolume(volume).into());
     }
 
     response.on_hover_text(format!("Volume · {volume:.0}%"));
@@ -417,7 +418,7 @@ pub(crate) fn wants_keyboard_input(ctx: &egui::Context) -> bool {
 mod tests {
     use super::{SliderFocus, VideoControls, slider_focus_id};
     use crate::{
-        app::Command,
+        app::{BrowseCommand, Command, PlaybackCommand},
         settings::{Accent, Theme},
         ui::{keyboard, theme},
         video::VideoState,
@@ -569,7 +570,10 @@ mod tests {
         assert!(preview > 3600.);
 
         let (commands, _) = frame(&ctx, &mut controls, 800., vec![pointer(end, false)]);
-        assert_eq!(commands, vec![Command::SeekVideo(preview)]);
+        assert_eq!(
+            commands,
+            vec![Command::Playback(PlaybackCommand::Seek(preview))]
+        );
 
         frame(&ctx, &mut controls, 800., Vec::new());
         assert_eq!(
@@ -601,16 +605,14 @@ mod tests {
             }],
         );
 
-        assert!(
-            commands
-                .iter()
-                .any(|command| matches!(command, Command::SeekVideo(_)))
-        );
-        assert!(
-            !commands
-                .iter()
-                .any(|command| matches!(command, Command::Navigate(_)))
-        );
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Playback(PlaybackCommand::Seek(_))
+        )));
+        assert!(!commands.iter().any(|command| matches!(
+            command,
+            Command::Browse(BrowseCommand::Navigate(_))
+        )));
 
         let (commands, _) = frame(
             &ctx,
@@ -624,6 +626,6 @@ mod tests {
                 modifiers: Modifiers::NONE,
             }],
         );
-        assert!(commands.contains(&Command::TogglePlay));
+        assert!(commands.contains(&Command::Playback(PlaybackCommand::TogglePlay)));
     }
 }

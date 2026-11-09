@@ -5,7 +5,7 @@ use std::time::Duration;
 use egui::{Rect, RichText, Sense, Stroke, Vec2, vec2};
 
 use crate::{
-    app::Command,
+    app::{BrowseCommand, Command, FileCommand},
     settings::Settings,
     video::VideoSession,
     viewer::{
@@ -352,11 +352,11 @@ fn error_contents(
 
     ui.horizontal(|ui| {
         if ui.button("Open another file").clicked() {
-            commands.push(Command::OpenFile);
+            commands.push(FileCommand::OpenFile.into());
         }
 
         if content.can_navigate && ui.button("Next file").clicked() {
-            commands.push(Command::Navigate(1));
+            commands.push(BrowseCommand::Navigate(1).into());
         }
     });
 }
@@ -418,14 +418,14 @@ fn open_buttons(
         let open_image = egui::Button::new("Open file").fill(colors.raised);
 
         if ui.add_sized([146., 42.], open_image).clicked() {
-            commands.push(Command::OpenFile);
+            commands.push(FileCommand::OpenFile.into());
         }
 
         if ui
             .add_sized([146., 42.], egui::Button::new("Open folder"))
             .clicked()
         {
-            commands.push(Command::OpenFolder);
+            commands.push(FileCommand::OpenFolder.into());
         }
     });
 }
@@ -456,7 +456,7 @@ fn recent_paths(
     }
 
     if let Some(path) = open {
-        commands.push(Command::OpenPath(path));
+        commands.push(FileCommand::OpenPath(path).into());
     }
 }
 

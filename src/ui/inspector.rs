@@ -1,7 +1,7 @@
 //! File properties and photographic metadata
 
 use crate::{
-    app::Command,
+    app::{Command, WindowCommand},
     utils::format,
     video::VideoState,
     viewer::{catalog::Entry, image_session::DecodedImage},
@@ -47,7 +47,7 @@ fn header(ui: &mut egui::Ui, commands: &mut Vec<Command>) {
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if icons::button(ui, Icon::Close, "Close file details", false).clicked() {
-                commands.push(Command::ToggleInspector);
+                commands.push(WindowCommand::ToggleInspector.into());
             }
         });
     });

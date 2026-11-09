@@ -11,19 +11,16 @@ pub(crate) fn read(
 ) -> Vec<Command> {
     let mut commands = Vec::new();
 
-    if actions::QUIT.consume(ctx) {
-        return vec![Command::Quit];
+    if actions::QUIT.consume(ctx, &mut commands) {
+        return commands;
     }
 
     for action in [&actions::OPEN_FOLDER, &actions::OPEN_FILE] {
-        if action.consume(ctx) {
-            commands.push(action.command.clone());
-        }
+        action.consume(ctx, &mut commands);
     }
 
-    if actions::PREFERENCES.consume(ctx) {
+    if actions::PREFERENCES.consume(ctx, &mut commands) {
         preferences_open = !preferences_open;
-        commands.push(Command::TogglePreferences);
     }
 
     // Modal dialogs handle their own Escape and Enter keys
@@ -31,8 +28,7 @@ pub(crate) fn read(
         return commands;
     }
 
-    if actions::ESCAPE.consume(ctx) {
-        commands.push(Command::Escape);
+    if actions::ESCAPE.consume(ctx, &mut commands) {
         return commands;
     }
 
@@ -56,8 +52,6 @@ fn consume_actions(
     commands: &mut Vec<Command>,
 ) {
     for action in actions {
-        if action.consume(ctx) {
-            commands.push(action.command.clone());
-        }
+        action.consume(ctx, commands);
     }
 }

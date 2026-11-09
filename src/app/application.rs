@@ -26,7 +26,7 @@ use crate::{
     },
 };
 
-use super::{Command, Launch};
+use super::{FileCommand, Launch};
 
 /// How often the System theme is re-read and changed settings are saved
 const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(2);
@@ -364,7 +364,7 @@ impl Flowa {
         });
 
         if let Some(path) = dropped {
-            self.handle(Command::OpenPath(path), ctx);
+            self.handle(FileCommand::OpenPath(path).into(), ctx);
         }
     }
 

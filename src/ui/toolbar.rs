@@ -4,7 +4,7 @@ use egui::{RichText, Vec2};
 use strum::VariantArray;
 
 use crate::{
-    app::Command,
+    app::{BrowseCommand, Command},
     settings::{Settings, SortOrder},
     utils::format,
     video::VideoState,
@@ -69,9 +69,7 @@ fn toolbar_contents(
 
     app_menu(ui, state, commands);
 
-    if actions::OPEN_FOLDER.button(ui, Icon::Open, false).clicked() {
-        commands.push(actions::OPEN_FOLDER.command.clone());
-    }
+    actions::OPEN_FOLDER.button(ui, Icon::Open, false, commands);
 
     ui.separator();
     ui.add_enabled_ui(state.browser.entries().len() > 1, |ui| {
@@ -143,15 +141,15 @@ fn navigation_buttons(
         (Icon::Left, &actions::PREVIOUS, -1),
         (Icon::Right, &actions::NEXT, 1),
     ] {
-        let response = action.button(ui, icon, false);
+        let response = action.button(ui, icon, false, commands);
 
-        if response.clicked() {
-            commands.push(Command::Navigate(delta));
-        } else if response.hovered()
+        // Hovering decodes the image the click would show
+        if !response.clicked()
+            && response.hovered()
             && let Some(index) =
                 state.browser.next(delta, state.settings.wrap_navigation)
         {
-            commands.push(Command::PreloadImage(index));
+            commands.push(BrowseCommand::Preload(index).into());
         }
     }
 }
@@ -236,9 +234,7 @@ fn window_buttons(
             state.settings.filmstrip,
         ),
     ] {
-        if action.button(ui, icon, selected).clicked() {
-            commands.push(action.command.clone());
-        }
+        action.button(ui, icon, selected, commands);
     }
 }
 
@@ -249,64 +245,58 @@ fn view_buttons(
     ctx: &egui::Context,
     narrow: bool,
 ) {
+    play_button(ui, state, commands);
+
+    if !narrow {
+        actions::ROTATE.button(ui, Icon::Rotate, false, commands);
+    }
+
+    let view = &state.canvas.view;
+    let pixels_per_point = ctx.pixels_per_point();
+    actions::FIT.button(ui, Icon::Fit, view.fit, commands);
+
+    if !narrow {
+        let actual = view.is_actual_pixels(pixels_per_point);
+        actions::ACTUAL_PIXELS.button(ui, Icon::Actual, actual, commands);
+    }
+
+    actions::ZOOM_IN.button(ui, Icon::Plus, false, commands);
+    zoom_percentage(ui, view.pixel_scale(pixels_per_point), commands);
+    actions::ZOOM_OUT.button(ui, Icon::Minus, false, commands);
+}
+
+/// Plays animations and slideshows; videos have their own controls
+fn play_button(
+    ui: &mut egui::Ui,
+    state: &ToolbarState<'_>,
+    commands: &mut Vec<Command>,
+) {
     let animated = state.image.animated();
-    if animated || state.slideshow {
-        let playing = if animated {
-            state.image.playback.playing
-        } else {
-            state.slideshow
-        };
-        if actions::PLAY
-            .button(ui, if playing { Icon::Pause } else { Icon::Play }, false)
-            .clicked()
-        {
-            commands.push(Command::TogglePlay);
-        }
+
+    if !animated && !state.slideshow {
+        return;
     }
 
-    if !narrow && actions::ROTATE.button(ui, Icon::Rotate, false).clicked() {
-        commands.push(Command::RotateClockwise);
-    }
+    let playing = if animated {
+        state.image.playback.playing
+    } else {
+        state.slideshow
+    };
+    let icon = if playing { Icon::Pause } else { Icon::Play };
 
-    if actions::FIT
-        .button(ui, Icon::Fit, state.canvas.view.fit)
-        .clicked()
-    {
-        commands.push(Command::Fit);
-    }
+    actions::PLAY.button(ui, icon, false, commands);
+}
 
-    if !narrow
-        && actions::ACTUAL_PIXELS
-            .button(
-                ui,
-                Icon::Actual,
-                state.canvas.view.is_actual_pixels(ctx.pixels_per_point()),
-            )
-            .clicked()
-    {
-        commands.push(Command::ActualPixels);
-    }
+fn zoom_percentage(ui: &mut egui::Ui, pixel_scale: f32, commands: &mut Vec<Command>) {
+    let percentage = format!("{:.0}%", pixel_scale * 100.);
+    let button =
+        egui::Button::new(RichText::new(percentage).size(text::LABEL)).frame(false);
+    let response = ui
+        .add_sized([62., 32.], button)
+        .on_hover_text("Click for actual pixels");
 
-    if actions::ZOOM_IN.button(ui, Icon::Plus, false).clicked() {
-        commands.push(Command::Zoom(1.25));
-    }
-    let percentage = format!(
-        "{:.0}%",
-        state.canvas.view.pixel_scale(ctx.pixels_per_point()) * 100.
-    );
-    if ui
-        .add_sized(
-            [62., 32.],
-            egui::Button::new(RichText::new(percentage).size(text::LABEL)).frame(false),
-        )
-        .on_hover_text("Click for actual pixels")
-        .clicked()
-    {
-        commands.push(Command::ActualPixels);
-    }
-
-    if actions::ZOOM_OUT.button(ui, Icon::Minus, false).clicked() {
-        commands.push(Command::Zoom(0.8));
+    if response.clicked() {
+        commands.push(actions::ACTUAL_PIXELS.command.clone());
     }
 }
 
@@ -421,7 +411,7 @@ fn sort_menu(ui: &mut egui::Ui, state: &ToolbarState<'_>, commands: &mut Vec<Com
     ui.checkbox(&mut reverse, "Reverse order");
 
     if old != (order, reverse) {
-        commands.push(Command::Sort { order, reverse });
+        commands.push(BrowseCommand::Sort { order, reverse }.into());
     }
 }
 

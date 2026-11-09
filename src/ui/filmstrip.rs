@@ -11,7 +11,7 @@ use egui::{
 };
 
 use crate::{
-    app::Command,
+    app::{BrowseCommand, Command},
     services::{
         thumbnails::{ThumbnailRequest, ThumbnailWorker},
         worker::Generation,
@@ -189,13 +189,13 @@ impl Filmstrip {
             if response.clicked() {
                 clicked = Some(index);
             } else if response.hovered() && !selected {
-                commands.push(Command::PreloadImage(index));
+                commands.push(BrowseCommand::Preload(index).into());
             }
         }
 
         // Apply navigation after the panel releases its borrowed browser state
         if let Some(index) = clicked {
-            commands.push(Command::SelectImage(index));
+            commands.push(BrowseCommand::Select(index).into());
         }
     }
 

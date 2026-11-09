@@ -1,7 +1,10 @@
 //! Unit tests for the ui area
 
 mod keyboard {
-    use crate::{app::Command, ui::keyboard::read};
+    use crate::{
+        app::{BrowseCommand, Command, FileCommand, ViewCommand},
+        ui::keyboard::read,
+    };
 
     fn press(
         ctx: &egui::Context,
@@ -58,7 +61,7 @@ mod keyboard {
                 false,
                 false
             ),
-            vec![Command::Navigate(1)]
+            vec![Command::Browse(BrowseCommand::Navigate(1))]
         );
     }
 
@@ -68,17 +71,17 @@ mod keyboard {
             (
                 egui::Key::O,
                 egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
-                Command::OpenFolder,
+                Command::File(FileCommand::OpenFolder),
             ),
             (
                 egui::Key::C,
                 egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
-                Command::CopyPath,
+                Command::File(FileCommand::CopyPath),
             ),
             (
                 egui::Key::R,
                 egui::Modifiers::SHIFT,
-                Command::RotateCounterclockwise,
+                Command::View(ViewCommand::RotateCounterclockwise),
             ),
         ] {
             let ctx = egui::Context::default();
