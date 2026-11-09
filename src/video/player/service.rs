@@ -91,14 +91,14 @@ struct Completed {
     retired: Vec<Target>,
 }
 
-struct Worker {
+struct PlaybackWorker {
     mailbox: Arc<Mailbox>,
     results: mpsc::Receiver<Completed>,
     thread: Option<JoinHandle<Vec<Target>>>,
     pending: bool,
 }
 
-impl Worker {
+impl PlaybackWorker {
     fn request_tick(&mut self, size: Option<[u32; 2]>) {
         if self.pending {
             return;
@@ -130,7 +130,7 @@ impl Drop for PlaybackClaim {
 }
 
 enum Driver {
-    Background(Worker),
+    Background(PlaybackWorker),
     Inline(Box<Pipeline>),
 }
 
@@ -168,9 +168,9 @@ impl Player {
             let graphics = graphics.clone();
             let ctx = ctx.clone();
             let thread = thread::Builder::new()
-                .name("video-playback".into())
+                .name("flowa-video-playback".into())
                 .spawn(move || run(gpu, graphics, ctx, requests, sender))?;
-            Driver::Background(Worker {
+            Driver::Background(PlaybackWorker {
                 mailbox,
                 results,
                 thread: Some(thread),
@@ -269,7 +269,7 @@ impl Player {
             },
             Driver::Inline(playback) => {
                 playback.poll();
-                Some(completion(playback, self.generation))
+                Some(Completed::new(playback, self.generation))
             }
         };
         let Some(completed) = completed else { return };
@@ -302,7 +302,7 @@ impl Player {
         self.requested_size = Some(size);
         if let Driver::Inline(playback) = &mut self.driver {
             playback.render(size)?;
-            let completed = completion(playback, self.generation);
+            let completed = Completed::new(playback, self.generation);
             self.displayed = completed.target.as_ref().map(|target| target.id);
             self.target = completed.target;
             self.free_targets(completed.retired);
@@ -389,16 +389,18 @@ fn delay(status: &Snapshot) -> Duration {
     })
 }
 
-fn completion(playback: &mut Pipeline, generation: u64) -> Completed {
-    Completed {
-        generation,
-        status: playback.status.clone(),
-        target: playback
-            .targets
-            .iter()
-            .find(|target| Some(target.id) == playback.displayed)
-            .cloned(),
-        retired: std::mem::take(&mut playback.retired),
+impl Completed {
+    fn new(playback: &mut Pipeline, generation: u64) -> Self {
+        Self {
+            generation,
+            status: playback.status.clone(),
+            target: playback
+                .targets
+                .iter()
+                .find(|target| Some(target.id) == playback.displayed)
+                .cloned(),
+            retired: std::mem::take(&mut playback.retired),
+        }
     }
 }
 
@@ -410,7 +412,7 @@ fn run(
     results: mpsc::SyncSender<Completed>,
 ) -> Vec<Target> {
     // Construct the engine here so hardware frame pointers never cross threads
-    let mut playback = match Pipeline::new(&graphics, &ctx) {
+    let playback = match Pipeline::new(&graphics, &ctx) {
         Ok(playback) => playback,
         Err(error) => {
             log::error!("Could not start video playback: {error:#}");
@@ -418,87 +420,147 @@ fn run(
             return Vec::new();
         }
     };
-    let mut generation = 0;
-    let mut failure = None;
 
-    loop {
-        let work = requests.take();
-        if work.shutdown {
-            break;
-        }
+    let thread = PlaybackThread {
+        playback,
+        ctx,
+        results,
+        generation: 0,
+        failure: None,
+    };
 
-        if let Some((next_generation, path)) = work.source {
-            generation = next_generation;
-            failure = if let Some(path) = path {
-                playback.load(&path).err()
-            } else {
-                playback.stop();
-                None
+    thread.run(&requests)
+}
+
+/// What the playback thread keeps between requests from the UI
+struct PlaybackThread {
+    playback: Pipeline,
+    ctx: egui::Context,
+    results: mpsc::SyncSender<Completed>,
+    /// The source generation the current file was loaded for
+    generation: u64,
+    /// An error that stops rendering until the file or decoder changes
+    failure: Option<anyhow::Error>,
+}
+
+impl PlaybackThread {
+    /// Handles requests until shutdown, returning the targets the UI must free
+    fn run(mut self, requests: &Mailbox) -> Vec<Target> {
+        loop {
+            let work = requests.take();
+
+            if work.shutdown {
+                break;
+            }
+
+            if let Some((generation, path)) = work.source {
+                self.replace_source(generation, path);
+            }
+
+            let changed = !work.commands.is_empty();
+            self.apply_commands(work.commands);
+
+            let Some(size) = work.tick else {
+                if changed {
+                    self.ctx.request_repaint();
+                }
+                continue;
             };
-        }
 
-        let changed = !work.commands.is_empty();
-
-        for command in work.commands {
-            if matches!(command, PlayerCommand::Decoder(_)) {
-                failure = None;
-            }
-            if let Err(error) = playback.command(command) {
-                failure = Some(error);
+            if !self.tick(size, changed) {
+                break;
             }
         }
 
-        let Some(size) = work.tick else {
-            if changed {
-                ctx.request_repaint();
+        self.finish()
+    }
+
+    fn replace_source(&mut self, generation: u64, path: Option<PathBuf>) {
+        self.generation = generation;
+        self.failure = match path {
+            Some(path) => self.playback.load(&path).err(),
+            None => {
+                self.playback.stop();
+                None
             }
-            continue;
         };
+    }
 
-        let previous_serial = playback.status.frame_serial;
-        let previous_displayed = playback.displayed;
-        let previous_error = playback.status.video.error.clone();
-        playback.poll();
-        if failure.is_none()
-            && playback.status.video.error.is_none()
-            && playback.status.frame_serial > 0
-        {
-            let size = size.unwrap_or(playback.status.video.size);
-            if let Err(error) = playback.render(size) {
-                failure = Some(error);
+    fn apply_commands(&mut self, commands: Vec<PlayerCommand>) {
+        for command in commands {
+            // Choosing another decoder is how the user retries after a failure
+            if matches!(command, PlayerCommand::Decoder(_)) {
+                self.failure = None;
+            }
+
+            if let Err(error) = self.playback.command(command) {
+                self.failure = Some(error);
             }
         }
+    }
 
-        let video = &mut playback.status.video;
-        if let Some(error) = &failure {
+    /// Advances and draws one step, returning false once the UI stops listening
+    fn tick(&mut self, size: Option<[u32; 2]>, changed: bool) -> bool {
+        let status = &self.playback.status;
+        let previous_serial = status.frame_serial;
+        let previous_error = status.video.error.clone();
+        let previous_displayed = self.playback.displayed;
+
+        self.playback.poll();
+        self.render(size);
+
+        let video = &mut self.playback.status.video;
+        if let Some(error) = &self.failure {
             video.error = Some(format!("{error:#}"));
         }
 
         let notify = changed
-            || previous_serial != playback.status.frame_serial
-            || previous_displayed != playback.displayed
+            || previous_serial != self.playback.status.frame_serial
+            || previous_displayed != self.playback.displayed
             || previous_error != video.error;
         let active =
             video.error.is_none() && (video.loading || video.seeking || !video.paused);
-        let next = delay(&playback.status);
+        let next = delay(&self.playback.status);
 
-        if results.send(completion(&mut playback, generation)).is_err() {
-            break;
+        let completed = Completed::new(&mut self.playback, self.generation);
+        if self.results.send(completed).is_err() {
+            return false;
         }
 
         if notify {
-            ctx.request_repaint();
+            self.ctx.request_repaint();
         } else if active {
-            ctx.request_repaint_after(next);
+            self.ctx.request_repaint_after(next);
+        }
+
+        true
+    }
+
+    /// Draws the latest frame unless playback has failed or shown nothing yet
+    fn render(&mut self, size: Option<[u32; 2]>) {
+        let status = &self.playback.status;
+
+        if self.failure.is_some()
+            || status.video.error.is_some()
+            || status.frame_serial == 0
+        {
+            return;
+        }
+
+        let size = size.unwrap_or(status.video.size);
+        if let Err(error) = self.playback.render(size) {
+            self.failure = Some(error);
         }
     }
 
-    playback.engine.stop();
+    fn finish(mut self) -> Vec<Target> {
+        self.playback.engine.stop();
 
-    // Native wrappers are retired by Playback::drop before the join releases these textures
-    let mut retired = std::mem::take(&mut playback.retired);
-    retired.append(&mut playback.targets);
-    retired
+        // Native wrappers are retired by Playback::drop before the join releases these textures
+        let mut retired = std::mem::take(&mut self.playback.retired);
+        retired.append(&mut self.playback.targets);
+        retired
+    }
 }
 
 impl Drop for Player {
@@ -552,7 +614,9 @@ mod tests {
         wgpu::{self, hal},
     };
 
-    use super::{Completed, Driver, Mailbox, Player, Requests, Snapshot, Worker};
+    use super::{
+        Completed, Driver, Mailbox, PlaybackWorker, Player, Requests, Snapshot,
+    };
     use crate::settings::VideoDecoder;
     use crate::video::{PlayerCommand, VideoState, gpu};
 
@@ -580,7 +644,7 @@ mod tests {
                 .expect("The UI should still own its result receiver");
             Vec::new()
         });
-        let mut worker = Worker {
+        let mut worker = PlaybackWorker {
             mailbox,
             results: receiver,
             thread: Some(thread),
