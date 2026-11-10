@@ -1,10 +1,9 @@
-//! Shares the shim's Vulkan device with wgpu
+//! The Vulkan device shared by wgpu, libplacebo, and FFmpeg's hardware decoders
 
 use std::{
     collections::HashMap,
-    ffi::{CStr, c_char, c_int},
-    ptr::NonNull,
-    sync::{Arc, Mutex, OnceLock, Weak, atomic::AtomicBool},
+    ffi::CStr,
+    sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak, atomic::AtomicBool},
 };
 
 use anyhow::{Context, Result};
@@ -14,29 +13,79 @@ use eframe::{
     wgpu::{self, hal},
 };
 
-use super::native;
+use super::media::{AvFrame, DeviceRef, Stream};
+
+mod device_extensions;
+mod device_features;
+mod frame_renderer;
+mod frame_transfer;
+mod shared_device;
+
+use frame_renderer::FrameRenderer;
+pub(super) use frame_renderer::{RenderError, RenderTarget, TARGET_SLOTS};
+pub(super) use shared_device::DecoderDevice;
+use shared_device::{DeviceRequest, SharedDevice};
 
 type Registry = Mutex<HashMap<u64, Weak<NativeGpu>>>;
 static DEVICES: OnceLock<Registry> = OnceLock::new();
 
 /// Retains the native device until wgpu and every player release them
 pub(super) struct NativeGpu {
-    pub handle: NonNull<native::flowa_gpu>,
     pub background_playback: bool,
     pub playback_claimed: AtomicBool,
+    renderer: Mutex<FrameRenderer>,
+    device: SharedDevice,
     // The adapter retains the Vulkan instance borrowed by the native device
     _adapter: wgpu::Adapter,
 }
 
-// SAFETY: One playback owner uses queue zero; wgpu uses a separate queue for background playback
-// The final owner destroys the device only after playback and wgpu release it
+// SAFETY: The device does not change after creation, and the renderer is locked for
+// every use. One playback owner uses queue zero; wgpu uses a separate queue for
+// background playback
 unsafe impl Send for NativeGpu {}
 unsafe impl Sync for NativeGpu {}
 
+impl NativeGpu {
+    /// Creates an FFmpeg device for a hardware decoder that outputs to this GPU
+    ///
+    /// The codec and its frames must keep this owner alive
+    pub fn decoder_device(&self, kind: DecoderDevice) -> Result<DeviceRef> {
+        self.device.decoder_device(kind)
+    }
+
+    /// Draws a decoded frame into one of the player's textures
+    pub fn render(
+        &self,
+        frame: &AvFrame,
+        stream: &Stream,
+        target: &RenderTarget,
+    ) -> Result<(), RenderError> {
+        self.renderer().render(&self.device, frame, stream, target)
+    }
+
+    /// Releases the renderer's views of the player's textures before they are destroyed
+    pub fn retire_targets(&self) {
+        self.renderer().retire_targets(&self.device);
+    }
+
+    /// Releases the renderer's frames before the decoder that produced them is dropped
+    pub fn reset_frames(&self) {
+        self.renderer().reset_frames(&self.device);
+    }
+
+    fn renderer(&self) -> MutexGuard<'_, FrameRenderer> {
+        self.renderer.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
 impl Drop for NativeGpu {
     fn drop(&mut self) {
-        // SAFETY: All dependent renderers and frames have released this final device owner
-        unsafe { native::flowa_gpu_destroy(self.handle.as_ptr()) };
+        // All dependent renderers and frames have released this final device owner, and
+        // the renderer's GPU objects must go before the device that the fields then drop
+        self.renderer
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner)
+            .destroy(&self.device);
     }
 }
 
@@ -103,24 +152,12 @@ fn enable_surface_extensions(
     }
 }
 
-unsafe extern "C" fn log_message(level: c_int, message: *const c_char) {
-    // SAFETY: Libplacebo retains the message until this callback returns
-    let message = unsafe { CStr::from_ptr(message) }.to_string_lossy();
-
-    match level {
-        1 | 2 => log::error!("Video GPU: {message}"),
-        3 => log::warn!("Video GPU: {message}"),
-        _ => log::debug!("Video GPU: {message}"),
-    }
-}
-
 fn create_device(adapter: &wgpu::Adapter) -> Result<(wgpu::Device, wgpu::Queue)> {
     // SAFETY: The adapter guard retains the instance throughout native device creation
     let native = unsafe { adapter.as_hal::<hal::api::Vulkan>() }
         .context("Vulkan adapter unavailable")?;
     let instance = native.shared_instance();
     let extensions = native.required_device_extensions(wgpu::Features::empty());
-    let pointers: Vec<_> = extensions.iter().map(|name| name.as_ptr()).collect();
     let mut features =
         native.physical_device_features(&extensions, wgpu::Features::empty());
     let description = features.add_to_device_create(vk::DeviceCreateInfo::default());
@@ -129,45 +166,40 @@ fn create_device(adapter: &wgpu::Adapter) -> Result<(wgpu::Device, wgpu::Queue)>
         p_next: description.p_next.cast_mut(),
         ..Default::default()
     };
-    let init = native::flowa_gpu_init {
-        instance: instance.raw_instance().handle(),
-        physical_device: native.raw_physical_device(),
+    let request = DeviceRequest {
+        instance: instance.raw_instance(),
         get_proc_addr: instance.entry().static_fn().get_instance_proc_addr,
-        extensions: pointers.as_ptr(),
-        num_extensions: pointers.len() as c_int,
-        features: std::ptr::from_ref(&requested).cast(),
-        log: Some(log_message),
+        physical_device: native.raw_physical_device(),
+        extensions: &extensions,
+        features: &requested,
     };
-    let mut error = [0; 768];
 
-    // SAFETY: The native side copies descriptors and creates an owned Vulkan device
-    let handle =
-        unsafe { native::flowa_gpu_create(&init, error.as_mut_ptr(), error.len()) };
-    let handle = NonNull::new(handle).with_context(|| native::string(&error))?;
-    let mut info = std::mem::MaybeUninit::<native::flowa_gpu_info>::uninit();
-    unsafe { native::flowa_gpu_get_info(handle.as_ptr(), info.as_mut_ptr()) };
-    let info = unsafe { info.assume_init() };
-    let owner = Arc::new(NativeGpu {
-        handle,
-        background_playback: info.graphics_queue != 0,
-        playback_claimed: AtomicBool::new(false),
-        _adapter: adapter.clone(),
-    });
+    // SAFETY: The request describes wgpu's live adapter, which the owner below retains
+    let device = unsafe { SharedDevice::create(&request) }?;
+    let renderer = FrameRenderer::new(&device)?;
+    let raw = device.api().clone();
+    let graphics_family = device.graphics_family();
+    let graphics_queue = device.wgpu_queue();
 
     // SAFETY: Extension strings belong to the native owner retained by the device's drop callback
-    let enabled: Vec<&'static CStr> = unsafe {
-        std::slice::from_raw_parts(info.extensions, info.num_extensions as usize)
-            .iter()
-            .map(|&name| CStr::from_ptr(name))
-            .collect()
-    };
+    let enabled: Vec<&'static CStr> = device
+        .extensions()
+        .names()
+        .map(|name| unsafe { CStr::from_ptr(name.as_ptr()) })
+        .collect();
+    let owner = Arc::new(NativeGpu {
+        background_playback: graphics_queue != 0,
+        playback_claimed: AtomicBool::new(false),
+        renderer: Mutex::new(renderer),
+        device,
+        _adapter: adapter.clone(),
+    });
     let descriptor = wgpu::DeviceDescriptor {
         label: Some("flowa-ffmpeg-device"),
         required_limits: wgpu::Limits::default().using_resolution(adapter.limits()),
         ..Default::default()
     };
-    let raw =
-        unsafe { ash::Device::load(instance.raw_instance().fp_v1_0(), info.device) };
+    let key = raw.handle().as_raw();
     let retained = Arc::clone(&owner);
     let opened = unsafe {
         native.device_from_raw(
@@ -177,8 +209,8 @@ fn create_device(adapter: &wgpu::Adapter) -> Result<(wgpu::Device, wgpu::Queue)>
             descriptor.required_features,
             &descriptor.required_limits,
             &descriptor.memory_hints,
-            info.graphics_family,
-            info.graphics_queue,
+            graphics_family,
+            graphics_queue,
         )
     }?;
     drop(native);
@@ -187,7 +219,7 @@ fn create_device(adapter: &wgpu::Adapter) -> Result<(wgpu::Device, wgpu::Queue)>
         .get_or_init(Registry::default)
         .lock()
         .map_err(|_| anyhow::anyhow!("Video device registry is poisoned"))?
-        .insert(info.device.as_raw(), Arc::downgrade(&owner));
+        .insert(key, Arc::downgrade(&owner));
 
     // SAFETY: The raw device satisfies this adapter's descriptor and has a retained native owner
     Ok(unsafe {

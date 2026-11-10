@@ -28,8 +28,8 @@ Vulkan Video codec support. Decoder and renderer must run on the same GPU.
 
 ## What ties video to Vulkan
 
-- `native/video/device.c` creates one Vulkan device and `src/video/gpu.rs` shares
-  it with wgpu. The player can't use an ordinary wgpu device, so video only works
+- `src/video/gpu/shared_device.rs` creates one Vulkan device and `src/video/gpu/mod.rs`
+  shares it with wgpu. The player can't use an ordinary wgpu device, so video only works
   when startup created this shared device
 - The player passes raw `VkImage` handles and timeline semaphore values between
   wgpu and libplacebo

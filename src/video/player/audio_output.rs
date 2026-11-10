@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Result, ensure};
 
-use crate::video::native::{self, sdl_error};
+use crate::video::native_bindings::{self as native, sdl_error};
 
 pub(super) const RATE: usize = 48_000;
 pub(super) const CHANNELS: usize = 2;

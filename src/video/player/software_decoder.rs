@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Context, Result, bail, ensure};
 
-use super::frame::Frame;
+use super::{decoded_frame::Frame, decoder::Decoder};
 use crate::video::media::{Codec, CpuFrame, Packet, Receive, Sent, Stream};
 
 struct Request {
@@ -20,6 +20,7 @@ struct Response {
     frame: Result<Receive<CpuFrame>>,
 }
 
+/// Decodes on a CPU thread and hands frames over through bounded queues
 pub(super) struct SoftwareDecoder {
     requests: Option<mpsc::SyncSender<Request>>,
     results: Option<mpsc::Receiver<Response>>,
@@ -42,12 +43,14 @@ impl SoftwareDecoder {
             generation: 0,
         })
     }
+}
 
-    pub fn flush(&mut self) {
+impl Decoder for SoftwareDecoder {
+    fn flush(&mut self) {
         self.generation += 1;
     }
 
-    pub fn send(&mut self, packet: Option<&Packet>) -> Result<Sent> {
+    fn send(&mut self, packet: Option<&Packet>) -> Result<Sent> {
         let request = Request {
             generation: self.generation,
             packet: packet.map(Packet::try_clone).transpose()?,
@@ -67,7 +70,7 @@ impl SoftwareDecoder {
         }
     }
 
-    pub fn receive(&mut self) -> Result<Receive<Frame>> {
+    fn receive(&mut self) -> Result<Receive<Frame>> {
         let results = self
             .results
             .as_ref()

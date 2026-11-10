@@ -12,24 +12,26 @@ use eframe::{
 use super::{
     PlayerCommand,
     gpu::{self, NativeGpu},
-    native,
 };
 
-mod audio;
+mod audio_output;
 mod clock;
+mod decoded_frame;
 mod decoder;
+mod decoder_detection;
+mod decoder_selection;
 mod engine;
-mod frame;
+mod hardware_decoder;
 mod rendering;
 mod service;
-mod shared;
-mod software;
+mod shared_state;
+mod software_decoder;
 mod worker;
 
 use engine::{Engine, Snapshot};
 pub(super) use service::Player;
 
-const SLOT_COUNT: usize = native::FLOWA_VIDEO_SLOTS as usize;
+const SLOT_COUNT: usize = gpu::TARGET_SLOTS;
 
 #[derive(Clone)]
 struct Target {
@@ -135,7 +137,7 @@ impl Drop for Pipeline {
         }
 
         // The player is gone, so retire GPU wrappers directly before destroying its textures
-        unsafe { native::flowa_gpu_retire_targets(self.gpu.handle.as_ptr()) };
+        self.gpu.retire_targets();
         if let Err(error) = self
             .graphics
             .device

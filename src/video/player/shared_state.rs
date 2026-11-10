@@ -9,7 +9,7 @@ use std::{
 use anyhow::{Result, ensure};
 
 use super::{
-    audio::{AudioOutput, BYTES_PER_SECOND},
+    audio_output::{AudioOutput, BYTES_PER_SECOND},
     clock::{AudioTiming, Clock},
 };
 use crate::{

@@ -11,7 +11,7 @@ Flowa is one Rust crate. `src/main.rs` handles the native entry point, codec reg
 | `ui/` | Egui components, styling, input, and drawing | `viewer_ui.rs`, `canvas.rs`, `filmstrip.rs`, `toolbar.rs`, `inspector.rs`, `dialogs.rs`, `preferences.rs`, `keyboard.rs`, `theme.rs`, `style.rs`, `widgets.rs`, `icons.rs` |
 | `ui/rendering/` | GPU textures and drawing geometry | `image_renderer.rs`, `icon_cache.rs`, `geometry.rs` |
 | `services/` | Filesystem access, codecs, desktop integration, and background workers | `folder_scan.rs`, `image_decode/`, `image_loader/mod.rs`, `worker.rs`, `tiles.rs`, `thumbnails.rs`, `file_actions.rs` |
-| `video/` | FFmpeg media ownership, playback workers, and native GPU presentation | `media/`, `player/`, `gpu.rs`, `native.rs`, `thumbnail.rs` |
+| `video/` | FFmpeg media ownership, playback workers, and native GPU presentation | `media/`, `player/`, `gpu/`, `native_bindings.rs`, `thumbnail.rs` |
 | `settings/` | Configuration values and persistence | `model.rs`, `store.rs` |
 | `utils/` | General helpers with no application, viewer, or UI dependencies | `format.rs`, `filename.rs`, `size.rs` |
 
@@ -73,7 +73,7 @@ The loader retains at most four decoded images in CPU memory, within a quarter o
 
 `app/native.rs` starts the loader before creating the graphics device and preloads the file being opened, so a large image decodes while Vulkan initializes. The application adopts that decode when it selects the file. Previews, thumbnails, and zoom tiles are downscaled with SIMD box filtering in `services/resize.rs`; thumbnails come from the preview rather than the full image.
 
-`native/video/device.c` creates the shared Vulkan device with only the queues flowa uses and imports it into libplacebo, because libplacebo creates every queue of every family, which costs over 100 ms on some NVIDIA drivers. If wgpu requests a feature structure the importer does not recognize, the shim falls back to libplacebo's own device creation. Hardware decoder detection creates CUDA and VA-API devices, so it runs on a background thread the first time Preferences needs the list.
+`video/gpu/shared_device.rs` creates the shared Vulkan device with only the queues flowa uses and imports it into libplacebo, because libplacebo creates every queue of every family, which costs over 100 ms on some NVIDIA drivers. If wgpu requests a feature structure the importer does not recognize, it falls back to libplacebo's own device creation. Hardware decoder detection creates CUDA and VA-API devices, so it runs on a background thread the first time Preferences needs the list.
 
 During navigation, the canvas retains only the previous preview texture and its view transform. This frozen preview is separate from the selected image and cannot be copied or exported. The loading indicator waits 150 ms and fades in over 100 ms. The new image appears as soon as it is available, with no minimum indicator duration or image fade.
 
@@ -87,10 +87,11 @@ GPU resources are created and evicted on the UI thread. The image renderer retai
 
 `video/media/` owns FFmpeg demuxing, stream snapshots, packets, codecs, audio
 resampling, decoded frames, and bounded poster extraction. It calls bindings
-generated from the same SDK headers used to compile and link the native GPU shim.
-`video/native.rs` holds bindings for the shim and SDL3 audio, generated from
-`native/video/bindings.h`, so struct layouts and decoder backend values come from
-the C headers rather than hand-written mirrors.
+generated from the SDK headers that the build links.
+`video/native_bindings.rs` holds bindings for libplacebo and SDL3 audio, generated from
+`native/video/bindings.h`, so struct layouts come from the C headers rather than
+hand-written mirrors. `video/vulkan.rs` gives both sets of bindings ash's Vulkan
+types.
 
 `build.rs` sets the `video_playback` cfg when the `video` feature targets Linux or
 Windows. Without it, `video/unsupported.rs` supplies an uninhabited player, so
@@ -105,12 +106,23 @@ The software worker owns its codec and transfers CPU frame ownership without a
 rendering-device dependency. Audio blocks use Rust-owned sample buffers. Immutable
 stream snapshots own copied parameters and can outlive the demuxer.
 
-`video/player/media.rs` couples hardware codecs and displayed hardware frames to
-the Vulkan device owner. The retained C implementation owns libplacebo, frame
-imports, GPU-to-GPU transfers, and in-flight references until timeline completion.
-`native/video/transfer.c` copies Vulkan decode images into sampleable planes when
-direct import is unavailable, without CPU readback. It retires copy command
-buffers after GPU completion.
+`video/player/decoder.rs` defines the `Decoder` trait: packets in, frames out,
+without blocking playback. `HardwareDecoder` in `hardware_decoder.rs` decodes on the
+rendering GPU, and `SoftwareDecoder` in `software_decoder.rs` on a CPU thread.
+`DecoderSelection` opens the first backend that works and replaces it with the
+next one when it fails. `DecoderDetection` lists the hardware decoders for
+Preferences.
+
+`HardwareDecoder` and the frames it returns keep the Vulkan device owner in
+`video/gpu/mod.rs` alive. That owner holds the device, which never changes after
+creation, and a locked renderer used by one playback owner.
+`video/gpu/frame_renderer.rs` drives libplacebo and keeps in-flight frame
+references until their timeline value completes.
+`video/gpu/frame_transfer.rs` copies NVDEC frames and Vulkan decode images into
+sampleable planes when direct import is unavailable, without CPU readback. It
+retires copy command buffers after GPU completion.
+`native/video/placebo.c` is the only C: frame import, which libplacebo implements
+in a header, and the libplacebo macros and exported data Rust cannot link.
 The player preserves the existing queues, clocks, seek generations, and fallback
 behavior. Its current presenter still requires Vulkan even for CPU decoding.
 

@@ -10,7 +10,10 @@ use std::{
 use anyhow::{Result, ensure};
 use eframe::egui_wgpu::RenderState;
 
-use super::{Pipeline, Snapshot, Target, audio::AudioRuntime, decoder::DecoderProbe};
+use super::{
+    Pipeline, Snapshot, Target, audio_output::AudioRuntime,
+    decoder_detection::DecoderDetection,
+};
 use crate::{
     settings::VideoDecoder,
     video::{
@@ -144,7 +147,7 @@ pub(in crate::video) struct Player {
     status: Snapshot,
     displayed: Option<egui::TextureId>,
     target: Option<Target>,
-    decoders: DecoderProbe,
+    decoders: DecoderDetection,
     audio_name: String,
     // Dropped on the UI thread after playback has joined and destroyed its SDL streams
     _audio: Option<AudioRuntime>,
@@ -160,7 +163,7 @@ impl Player {
                 log::warn!("Audio initialization: {error:#}");
             })
             .ok();
-        let decoders = DecoderProbe::new(Arc::clone(&gpu), ctx.clone());
+        let decoders = DecoderDetection::new(Arc::clone(&gpu), ctx.clone());
         let driver = if gpu.background_playback {
             let mailbox = Arc::new(Mailbox::default());
             let requests = Arc::clone(&mailbox);

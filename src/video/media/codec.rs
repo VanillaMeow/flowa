@@ -18,6 +18,10 @@ impl DeviceRef {
         ))
     }
 
+    pub fn raw(&self) -> *mut ffi::AVBufferRef {
+        self.0.as_ptr()
+    }
+
     fn into_raw(self) -> *mut ffi::AVBufferRef {
         let pointer = self.0.as_ptr();
         std::mem::forget(self);

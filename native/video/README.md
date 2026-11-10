@@ -1,8 +1,9 @@
 # Video playback
 
 FFmpeg decodes, libplacebo renders into wgpu textures, and SDL3 plays audio.
-Rust owns playback, seeking, FFmpeg contexts, and frame lifetimes. A small C shim
-handles the Vulkan device and libplacebo rendering.
+Rust owns playback, seeking, FFmpeg contexts, frame lifetimes, the Vulkan device,
+and rendering. A few lines of C reach the parts of libplacebo that have no symbol
+Rust could link.
 
 Video works on Linux. Windows code exists but is untested, and macOS is planned.
 See [BACKENDS.md](BACKENDS.md) for the roadmap.
@@ -12,15 +13,26 @@ See [BACKENDS.md](BACKENDS.md) for the roadmap.
 | Path | Contents |
 | --- | --- |
 | `src/video/media/` | FFmpeg wrappers for demuxing, decoding, and resampling |
-| `src/video/player/` | Playback engine, decoder selection, audio, and clock |
+| `src/video/player/` | Playback engine, audio, and clock |
+| `src/video/player/decoder.rs` | The `Decoder` trait and the backends that implement it |
+| `src/video/player/hardware_decoder.rs` | NVDEC, Vulkan Video, and VA-API decoding on the rendering GPU |
+| `src/video/player/software_decoder.rs` | FFmpeg's CPU decoders on a worker thread |
+| `src/video/player/decoder_selection.rs` | Picks the first decoder that works and falls back to the next |
+| `src/video/player/decoder_detection.rs` | Lists the hardware decoders this computer can open |
 | `src/video/thumbnail.rs` | Filmstrip thumbnails |
-| `src/video/gpu.rs` | Shares the Vulkan device with wgpu |
-| `native/video/device.c` | Creates the Vulkan device with only the queues flowa uses |
-| `native/video/gpu.c` | libplacebo rendering and hardware frame import |
-| `native/video/transfer.c` | Copies decoded frames that can't be sampled directly |
+| `src/video/gpu/mod.rs` | Shares the Vulkan device with wgpu |
+| `src/video/gpu/shared_device.rs` | Creates the Vulkan device with only the queues flowa uses |
+| `src/video/gpu/frame_renderer.rs` | libplacebo rendering into wgpu textures |
+| `src/video/gpu/frame_transfer.rs` | Copies decoded frames that can't be sampled directly |
+| `native/video/placebo.c` | libplacebo's macros, header-only FFmpeg helpers, and exported data |
 
-Cargo generates the Rust bindings from `ffmpeg.h` and `bindings.h` and compiles
-the shim during the build.
+Cargo generates the Rust bindings for FFmpeg, libplacebo, and SDL3 from `ffmpeg.h`
+and `bindings.h`, and compiles `placebo.c` during the build.
+
+`placebo.c` stays in C because `libplacebo/utils/libav.h` implements frame import
+as `static inline` functions, which only a C compiler can turn into code. It also
+wraps the log constructor, a macro whose symbol changes with each API version, and
+the exported constants, which Rust can't import from a Windows DLL.
 
 ## Decoding
 

@@ -7,11 +7,13 @@ pub(crate) mod gpu;
 #[cfg(video_playback)]
 mod media;
 #[cfg(video_playback)]
-mod native;
+mod native_bindings;
 #[cfg(video_playback)]
 mod player;
 #[cfg(video_playback)]
 mod thumbnail;
+#[cfg(video_playback)]
+mod vulkan;
 
 #[cfg(not(video_playback))]
 mod unsupported;

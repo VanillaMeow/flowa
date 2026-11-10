@@ -10,18 +10,17 @@ use std::{
 use anyhow::{Context, Result, ensure};
 
 use super::{
-    audio::AudioOutput,
-    decoder::Decoder,
-    frame::Frame,
-    shared::{PlaybackState, Seek, Shared},
+    audio_output::AudioOutput,
+    decoded_frame::Frame,
+    decoder_selection::DecoderSelection,
+    shared_state::{PlaybackState, Seek, Shared},
     worker,
 };
 use crate::settings::VideoDecoder;
 use crate::video::{
     VideoState,
-    gpu::NativeGpu,
+    gpu::{NativeGpu, RenderError, RenderTarget},
     media::{self, StreamInfo},
-    native,
 };
 
 /// Bounds how many late frames one poll may skip while catching up to the clock
@@ -65,7 +64,7 @@ pub(super) struct Engine {
     ctx: egui::Context,
     shared: Option<Arc<Shared>>,
     worker: Option<JoinHandle<()>>,
-    decoder: Option<Decoder>,
+    decoder: Option<DecoderSelection>,
     decoder_preference: VideoDecoder,
     path: Option<PathBuf>,
     resume: Option<Resume>,
@@ -120,9 +119,8 @@ impl Engine {
             log::warn!("The media worker terminated unexpectedly");
         }
 
-        // SAFETY: All native video submissions belong to this engine's thread
         // The demux worker has joined before its frames and audio output are released
-        unsafe { native::flowa_gpu_reset_frames(self.gpu.handle.as_ptr()) };
+        self.gpu.reset_frames();
         self.pending = None;
         self.current = None;
         self.decoder = None;
@@ -231,7 +229,11 @@ impl Engine {
         self.seek(position).context(
             "Decoder preference saved; reopen this video to switch its decoder",
         )?;
-        self.decoder = Some(Decoder::new(Arc::clone(&self.gpu), stream, preference));
+        self.decoder = Some(DecoderSelection::new(
+            Arc::clone(&self.gpu),
+            stream,
+            preference,
+        ));
         self.pending = None;
         Ok(())
     }
@@ -292,7 +294,7 @@ impl Engine {
     /// Draws the current frame into the target, returning whether anything was drawn
     ///
     /// A frame the renderer cannot import switches to the next decoder instead of failing
-    pub fn render(&mut self, target: &native::flowa_video_target) -> Result<bool> {
+    pub fn render(&mut self, target: &RenderTarget) -> Result<bool> {
         let Some(current) = &self.current else {
             return Ok(false);
         };
@@ -308,27 +310,13 @@ impl Engine {
             .map(Arc::clone)
             .ok_or_else(|| anyhow::anyhow!("No video stream is available"))?;
 
-        // SAFETY: Borrowed frames and stream parameters outlive the call; C retains GPU-flight references
-        let result = native::call(|error, size| unsafe {
-            native::flowa_gpu_render(
-                self.gpu.handle.as_ptr(),
-                current.frame.raw(),
-                stream.raw(),
-                target,
-                error,
-                size,
-            )
-        });
-
-        let error = match result {
-            Ok(status) => {
-                ensure!(status > 0, "The video frame could not be rendered");
-                return Ok(true);
-            }
-            Err(error) => error,
+        // The renderer retains its own references to frames the GPU is still reading
+        let Err(error) = self.gpu.render(current.frame.decoded(), &stream, target)
+        else {
+            return Ok(true);
         };
 
-        let unsupported = error.status == native::FLOWA_RENDER_UNSUPPORTED_FRAME;
+        let unsupported = matches!(error, RenderError::UnsupportedFrame(_));
         let result = if unsupported && self.can_fallback() {
             // The frame can never be shown, so wait for the next decoder's frames
             self.current = None;
@@ -344,7 +332,9 @@ impl Engine {
     }
 
     fn can_fallback(&self) -> bool {
-        self.decoder.as_ref().is_some_and(Decoder::can_fallback)
+        self.decoder
+            .as_ref()
+            .is_some_and(DecoderSelection::can_fallback)
     }
 
     fn prepare(&mut self, shared: &Shared) -> Result<bool> {
@@ -373,7 +363,7 @@ impl Engine {
 
         if self.decoder.is_none() {
             self.last_pts = -stream.info.frame_duration;
-            self.decoder = Some(Decoder::new(
+            self.decoder = Some(DecoderSelection::new(
                 Arc::clone(&self.gpu),
                 Arc::clone(&stream),
                 self.decoder_preference,
@@ -462,7 +452,7 @@ impl Engine {
             .decoder
             .as_ref()
             .filter(|decoder| decoder.can_fallback())
-            .map(Decoder::backend_name)
+            .map(DecoderSelection::backend_name)
         else {
             return Err(error);
         };

@@ -10,8 +10,8 @@ use std::{
 use anyhow::{Result, ensure};
 
 use super::{
-    audio::{BYTES_PER_SECOND, CHANNELS, RATE},
-    shared::{BYTE_LIMIT, Shared},
+    audio_output::{BYTES_PER_SECOND, CHANNELS, RATE},
+    shared_state::{BYTE_LIMIT, Shared},
 };
 use crate::video::media::{AudioBlock, Media, Packet, PacketKind, Receive, Sent};
 

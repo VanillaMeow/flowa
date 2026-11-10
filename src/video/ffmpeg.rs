@@ -9,4 +9,6 @@
 #![allow(clippy::all)]
 #![allow(unnecessary_transmutes)]
 
+use super::vulkan::*;
+
 include!(concat!(env!("OUT_DIR"), "/ffmpeg.rs"));

@@ -1,7 +1,7 @@
-// Shim and SDL3 audio declarations used by the Rust playback owners
+// Libplacebo, its shim, and the SDL3 audio declarations used by Rust playback
 #pragma once
 
-#include "flowa_video.h"
+#include "placebo.h"
 
 #include <SDL3/SDL_audio.h>
 #include <SDL3/SDL_error.h>

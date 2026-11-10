@@ -6,6 +6,7 @@
 #include <libavformat/avformat.h>
 #include <libavutil/display.h>
 #include <libavutil/hwcontext.h>
+#include <libavutil/hwcontext_vulkan.h>
 #include <libavutil/pixdesc.h>
 #include <libswresample/swresample.h>
 #include <libswscale/swscale.h>

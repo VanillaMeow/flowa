@@ -21,10 +21,19 @@ pub(in crate::video) struct AvFrame {
 }
 
 impl AvFrame {
-    pub(super) fn allocate() -> Result<Self> {
+    pub fn allocate() -> Result<Self> {
         // SAFETY: The newly allocated frame has one owner and is freed by Drop
         let handle = NonNull::new(unsafe { ffi::av_frame_alloc() })
             .context("Cannot allocate a decoded frame")?;
+
+        Ok(Self { handle })
+    }
+
+    /// Takes another reference to the same frame data
+    pub fn retain(&self) -> Result<Self> {
+        // SAFETY: Cloning references the source's buffers without copying or modifying them
+        let handle = NonNull::new(unsafe { ffi::av_frame_clone(self.raw()) })
+            .context("Cannot retain a decoded frame")?;
 
         Ok(Self { handle })
     }
@@ -33,7 +42,7 @@ impl AvFrame {
         self.handle.as_ptr()
     }
 
-    pub(super) fn data(&self) -> &ffi::AVFrame {
+    pub fn data(&self) -> &ffi::AVFrame {
         // SAFETY: This wrapper retains the frame for the returned borrow
         unsafe { self.handle.as_ref() }
     }

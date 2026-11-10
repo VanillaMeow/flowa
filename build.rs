@@ -36,6 +36,22 @@ const SDL_FUNCTIONS: &[&str] = &[
     "SDL_PutAudioStreamData",
 ];
 
+/// Libplacebo functions called by the Rust renderer; the shim covers the rest
+const PLACEBO_FUNCTIONS: &[&str] = &[
+    "pl_log_destroy",
+    "pl_vulkan_import",
+    "pl_vulkan_create",
+    "pl_vulkan_destroy",
+    "pl_vulkan_wrap",
+    "pl_vulkan_release_ex",
+    "pl_vulkan_hold_ex",
+    "pl_renderer_create",
+    "pl_renderer_destroy",
+    "pl_tex_destroy",
+    "pl_gpu_finish",
+    "pl_gpu_flush",
+];
+
 fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-changed=build.rs");
 
@@ -124,13 +140,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     generate_ffmpeg_bindings(&libraries, &out_dir)?;
     generate_native_bindings(&libraries, &out_dir)?;
 
-    for source in ["device.c", "gpu.c", "transfer.c"] {
-        let path = format!("native/video/{source}");
-        println!("cargo:rerun-if-changed={path}");
-        compiler.file(path);
-    }
+    println!("cargo:rerun-if-changed=native/video/placebo.c");
+    compiler.file("native/video/placebo.c");
 
-    for header in ["bindings.h", "ffmpeg.h", "flowa_video.h", "internal.h"] {
+    for header in ["bindings.h", "ffmpeg.h", "placebo.h"] {
         println!("cargo:rerun-if-changed=native/video/{header}");
     }
 
@@ -239,6 +252,7 @@ fn generate_ffmpeg_bindings(
         .allowlist_type("AV.*|SwrContext|SwsContext|SwsFlags")
         .allowlist_var("FLOWA_AVERROR_.*|AV_TIME_BASE|AVSEEK_FLAG_BACKWARD|AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX|FF_THREAD_.*|SWS_.*")
         .allowlist_var("AV_PIX_FMT_FLAG_HWACCEL")
+        .blocklist_type("Vk.*|PFN_vk.*")
         .derive_default(true)
         .generate()?
         .write_to_file(out_dir.join("ffmpeg.rs"))?;
@@ -246,17 +260,21 @@ fn generate_ffmpeg_bindings(
     Ok(())
 }
 
-/// Shim and SDL3 declarations; Rust supplies the Vulkan and FFmpeg types they reference
+/// Libplacebo, shim, and SDL3 declarations
+///
+/// Rust supplies the Vulkan and FFmpeg types they reference
 fn generate_native_bindings(
     libraries: &[pkg_config::Library],
     out_dir: &Path,
 ) -> Result<(), Box<dyn Error>> {
     bindings_builder("native/video/bindings.h", libraries)
         .allowlist_function("flowa_.*")
+        .allowlist_function(PLACEBO_FUNCTIONS.join("|"))
         .allowlist_function(SDL_FUNCTIONS.join("|"))
-        .allowlist_type("flowa_.*|SDL_AudioFormat")
-        .allowlist_var("FLOWA_.*|SDL_INIT_AUDIO")
+        .allowlist_type("SDL_AudioFormat")
+        .allowlist_var("SDL_INIT_AUDIO")
         .blocklist_type("Vk.*|PFN_vk.*|AV.*")
+        .derive_default(true)
         .generate()?
         .write_to_file(out_dir.join("native.rs"))?;
 
