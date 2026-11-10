@@ -3,7 +3,7 @@
 use std::{
     collections::HashMap,
     ffi::CStr,
-    sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak, atomic::AtomicBool},
+    sync::{Arc, Mutex, OnceLock, Weak, atomic::AtomicBool},
 };
 
 use anyhow::{Context, Result};
@@ -13,18 +13,12 @@ use eframe::{
     wgpu::{self, hal},
 };
 
-use super::media::{AvFrame, DeviceRef, Stream};
-
 mod device_extensions;
 mod device_features;
-mod frame_renderer;
-mod frame_transfer;
 mod shared_device;
 
-use frame_renderer::FrameRenderer;
-pub(super) use frame_renderer::{RenderError, RenderTarget, TARGET_SLOTS};
-pub(super) use shared_device::DecoderDevice;
-use shared_device::{DeviceRequest, SharedDevice};
+use shared_device::DeviceRequest;
+pub(super) use shared_device::SharedDevice;
 
 type Registry = Mutex<HashMap<u64, Weak<NativeGpu>>>;
 static DEVICES: OnceLock<Registry> = OnceLock::new();
@@ -33,59 +27,20 @@ static DEVICES: OnceLock<Registry> = OnceLock::new();
 pub(super) struct NativeGpu {
     pub background_playback: bool,
     pub playback_claimed: AtomicBool,
-    renderer: Mutex<FrameRenderer>,
     device: SharedDevice,
     // The adapter retains the Vulkan instance borrowed by the native device
     _adapter: wgpu::Adapter,
 }
 
-// SAFETY: The device does not change after creation, and the renderer is locked for
-// every use. One playback owner uses queue zero; wgpu uses a separate queue for
-// background playback
+// SAFETY: The device does not change after creation. One playback owner uses queue
+// zero; wgpu uses a separate queue for background playback
 unsafe impl Send for NativeGpu {}
 unsafe impl Sync for NativeGpu {}
 
 impl NativeGpu {
-    /// Creates an FFmpeg device for a hardware decoder that outputs to this GPU
-    ///
-    /// The codec and its frames must keep this owner alive
-    pub fn decoder_device(&self, kind: DecoderDevice) -> Result<DeviceRef> {
-        self.device.decoder_device(kind)
-    }
-
-    /// Draws a decoded frame into one of the player's textures
-    pub fn render(
-        &self,
-        frame: &AvFrame,
-        stream: &Stream,
-        target: &RenderTarget,
-    ) -> Result<(), RenderError> {
-        self.renderer().render(&self.device, frame, stream, target)
-    }
-
-    /// Releases the renderer's views of the player's textures before they are destroyed
-    pub fn retire_targets(&self) {
-        self.renderer().retire_targets(&self.device);
-    }
-
-    /// Releases the renderer's frames before the decoder that produced them is dropped
-    pub fn reset_frames(&self) {
-        self.renderer().reset_frames(&self.device);
-    }
-
-    fn renderer(&self) -> MutexGuard<'_, FrameRenderer> {
-        self.renderer.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-}
-
-impl Drop for NativeGpu {
-    fn drop(&mut self) {
-        // All dependent renderers and frames have released this final device owner, and
-        // the renderer's GPU objects must go before the device that the fields then drop
-        self.renderer
-            .get_mut()
-            .unwrap_or_else(PoisonError::into_inner)
-            .destroy(&self.device);
+    /// The Vulkan device with libplacebo's and FFmpeg's views of it
+    pub fn device(&self) -> &SharedDevice {
+        &self.device
     }
 }
 
@@ -176,7 +131,6 @@ fn create_device(adapter: &wgpu::Adapter) -> Result<(wgpu::Device, wgpu::Queue)>
 
     // SAFETY: The request describes wgpu's live adapter, which the owner below retains
     let device = unsafe { SharedDevice::create(&request) }?;
-    let renderer = FrameRenderer::new(&device)?;
     let raw = device.api().clone();
     let graphics_family = device.graphics_family();
     let graphics_queue = device.wgpu_queue();
@@ -190,7 +144,6 @@ fn create_device(adapter: &wgpu::Adapter) -> Result<(wgpu::Device, wgpu::Queue)>
     let owner = Arc::new(NativeGpu {
         background_playback: graphics_queue != 0,
         playback_claimed: AtomicBool::new(false),
-        renderer: Mutex::new(renderer),
         device,
         _adapter: adapter.clone(),
     });

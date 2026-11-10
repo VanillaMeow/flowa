@@ -13,7 +13,7 @@ pub(crate) mod gpu {
     }
 }
 
-pub(super) mod player {
+pub(super) mod playback {
     use std::{path::Path, time::Duration};
 
     use anyhow::{Result, bail};

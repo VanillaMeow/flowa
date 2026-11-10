@@ -12,18 +12,18 @@ See [BACKENDS.md](BACKENDS.md) for the roadmap.
 
 | Path | Contents |
 | --- | --- |
-| `src/video/media/` | FFmpeg wrappers for demuxing, decoding, and resampling |
-| `src/video/player/` | Playback engine, audio, and clock |
-| `src/video/player/decoder.rs` | The `Decoder` trait and the backends that implement it |
-| `src/video/player/hardware_decoder.rs` | NVDEC, Vulkan Video, and VA-API decoding on the rendering GPU |
-| `src/video/player/software_decoder.rs` | FFmpeg's CPU decoders on a worker thread |
-| `src/video/player/decoder_selection.rs` | Picks the first decoder that works and falls back to the next |
-| `src/video/player/decoder_detection.rs` | Lists the hardware decoders this computer can open |
+| `src/video/session.rs` | `VideoSession`, the application's handle on playback |
+| `src/video/decoding/` | The `Decoder` trait, decoder selection, and the decoders behind it |
+| `src/video/decoding/software/` | FFmpeg's CPU decoders on a worker thread |
+| `src/video/decoding/hardware/` | `HardwareDecoder` and one file each for NVDEC, Vulkan Video, and VA-API |
+| `src/video/playback/` | Playback engine, demux and audio worker, clock, and the service thread |
+| `src/video/presentation/` | libplacebo rendering into wgpu textures, and copies of frames it can't sample |
+| `src/video/demux/` | Opening files and reading and seeking packets |
+| `src/video/audio/` | Audio decoding, resampling, and SDL3 output |
+| `src/video/gpu/` | Creates the Vulkan device with only the queues flowa uses and shares it with wgpu |
+| `src/video/ffmpeg/` | FFmpeg wrappers that know nothing about decoder backends |
+| `src/video/ffi/` | Generated FFmpeg, libplacebo, and SDL3 bindings |
 | `src/video/thumbnail.rs` | Filmstrip thumbnails |
-| `src/video/gpu/mod.rs` | Shares the Vulkan device with wgpu |
-| `src/video/gpu/shared_device.rs` | Creates the Vulkan device with only the queues flowa uses |
-| `src/video/gpu/frame_renderer.rs` | libplacebo rendering into wgpu textures |
-| `src/video/gpu/frame_transfer.rs` | Copies decoded frames that can't be sampled directly |
 | `native/video/placebo.c` | libplacebo's macros, header-only FFmpeg helpers, and exported data |
 
 Cargo generates the Rust bindings for FFmpeg, libplacebo, and SDL3 from `ffmpeg.h`

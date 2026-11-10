@@ -11,7 +11,7 @@ Flowa is one Rust crate. `src/main.rs` handles the native entry point, codec reg
 | `ui/` | Egui components, styling, input, and drawing | `viewer_ui.rs`, `canvas.rs`, `filmstrip.rs`, `toolbar.rs`, `inspector.rs`, `dialogs.rs`, `preferences.rs`, `keyboard.rs`, `theme.rs`, `style.rs`, `widgets.rs`, `icons.rs` |
 | `ui/rendering/` | GPU textures and drawing geometry | `image_renderer.rs`, `icon_cache.rs`, `geometry.rs` |
 | `services/` | Filesystem access, codecs, desktop integration, and background workers | `folder_scan.rs`, `image_decode/`, `image_loader/mod.rs`, `worker.rs`, `tiles.rs`, `thumbnails.rs`, `file_actions.rs` |
-| `video/` | FFmpeg media ownership, playback workers, and native GPU presentation | `media/`, `player/`, `gpu/`, `native_bindings.rs`, `thumbnail.rs` |
+| `video/` | FFmpeg media ownership, decoding, playback workers, and native GPU presentation | `session.rs`, `decoding/`, `playback/`, `presentation/`, `demux/`, `audio/`, `gpu/`, `ffmpeg/`, `ffi/`, `thumbnail.rs` |
 | `settings/` | Configuration values and persistence | `model.rs`, `store.rs` |
 | `utils/` | General helpers with no application, viewer, or UI dependencies | `format.rs`, `filename.rs`, `size.rs` |
 
@@ -85,46 +85,53 @@ GPU resources are created and evicted on the UI thread. The image renderer retai
 
 ## Video ownership
 
-`video/media/` owns FFmpeg demuxing, stream snapshots, packets, codecs, audio
-resampling, decoded frames, and bounded poster extraction. It calls bindings
-generated from the SDK headers that the build links.
-`video/native_bindings.rs` holds bindings for libplacebo and SDL3 audio, generated from
-`native/video/bindings.h`, so struct layouts come from the C headers rather than
-hand-written mirrors. `video/vulkan.rs` gives both sets of bindings ash's Vulkan
-types.
+`video/session.rs` holds `VideoSession`, the application's handle on playback.
+`video/ffmpeg/` wraps FFmpeg objects without knowing about any decoder backend:
+codec contexts, frames, packets, stream snapshots, hardware device references, and
+format contexts. `video/ffi/` holds bindings for FFmpeg, libplacebo, and SDL3 audio,
+generated from `native/video/ffmpeg.h` and `native/video/bindings.h`, so struct
+layouts come from the C headers rather than hand-written mirrors. Its `vulkan.rs`
+gives both sets of bindings ash's Vulkan types.
 
 `build.rs` sets the `video_playback` cfg when the `video` feature targets Linux or
 Windows. Without it, `video/unsupported.rs` supplies an uninhabited player, so
 `VideoSession` has one implementation that reports playback as unavailable.
-A video with an audio track still plays, silently and timed by the wall clock, when
-no audio output device can be opened.
-Input owners retain stable interruption callbacks through close. Codec owners
-retain stable hardware-format callback storage through codec-worker shutdown.
 
-CPU frames have a checked transferable type that rejects hardware pixel formats.
-The software worker owns its codec and transfers CPU frame ownership without a
-rendering-device dependency. Audio blocks use Rust-owned sample buffers. Immutable
-stream snapshots own copied parameters and can outlive the demuxer.
+`video/demux/` opens the file, selects the streams, and reads and seeks packets.
+`video/audio/` decodes and resamples audio and owns SDL3 output. A video with an
+audio track still plays, silently and timed by the wall clock, when no audio output
+device can be opened. Input owners retain stable interruption callbacks through
+close. Codec contexts keep their setup, including any callback storage, until
+codec-worker shutdown.
 
-`video/player/decoder.rs` defines the `Decoder` trait: packets in, frames out,
-without blocking playback. `HardwareDecoder` in `hardware_decoder.rs` decodes on the
-rendering GPU, and `SoftwareDecoder` in `software_decoder.rs` on a CPU thread.
-`DecoderSelection` opens the first backend that works and replaces it with the
-next one when it fails. `DecoderDetection` lists the hardware decoders for
-Preferences.
+`video/decoding/mod.rs` defines the `Decoder` trait: packets in, frames out, without
+blocking playback. `software/` runs FFmpeg's CPU decoders on a worker thread and
+transfers frames through a checked type that rejects hardware pixel formats.
+`hardware/` holds `HardwareDecoder`, shared by every hardware API, and one file per
+API (`nvdec.rs`, `vulkan.rs`, `vaapi.rs`) that creates its FFmpeg device on the
+rendering GPU. `VideoDecoder` in `settings/model.rs` is the one list of decoders, and
+`backend.rs` is the only place that maps a setting to its implementation. `selection.rs` opens the first backend that works, replays the first
+packets into the next one when it fails, and reads packets through a `PacketSource`
+so it does not depend on playback. `capabilities.rs` probes which backends open,
+for Preferences.
 
-`HardwareDecoder` and the frames it returns keep the Vulkan device owner in
-`video/gpu/mod.rs` alive. That owner holds the device, which never changes after
-creation, and a locked renderer used by one playback owner.
-`video/gpu/frame_renderer.rs` drives libplacebo and keeps in-flight frame
-references until their timeline value completes.
-`video/gpu/frame_transfer.rs` copies NVDEC frames and Vulkan decode images into
-sampleable planes when direct import is unavailable, without CPU readback. It
-retires copy command buffers after GPU completion.
+Hardware frames keep the Vulkan device owner in `video/gpu/mod.rs` alive. That owner
+holds the device, which never changes after creation, and exposes the primitives
+the hardware APIs need. `video/presentation/` draws frames: `Presenter` owns a
+libplacebo renderer and the wgpu texture ring, and keeps the device alive until both
+are destroyed. `renderer.rs` keeps in-flight frame references until their timeline
+value completes. `frame_import.rs` is the one place that decides which hardware
+storage needs a copy, and `frame_transfer.rs` copies NVDEC frames and Vulkan decode
+images into sampleable planes without CPU readback, retiring copy command buffers
+after GPU completion.
 `native/video/placebo.c` is the only C: frame import, which libplacebo implements
 in a header, and the libplacebo macros and exported data Rust cannot link.
-The player preserves the existing queues, clocks, seek generations, and fallback
-behavior. Its current presenter still requires Vulkan even for CPU decoding.
+
+`video/playback/` schedules frames and runs the demux and audio worker.
+`pipeline.rs` couples the engine with the presenter and has the presenter release
+its frames before the engine drops the decoder that made them. `service.rs` runs the
+pipeline on a background thread when the device has a second graphics queue. The
+presenter still requires Vulkan even for CPU decoding.
 
 The shared Vulkan path is enabled in source for Linux and Windows; only Linux
 has native runtime validation. Metal presentation and additional renderer paths

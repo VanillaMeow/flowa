@@ -8,7 +8,7 @@ use std::{
 use ash::{prelude::VkResult, vk};
 
 use super::shared_device::DeviceRequest;
-use crate::video::{ffmpeg as ffi, native_bindings as native};
+use crate::video::ffi::{ffmpeg as ffi, native};
 
 /// Enabled device extension names as the pointer array that Vulkan, libplacebo, and
 /// FFmpeg read

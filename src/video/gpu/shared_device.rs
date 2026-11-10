@@ -16,7 +16,10 @@ use super::{
     device_extensions::{self, DeviceExtensions},
     device_features::{self, FeatureChain},
 };
-use crate::video::{ffmpeg as ffi, media::DeviceRef, native_bindings as native};
+use crate::video::{
+    ffi::{ffmpeg as ffi, native},
+    ffmpeg::HwDevice,
+};
 
 const QUEUE_PRIORITIES: [f32; 2] = [1.0; 2];
 
@@ -29,20 +32,12 @@ pub(super) struct DeviceRequest<'a> {
     pub features: &'a vk::PhysicalDeviceFeatures2<'a>,
 }
 
-/// Hardware decoders that need an FFmpeg device on the rendering GPU
-#[derive(Clone, Copy)]
-pub(in crate::video) enum DecoderDevice {
-    Nvdec,
-    Vulkan,
-    Vaapi,
-}
-
 /// The Vulkan device with libplacebo's and FFmpeg's views of it
 ///
 /// Nothing changes after creation, so decoder detection can read it during playback
-pub(super) struct SharedDevice {
+pub(in crate::video) struct SharedDevice {
     // Fields drop in order: FFmpeg's view, then the device, then the log it reports to
-    decoding: Option<DeviceRef>,
+    decoding: Option<HwDevice>,
     video_queue: bool,
     render_node: Option<CString>,
     wgpu_queue: u32,
@@ -56,7 +51,7 @@ impl SharedDevice {
     /// # Safety
     /// The request's instance, physical device, and feature chain must be valid, and the
     /// instance must outlive the returned device
-    pub unsafe fn create(request: &DeviceRequest<'_>) -> Result<Self> {
+    pub(super) unsafe fn create(request: &DeviceRequest<'_>) -> Result<Self> {
         let log = Log::create();
         let decoding = device_extensions::decoding();
 
@@ -137,49 +132,23 @@ impl SharedDevice {
         unsafe { (*self.vulkan.vk).api_version >= version }
     }
 
-    pub fn extensions(&self) -> &DeviceExtensions {
+    pub(super) fn extensions(&self) -> &DeviceExtensions {
         &self.vulkan.extensions
     }
 
     /// FFmpeg's context for this device, when FFmpeg supports it
-    pub fn frames_device(&self) -> Option<*mut ffi::AVBufferRef> {
-        self.decoding.as_ref().map(DeviceRef::raw)
+    pub fn ffmpeg_device(&self) -> Option<*mut ffi::AVBufferRef> {
+        self.decoding.as_ref().map(HwDevice::raw)
     }
 
-    /// Creates an FFmpeg device for a hardware decoder that outputs to this GPU
-    pub fn decoder_device(&self, kind: DecoderDevice) -> Result<DeviceRef> {
-        let shared = self.frames_device();
-        let mut device = ptr::null_mut();
+    /// Whether the device has a Vulkan video decode queue that FFmpeg can use
+    pub fn has_video_queue(&self) -> bool {
+        self.video_queue
+    }
 
-        // SAFETY: FFmpeg only reads the shared device and the render node path, and
-        // leaves the output unset when it fails
-        unsafe {
-            match (kind, shared, &self.render_node) {
-                (DecoderDevice::Vulkan, Some(shared), _) if self.video_queue => {
-                    device = ffi::av_buffer_ref(shared);
-                }
-                (DecoderDevice::Nvdec, Some(shared), _) => {
-                    ffi::av_hwdevice_ctx_create_derived(
-                        &mut device,
-                        ffi::AV_HWDEVICE_TYPE_CUDA,
-                        shared,
-                        0,
-                    );
-                }
-                (DecoderDevice::Vaapi, _, Some(node)) => {
-                    ffi::av_hwdevice_ctx_create(
-                        &mut device,
-                        ffi::AV_HWDEVICE_TYPE_VAAPI,
-                        node.as_ptr(),
-                        ptr::null_mut(),
-                        0,
-                    );
-                }
-                _ => {}
-            }
-
-            DeviceRef::from_raw(device)
-        }
+    /// The DRM render node of the GPU, for APIs that open it separately
+    pub fn render_node(&self) -> Option<&CStr> {
+        self.render_node.as_deref()
     }
 
     /// Runs a submission while holding libplacebo's lock on playback's graphics queue
@@ -363,11 +332,11 @@ impl Vulkan {
     unsafe fn decoding_device(
         &self,
         families: &[vk::QueueFamilyProperties],
-    ) -> Option<(DeviceRef, bool)> {
+    ) -> Option<(HwDevice, bool)> {
         // SAFETY: A new Vulkan device reference holds the context FFmpeg expects to be
         // filled in before initialization, and the caller keeps the device alive
         unsafe {
-            let reference = DeviceRef::from_raw(ffi::av_hwdevice_ctx_alloc(
+            let reference = HwDevice::from_raw(ffi::av_hwdevice_ctx_alloc(
                 ffi::AV_HWDEVICE_TYPE_VULKAN,
             ))
             .ok()?;
