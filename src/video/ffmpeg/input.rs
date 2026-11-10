@@ -6,7 +6,7 @@ use anyhow::{Result, ensure};
 
 use crate::utils::units::MIB;
 
-use super::{Packet, check, ffi, path_string};
+use super::{Packet, check, ffi, logging, path_string};
 
 struct Interrupt<'a> {
     check: Box<dyn Fn() -> bool + Send + Sync + 'a>,
@@ -36,6 +36,8 @@ impl<'a> Input<'a> {
         cancel: impl Fn() -> bool + Send + Sync + 'a,
         probe: Probe,
     ) -> Result<Self> {
+        logging::install();
+
         let path = path_string(path)?;
         let mut interrupt = Box::new(Interrupt {
             check: Box::new(cancel),

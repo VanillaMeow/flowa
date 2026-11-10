@@ -88,7 +88,9 @@ GPU resources are created and evicted on the UI thread. The image renderer retai
 `video/session.rs` holds `VideoSession`, the application's handle on playback.
 `video/ffmpeg/` wraps FFmpeg objects without knowing about any decoder backend:
 codec contexts, frames, packets, stream snapshots, hardware device references, and
-format contexts. `video/ffi/` holds bindings for FFmpeg, libplacebo, and SDL3 audio,
+format contexts. `ffmpeg/logging.rs` routes FFmpeg's log through the `log` crate and
+captures the reason FFmpeg gives when a hardware decoder rejects a video, which the
+inspector shows after software decoding takes over. `video/ffi/` holds bindings for FFmpeg, libplacebo, and SDL3 audio,
 generated from `native/video/ffmpeg.h` and `native/video/bindings.h`, so struct
 layouts come from the C headers rather than hand-written mirrors. Its `vulkan.rs`
 gives both sets of bindings ash's Vulkan types.

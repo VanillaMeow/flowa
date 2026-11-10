@@ -92,6 +92,8 @@ pub struct VideoState {
     pub decoder: Option<VideoDecoder>,
     /// Set once frames come from a different decoder than expected
     pub fallback: Option<DecoderFallback>,
+    /// Why software decoding took over, one line per hardware decoder that failed
+    pub software_reason: Option<String>,
     pub codec: &'static str,
     pub audio: Option<AudioInfo>,
     pub error: Option<String>,
@@ -137,6 +139,7 @@ impl Default for VideoState {
             size: [0; 2],
             decoder: None,
             fallback: None,
+            software_reason: None,
             codec: "",
             audio: None,
             error: None,

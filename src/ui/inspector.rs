@@ -117,6 +117,10 @@ fn video_details(ui: &mut egui::Ui, video: &VideoState, colors: Colors) {
     }
 
     detail(ui, "DECODER", &video.decoder_description(), colors);
+
+    if let Some(reason) = &video.software_reason {
+        detail(ui, "HARDWARE DECODING", reason, colors);
+    }
     detail(ui, "RENDERER", "Vulkan · libplacebo / wgpu", colors);
 
     if let Some(error) = &video.error {

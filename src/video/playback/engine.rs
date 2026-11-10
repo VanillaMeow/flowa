@@ -463,7 +463,7 @@ impl Engine {
         );
 
         if let Some(decoder) = &mut self.decoder {
-            decoder.fall_back()?;
+            decoder.fall_back(&error)?;
         }
         self.pending = None;
 
@@ -546,6 +546,10 @@ impl Engine {
             size,
             decoder: self.decoder.as_ref().and_then(|decoder| decoder.selected),
             fallback: self.decoder.as_ref().and_then(|decoder| decoder.fallback),
+            software_reason: self
+                .decoder
+                .as_ref()
+                .and_then(|decoder| decoder.software_reason.clone()),
             codec: info.map_or("", |info| info.codec),
             audio: info.and_then(|info| info.audio),
             error: state.error.clone(),

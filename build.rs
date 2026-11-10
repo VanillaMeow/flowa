@@ -251,7 +251,7 @@ fn generate_ffmpeg_bindings(
         .allowlist_function("av.*|swr_.*|sws_.*")
         .allowlist_type("AV.*|SwrContext|SwsContext|SwsFlags")
         .allowlist_var("FLOWA_AVERROR_.*|AV_TIME_BASE|AVSEEK_FLAG_BACKWARD|AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX|FF_THREAD_.*|SWS_.*")
-        .allowlist_var("AV_PIX_FMT_FLAG_HWACCEL")
+        .allowlist_var("AV_PIX_FMT_FLAG_HWACCEL|AV_LOG_ERROR|AV_LOG_WARNING")
         .blocklist_type("Vk.*|PFN_vk.*")
         .derive_default(true)
         .generate()?

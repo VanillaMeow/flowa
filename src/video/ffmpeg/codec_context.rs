@@ -6,7 +6,7 @@ use std::{any::Any, ptr, ptr::NonNull};
 
 use anyhow::{Context, Result, ensure};
 
-use super::{AvFrame, Packet, Receive, Sent, check, ffi};
+use super::{AvFrame, Packet, Receive, Sent, check, ffi, logging};
 
 /// The largest frame FFmpeg may allocate: 64 Mi pixels, such as 8192 × 8192
 const MAX_FRAME_PIXELS: i64 = 64 * 1024 * 1024;
@@ -41,6 +41,8 @@ pub(in crate::video) struct CodecContext {
 
 impl CodecContext {
     pub fn open(stream: &ffi::AVStream, setup: impl CodecSetup) -> Result<Self> {
+        logging::install();
+
         let mut setup = Box::new(setup);
         let decoder = setup.decoder(stream);
         ensure!(!decoder.is_null(), "No decoder supports this codec");

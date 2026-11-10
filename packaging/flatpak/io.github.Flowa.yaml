@@ -94,6 +94,8 @@ modules:
       - cargo build --locked --release --no-default-features --features avif,heif
       - install -Dm755 target/release/flowa /app/bin/flowa
       - install -Dm644 packaging/linux/flowa.desktop /app/share/applications/flowa.desktop
+      # This build has no video, so it must not claim video files
+      - sed -i -e 's|video/[^;]*;||g' -e 's|^GenericName=.*|GenericName=Image Viewer|' /app/share/applications/flowa.desktop
       - install -Dm644 assets/flowa.svg /app/share/icons/hicolor/scalable/apps/flowa.svg
     sources:
       - type: dir

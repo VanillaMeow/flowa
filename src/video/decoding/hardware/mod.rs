@@ -3,14 +3,14 @@
 //! `HardwareDecoder` is shared by every API. Each API only says how to create its
 //! FFmpeg device on the rendering GPU and where its frames end up
 
-use std::sync::Arc;
+use std::{fmt, sync::Arc};
 
 use anyhow::{Result, ensure};
 
 use super::{DecodedFrame, Decoder, HardwareFrame, HardwareStorage};
 use crate::video::{
     ffi::ffmpeg as ffi,
-    ffmpeg::{CodecContext, HwDevice, Packet, Receive, Sent, Stream},
+    ffmpeg::{CodecContext, HwDevice, Packet, Receive, Sent, Stream, logging},
     gpu::NativeGpu,
 };
 
@@ -38,6 +38,17 @@ pub(super) trait HardwareApi: Sync {
     fn create_device(&self, gpu: &NativeGpu) -> Result<HwDevice>;
 }
 
+/// Marks an error from an API this computer lacks, as opposed to one that cannot decode
+/// the video
+#[derive(Debug)]
+pub(super) struct DecoderUnavailable;
+
+impl fmt::Display for DecoderUnavailable {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("This decoder is unavailable on this computer")
+    }
+}
+
 /// Decodes with a hardware API on the GPU that renders the frames
 ///
 /// Keeps the rendering device alive until the codec and the FFmpeg device it borrows
@@ -55,7 +66,9 @@ impl HardwareDecoder {
         gpu: &Arc<NativeGpu>,
         stream: &Stream,
     ) -> Result<Self> {
-        let device = api.create_device(gpu)?;
+        let device = api
+            .create_device(gpu)
+            .map_err(|error| error.context(DecoderUnavailable))?;
         let setup = HardwareFormat::negotiate(stream.data(), device)?;
         let format = setup.format();
         let codec = CodecContext::open(stream.data(), setup)?;
@@ -75,11 +88,13 @@ impl Decoder for HardwareDecoder {
     }
 
     fn send(&mut self, packet: Option<&Packet>) -> Result<Sent> {
-        self.codec.send(packet)
+        with_reason(logging::first_error(|| self.codec.send(packet)))
     }
 
     fn receive(&mut self) -> Result<Receive<DecodedFrame>> {
-        let frame = match self.codec.receive()? {
+        let received = with_reason(logging::first_error(|| self.codec.receive()));
+
+        let frame = match received? {
             Receive::Again => return Ok(Receive::Again),
             Receive::End => return Ok(Receive::End),
             Receive::Item(frame) => frame,
@@ -95,5 +110,15 @@ impl Decoder for HardwareDecoder {
             self.storage,
             Arc::clone(&self.gpu),
         ))))
+    }
+}
+
+/// Puts FFmpeg's logged explanation in front of a failed call's generic error
+///
+/// Hardware decoding runs on the calling thread, so the log holds this decoder's reason
+fn with_reason<T>((result, reason): (Result<T>, Option<String>)) -> Result<T> {
+    match (result, reason) {
+        (Err(error), Some(reason)) => Err(error.context(reason)),
+        (result, _) => result,
     }
 }

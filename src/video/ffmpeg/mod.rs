@@ -10,6 +10,7 @@ mod codec_context;
 mod frame;
 mod hw_device;
 mod input;
+pub(super) mod logging;
 mod packet;
 mod stream;
 

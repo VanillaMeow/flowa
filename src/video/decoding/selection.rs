@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, bail, ensure};
 
-use super::{DecodedFrame, Decoder, backend};
+use super::{DecodedFrame, Decoder, backend, hardware::DecoderUnavailable};
 use crate::{
     settings::VideoDecoder,
     utils::units::MIB,
@@ -61,6 +61,10 @@ pub(in crate::video) struct DecoderSelection {
     expected: Option<VideoDecoder>,
     /// Set when the selected decoder differs from the expected one
     pub fallback: Option<DecoderFallback>,
+    /// Hardware decoders that could not decode this video, with the reason each gave
+    hardware_failures: Vec<(VideoDecoder, String)>,
+    /// Why software decoding took over, when hardware decoders failed on this video
+    pub software_reason: Option<String>,
     probe: Vec<Packet>,
     probe_bytes: usize,
     replay: usize,
@@ -90,6 +94,8 @@ impl DecoderSelection {
                 hardware => Some(hardware),
             },
             fallback: None,
+            hardware_failures: Vec::new(),
+            software_reason: None,
             probe: Vec::new(),
             probe_bytes: 0,
             replay: 0,
@@ -123,7 +129,8 @@ impl DecoderSelection {
     /// Replaces the active decoder with the next candidate after it failed
     ///
     /// The caller seeks afterwards so the new decoder starts from a keyframe
-    pub fn fall_back(&mut self) -> Result<()> {
+    pub fn fall_back(&mut self, error: &anyhow::Error) -> Result<()> {
+        self.record_failure(error);
         self.expected = self.active;
         self.clear_probe();
         self.probing = true;
@@ -150,6 +157,7 @@ impl DecoderSelection {
                         self.probing = false;
                         self.clear_probe();
                         self.note_fallback();
+                        self.note_software_reason();
                     }
                     return Ok(Some(frame));
                 }
@@ -170,6 +178,7 @@ impl DecoderSelection {
                         return Err(error);
                     }
                     log::debug!("Video decoder failed: {error:#}");
+                    self.record_failure(&error);
                     self.retry()?;
                     continue;
                 }
@@ -201,6 +210,7 @@ impl DecoderSelection {
                         return Err(error);
                     }
                     log::debug!("Video decoder rejected a packet: {error:#}");
+                    self.record_failure(&error);
                     self.retry()?;
                 }
             }
@@ -264,6 +274,11 @@ impl DecoderSelection {
                 }
                 Err(error) => {
                     log::debug!("{} unavailable: {error:#}", candidate.as_ref());
+
+                    // A decoder this computer lacks says nothing about the video
+                    if error.downcast_ref::<DecoderUnavailable>().is_none() {
+                        self.hardware_failures.push((candidate, error.to_string()));
+                    }
                 }
             }
         }
@@ -290,6 +305,29 @@ impl DecoderSelection {
         if from != to {
             self.fallback = Some(DecoderFallback { from, to });
         }
+    }
+
+    /// Remembers why the open hardware decoder could not decode this video
+    fn record_failure(&mut self, error: &anyhow::Error) {
+        if let Some(decoder) =
+            self.active.filter(|&active| backend::is_hardware(active))
+        {
+            self.hardware_failures.push((decoder, error.to_string()));
+        }
+    }
+
+    /// Explains a switch to software decoding with each hardware decoder's reason
+    fn note_software_reason(&mut self) {
+        let software = self.selected == Some(VideoDecoder::Software);
+
+        self.software_reason =
+            (software && !self.hardware_failures.is_empty()).then(|| {
+                self.hardware_failures
+                    .iter()
+                    .map(|(decoder, reason)| format!("{}: {reason}", decoder.as_ref()))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            });
     }
 
     fn clear_probe(&mut self) {
