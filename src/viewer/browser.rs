@@ -43,11 +43,11 @@ impl Browser {
         self.serial
     }
 
-    pub fn select(&mut self, index: usize) -> Option<PathBuf> {
-        let path = self.entries.get(index)?.path.clone();
+    pub fn select(&mut self, index: usize) -> Option<Entry> {
+        let entry = self.entries.get(index)?.clone();
         self.index = index;
 
-        Some(path)
+        Some(entry)
     }
 
     pub fn next(&self, delta: isize, wrap: bool) -> Option<usize> {

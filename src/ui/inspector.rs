@@ -4,7 +4,11 @@ use crate::{
     app::{Command, WindowCommand},
     utils::format,
     video::VideoState,
-    viewer::{catalog::Entry, image_session::DecodedImage},
+    viewer::{
+        catalog::Entry,
+        formats::{self, MediaKind},
+        image_session::DecodedImage,
+    },
 };
 
 use super::{
@@ -90,13 +94,8 @@ fn file_details(ui: &mut egui::Ui, entry: &Entry, colors: Colors) {
     detail(ui, "FILE", &entry.name, colors);
     detail(ui, "FOLDER", &folder, colors);
 
-    if crate::viewer::catalog::is_video(&entry.path) {
-        let container = entry
-            .path
-            .extension()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_uppercase();
+    if entry.kind == MediaKind::Video {
+        let container = formats::label(&entry.path).unwrap_or_default();
         detail(ui, "CONTAINER", &container, colors);
         detail(ui, "FILE SIZE", &format::file_size(entry.size), colors);
     }

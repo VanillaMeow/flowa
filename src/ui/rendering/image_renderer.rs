@@ -116,14 +116,14 @@ impl ImageRenderer {
     }
 
     pub fn sync_frame(&mut self, ctx: &egui::Context, image: &ImageSession) {
-        if self.preview_frame == image.playback.frame_index {
+        if self.preview_frame == image.animation.frame_index {
             return;
         }
 
         let Some(decoded) = &image.decoded else {
             return;
         };
-        let Some(frame) = decoded.frames.get(image.playback.frame_index) else {
+        let Some(frame) = decoded.frames.get(image.animation.frame_index) else {
             return;
         };
 
@@ -137,7 +137,7 @@ impl ImageRenderer {
             ));
         }
 
-        self.preview_frame = image.playback.frame_index;
+        self.preview_frame = image.animation.frame_index;
     }
 
     pub fn set_sampling(
@@ -244,11 +244,11 @@ impl ImageRenderer {
             return;
         };
 
-        if decoded.frames.len() > 1 && frame.image.playback.playing {
+        if decoded.frames.len() > 1 && frame.image.animation.playing {
             return;
         }
 
-        let Some(decoded_frame) = decoded.frames.get(frame.image.playback.frame_index)
+        let Some(decoded_frame) = decoded.frames.get(frame.image.animation.frame_index)
         else {
             return;
         };
@@ -327,7 +327,7 @@ fn visible_tile_keys(
         for x in x0..x1 {
             keys.push(TileKey {
                 generation: frame.image.generation(),
-                frame: frame.image.playback.frame_index,
+                frame: frame.image.animation.frame_index,
                 level,
                 x,
                 y,

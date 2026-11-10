@@ -7,7 +7,7 @@ Flowa is one Rust crate. `src/main.rs` handles the native entry point, codec reg
 | Folder | Responsibility | Main files |
 | --- | --- | --- |
 | `app/` | Application construction and coordination | `application.rs`, `native.rs`, `command.rs`, `command_handler.rs`, `worker_results.rs`, `launch.rs` |
-| `viewer/` | Viewing state and rules | `browser.rs`, `catalog.rs`, `image_session.rs`, `playback.rs`, `transform.rs`, `vector.rs` |
+| `viewer/` | Viewing state and rules | `browser.rs`, `catalog.rs`, `formats.rs`, `image_session.rs`, `animation.rs`, `slideshow.rs`, `transform.rs`, `vector.rs` |
 | `ui/` | Egui components, styling, input, and drawing | `viewer_ui.rs`, `canvas.rs`, `filmstrip.rs`, `toolbar.rs`, `inspector.rs`, `dialogs.rs`, `preferences.rs`, `keyboard.rs`, `theme.rs`, `style.rs`, `widgets.rs`, `icons.rs` |
 | `ui/rendering/` | GPU textures and drawing geometry | `image_renderer.rs`, `icon_cache.rs`, `geometry.rs` |
 | `services/` | Filesystem access, codecs, desktop integration, and background workers | `folder_scan.rs`, `image_decode/`, `image_loader/mod.rs`, `worker.rs`, `tiles.rs`, `thumbnails.rs`, `file_actions.rs` |
@@ -21,7 +21,7 @@ Flowa is one Rust crate. `src/main.rs` handles the native entry point, codec reg
 
 Launch options remain owned by startup until the graphics context is ready, so a failed attempt cannot start image workers or consume those options. Errors after app creation do not trigger a restart.
 
-`viewer/browser.rs` owns catalog entries, selection, sorting, and scan generations. It receives catalog data from the application; filesystem inspection and background scans run in `services/folder_scan.rs`. `viewer/image_session.rs` defines decoded image data and owns load generations, loading/errors, and the current image. `viewer/playback.rs` owns animation and slideshow clocks. Playback returns repaint delays to the application and does not schedule UI work itself. `viewer/transform.rs` contains reversible image-to-screen transforms.
+`viewer/browser.rs` owns catalog entries, selection, sorting, and scan generations. It receives catalog data from the application; filesystem inspection and background scans run in `services/folder_scan.rs`. `viewer/image_session.rs` defines decoded image data and owns load generations, loading/errors, and the current image. `viewer/animation.rs` and `viewer/slideshow.rs` own the animation and slideshow clocks, which return repaint delays to the application and do not schedule UI work themselves. `viewer/formats.rs` is the one table of file formats: each extension's media kind and whether this build can open it. Folder scans store the kind on each catalog entry, so the rest of the app matches on `Entry::kind` instead of checking extensions. `viewer/transform.rs` contains reversible image-to-screen transforms.
 
 `settings/model.rs` defines settings, appearance choices, defaults, and validation. `settings/store.rs` handles configuration paths, loading, saving, and change tracking. Color mapping and egui styling live in `ui/theme.rs`. `ui/style.rs` names the shared spacing, margins, radii, sizes, text sizes, and animation timing, and `ui/widgets.rs` holds the section cards, captions, hints, segmented controls, and fade-out helper built from them. Components use these instead of literal numbers.
 
@@ -129,8 +129,9 @@ in a header, and the libplacebo macros and exported data Rust cannot link.
 
 `video/playback/` schedules frames and runs the demux and audio worker.
 `pipeline.rs` couples the engine with the presenter and has the presenter release
-its frames before the engine drops the decoder that made them. `service.rs` runs the
-pipeline on a background thread when the device has a second graphics queue. The
+its frames before the engine drops the decoder that made them. `service.rs` is the
+UI-facing `Player`. When the device has a second graphics queue, it hands requests
+through `mailbox.rs` to the pipeline on the thread in `playback_thread.rs`. The
 presenter still requires Vulkan even for CPU decoding.
 
 The shared Vulkan path is enabled in source for Linux and Windows; only Linux

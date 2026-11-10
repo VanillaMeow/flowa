@@ -9,7 +9,10 @@ use std::{
 use anyhow::{Context, Result, ensure};
 
 use super::worker;
-use crate::viewer::catalog::{Entry, ScannedFolder, supported};
+use crate::viewer::{
+    catalog::{Entry, ScannedFolder},
+    formats::{self, MediaKind},
+};
 
 struct ScanResult {
     generation: u64,
@@ -101,6 +104,8 @@ pub fn entry_from_path(path: PathBuf) -> Result<Entry> {
             .unwrap_or_default()
             .to_string_lossy()
             .into_owned(),
+        // Anything unrecognized is offered to the image decoders
+        kind: formats::kind(&path).unwrap_or(MediaKind::Raster),
         size: metadata.len(),
         modified: metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
         path,
@@ -116,7 +121,7 @@ pub fn scan(folder: &Path) -> Result<Vec<Entry>> {
         let item = item.context("Cannot read folder entry")?;
         let path = item.path();
 
-        if supported(&path)
+        if formats::supported(&path)
             && let Ok(entry) = entry_from_path(path)
         {
             files.push(entry);

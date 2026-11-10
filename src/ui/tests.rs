@@ -233,6 +233,7 @@ mod filmstrip {
         viewer::{
             browser::Browser,
             catalog::{Entry, ScannedFolder},
+            formats::MediaKind,
         },
     };
 
@@ -273,6 +274,7 @@ mod filmstrip {
                 Entry {
                     path: name.clone().into(),
                     name,
+                    kind: MediaKind::Video,
                     size: 0,
                     modified: SystemTime::UNIX_EPOCH,
                 }

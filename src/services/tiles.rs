@@ -11,7 +11,7 @@ use super::{
     worker::{Generation, Tagged, Worker},
 };
 use crate::viewer::{
-    image_session::{DecodedFrame, DecodedImage},
+    image_session::{DecodedImage, ImageFrame},
     vector::VectorImage,
 };
 
@@ -74,7 +74,7 @@ pub enum TileSource {
 }
 
 impl TileSource {
-    pub fn new(image: &DecodedImage, frame: &DecodedFrame) -> Self {
+    pub fn new(image: &DecodedImage, frame: &ImageFrame) -> Self {
         match &image.vector {
             Some(vector) => Self::Vector(Arc::clone(vector)),
             None => Self::Raster(Arc::clone(&frame.pixels)),

@@ -9,16 +9,17 @@ use anyhow::Result;
 use egui::ColorImage;
 use image::RgbaImage;
 
-use super::{playback::Animation, vector::VectorImage};
+use super::{animation::Animation, vector::VectorImage};
 
-pub struct DecodedFrame {
+/// One frame of an image; still images have exactly one
+pub struct ImageFrame {
     pub pixels: Arc<RgbaImage>,
     pub preview: ColorImage,
     pub delay: Duration,
 }
 
 pub struct DecodedImage {
-    pub frames: Vec<DecodedFrame>,
+    pub frames: Vec<ImageFrame>,
     /// The source of vector formats, which zoomed views render from instead of pixels
     pub vector: Option<Arc<VectorImage>>,
     pub thumbnail: ColorImage,
@@ -51,7 +52,7 @@ pub struct ImageSession {
     pub loading: bool,
     loading_started: Option<Instant>,
     pub error: Option<String>,
-    pub playback: Animation,
+    pub animation: Animation,
 }
 
 impl ImageSession {
@@ -62,7 +63,7 @@ impl ImageSession {
             loading: false,
             loading_started: None,
             error: None,
-            playback: Animation::new(),
+            animation: Animation::new(),
         }
     }
 
@@ -85,7 +86,7 @@ impl ImageSession {
         self.loading = false;
         self.loading_started = None;
         self.error = None;
-        self.playback.frame_index = 0;
+        self.animation.frame_index = 0;
     }
 
     pub fn accept(&mut self, generation: u64, result: Result<DecodedImage>) -> bool {
@@ -98,7 +99,7 @@ impl ImageSession {
 
         match result {
             Ok(decoded) => {
-                self.playback.start(&decoded.frames, Instant::now());
+                self.animation.start(&decoded.frames, Instant::now());
                 self.decoded = Some(decoded);
                 self.error = None;
             }
@@ -121,7 +122,7 @@ impl ImageSession {
         self.decoded
             .as_ref()?
             .frames
-            .get(self.playback.frame_index)
+            .get(self.animation.frame_index)
             .map(|frame| Arc::clone(&frame.pixels))
     }
 
@@ -132,10 +133,10 @@ impl ImageSession {
     }
 
     pub fn toggle_play(&mut self) {
-        self.playback.toggle(Instant::now());
+        self.animation.toggle(Instant::now());
     }
 
     pub fn animate(&mut self, now: Instant) -> Option<Duration> {
-        self.playback.advance(&self.decoded.as_ref()?.frames, now)
+        self.animation.advance(&self.decoded.as_ref()?.frames, now)
     }
 }

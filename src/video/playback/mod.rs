@@ -3,7 +3,9 @@
 
 mod clock;
 mod engine;
+mod mailbox;
 mod pipeline;
+mod playback_thread;
 mod queues;
 mod service;
 mod state;

@@ -278,7 +278,7 @@ fn play_button(
     }
 
     let playing = if animated {
-        state.image.playback.playing
+        state.image.animation.playing
     } else {
         state.slideshow
     };
@@ -434,7 +434,7 @@ fn playback_menu(
     actions::SLIDESHOW.menu_label(ui, label, true, false, commands);
 
     if state.image.animated() {
-        let label = if state.image.playback.playing {
+        let label = if state.image.animation.playing {
             "Pause animation"
         } else {
             "Play animation"

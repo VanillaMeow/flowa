@@ -9,17 +9,27 @@ mod catalog {
         assert_eq!(next_index(0, 3, -1, true), Some(2));
         assert_eq!(next_index(2, 3, 1, false), Some(2));
     }
+}
+
+mod formats {
+    use std::path::Path;
+
+    use crate::viewer::formats::{MediaKind, kind, label, supported};
 
     #[test]
-    fn video_extensions_are_case_insensitive_and_feature_gated() {
-        use crate::viewer::catalog::{is_video, supported};
-        use std::path::Path;
-
-        assert!(is_video(Path::new("clip.MP4")));
-        assert!(is_video(Path::new("clip.mkv")));
-        assert!(!is_video(Path::new("photo.png")));
-        assert!(!is_video(Path::new("mp4")));
+    fn extensions_are_case_insensitive_and_video_is_feature_gated() {
+        assert_eq!(kind(Path::new("clip.MP4")), Some(MediaKind::Video));
+        assert_eq!(kind(Path::new("clip.mkv")), Some(MediaKind::Video));
+        assert_eq!(kind(Path::new("photo.png")), Some(MediaKind::Raster));
+        assert_eq!(kind(Path::new("mp4")), None);
         assert_eq!(supported(Path::new("clip.MP4")), cfg!(video_playback));
+    }
+
+    #[test]
+    fn svg_is_vector_and_labels_come_from_the_extension() {
+        assert_eq!(kind(Path::new("logo.SVGZ")), Some(MediaKind::Vector));
+        assert_eq!(label(Path::new("clip.mkv")).as_deref(), Some("MKV"));
+        assert_eq!(label(Path::new("README")), None);
     }
 }
 
@@ -31,6 +41,7 @@ mod browser {
         viewer::{
             browser::Browser,
             catalog::{Entry, ScannedFolder},
+            formats::MediaKind,
         },
     };
 
@@ -40,6 +51,7 @@ mod browser {
         let entries = ["a.png", "b.png"].map(|name| Entry {
             path: name.into(),
             name: name.into(),
+            kind: MediaKind::Raster,
             size: 0,
             modified: SystemTime::UNIX_EPOCH,
         });
@@ -64,11 +76,11 @@ mod browser {
 mod image_session {
     use std::{sync::Arc, time::Duration};
 
-    use crate::viewer::image_session::{DecodedFrame, DecodedImage, ImageSession};
+    use crate::viewer::image_session::{DecodedImage, ImageFrame, ImageSession};
 
     fn decoded() -> DecodedImage {
         DecodedImage {
-            frames: vec![DecodedFrame {
+            frames: vec![ImageFrame {
                 pixels: Arc::new(image::RgbaImage::new(1, 1)),
                 preview: egui::ColorImage::filled([1, 1], egui::Color32::TRANSPARENT),
                 delay: Duration::from_millis(100),

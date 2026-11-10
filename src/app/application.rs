@@ -21,8 +21,8 @@ use crate::{
     },
     video::VideoSession,
     viewer::{
-        browser::Browser, catalog::is_video, image_session::ImageSession,
-        playback::Slideshow,
+        browser::Browser, formats::MediaKind, image_session::ImageSession,
+        slideshow::Slideshow,
     },
 };
 
@@ -164,15 +164,16 @@ impl Flowa {
     }
 
     pub(super) fn select(&mut self, index: usize, ctx: &egui::Context) {
-        let Some(path) = self.browser.select(index) else {
+        let Some(entry) = self.browser.select(index) else {
             return;
         };
+        let path = entry.path;
 
         let generation = self.begin_image_load();
         self.ui.filmstrip.reveal_selection();
         self.apply_initial_zoom(ctx);
 
-        if is_video(&path) {
+        if entry.kind == MediaKind::Video {
             self.image.loading = false;
             self.video.open(&path);
             self.slideshow.active = false;
@@ -241,7 +242,9 @@ impl Flowa {
             return;
         };
 
-        if is_video(&entry.path) || self.preload_hint.as_ref() == Some(&entry.path) {
+        if entry.kind == MediaKind::Video
+            || self.preload_hint.as_ref() == Some(&entry.path)
+        {
             return;
         }
 
@@ -261,7 +264,7 @@ impl Flowa {
                     .next(delta, self.settings.values.wrap_navigation)
             })
             .filter_map(|index| self.browser.entries().get(index))
-            .filter(|entry| !is_video(&entry.path))
+            .filter(|entry| entry.kind != MediaKind::Video)
             .map(|entry| entry.path.clone())
             .collect();
 

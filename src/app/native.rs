@@ -7,7 +7,7 @@ use eframe::{NativeOptions, egui_wgpu::WgpuSetup, wgpu::Backends};
 use crate::{
     services::image_loader::Loader,
     settings::{RendererPreference, Settings, SettingsStore},
-    viewer::catalog::is_video,
+    viewer::formats::{self, MediaKind},
 };
 
 use super::{Flowa, Launch};
@@ -27,7 +27,7 @@ pub fn run(
     // The launch image decodes while the graphics device is created below
     let loader = Loader::new(settings.memory_budget());
     if let Some(path) = launch.initial_path(&settings)
-        && !is_video(&path)
+        && formats::kind(&path) != Some(MediaKind::Video)
     {
         loader.preload(path);
     }

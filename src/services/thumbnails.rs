@@ -8,13 +8,14 @@ use super::{
     image_decode::thumbnail,
     worker::{Generation, Tagged, Worker},
 };
-use crate::{video, viewer::catalog};
+use crate::{video, viewer::formats::MediaKind};
 
 /// The box every filmstrip thumbnail fits in, for images and video posters alike
 pub const THUMBNAIL_SIZE: [u32; 2] = [192, 128];
 
 pub struct ThumbnailRequest {
     pub path: PathBuf,
+    pub kind: MediaKind,
     pub generation: u64,
     /// The image memory limit in bytes
     pub budget: u64,
@@ -44,7 +45,7 @@ impl ThumbnailWorker {
             ctx,
             generation,
             move |request: ThumbnailRequest| {
-                let image = if catalog::is_video(&request.path) {
+                let image = if request.kind == MediaKind::Video {
                     video::thumbnail(&request.path, &active, request.generation)
                 } else {
                     thumbnail(&request.path, request.budget)

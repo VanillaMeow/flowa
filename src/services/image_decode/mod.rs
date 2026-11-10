@@ -20,7 +20,8 @@ use crate::{
         units::MIB,
     },
     viewer::{
-        image_session::{DecodedFrame, DecodedImage},
+        formats::{self, MediaKind},
+        image_session::{DecodedImage, ImageFrame},
         vector::VectorImage,
     },
 };
@@ -78,7 +79,7 @@ impl<'a> ImageFile<'a> {
     fn new(path: &'a Path, budget: u64) -> Self {
         let budget = Budget(budget);
 
-        if VectorFile::matches(path) {
+        if formats::kind(path) == Some(MediaKind::Vector) {
             Self::Vector(VectorFile::new(path, budget))
         } else {
             Self::Raster(RasterFile::new(path, budget))
@@ -134,7 +135,7 @@ impl Budget {
 
 /// What a format-specific decoder produces, before the shared details are added
 struct Decoded {
-    frames: Vec<DecodedFrame>,
+    frames: Vec<ImageFrame>,
     vector: Option<Arc<VectorImage>>,
     color: &'static str,
 }
@@ -153,7 +154,7 @@ impl Decoded {
             thumbnail,
             frames: self.frames,
             vector: self.vector,
-            format: format_name(path),
+            format: formats::label(path).unwrap_or_else(|| "Image".to_owned()),
             file_size: path.metadata()?.len(),
             color: self.color.to_owned(),
             metadata: exif_metadata(path),
@@ -162,10 +163,10 @@ impl Decoded {
 }
 
 /// Pairs decoded pixels with a downscaled preview for the GPU
-fn make_frame(pixels: RgbaImage, delay: Duration) -> Result<DecodedFrame> {
+fn make_frame(pixels: RgbaImage, delay: Duration) -> Result<ImageFrame> {
     let preview = color_image_within(&pixels, [PREVIEW_EDGE, PREVIEW_EDGE])?;
 
-    Ok(DecodedFrame {
+    Ok(ImageFrame {
         pixels: Arc::new(pixels),
         preview,
         delay,
@@ -182,13 +183,6 @@ fn thumbnail_from_preview(preview: &ColorImage) -> Result<ColorImage> {
     }
 
     resize::downscale_premultiplied(preview, thumbnail_size)
-}
-
-fn format_name(path: &Path) -> String {
-    match path.extension() {
-        Some(ext) if !ext.is_empty() => ext.to_string_lossy().to_ascii_uppercase(),
-        _ => "Image".to_owned(),
-    }
 }
 
 /// Reads photographic EXIF fields; metadata never prevents an image from opening

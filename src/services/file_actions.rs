@@ -11,7 +11,7 @@ use image::RgbaImage;
 
 use crate::{
     utils::filename,
-    viewer::{catalog, transform::View},
+    viewer::{formats, transform::View},
 };
 
 use super::{image_decode, system_trash, worker::Worker};
@@ -98,7 +98,7 @@ fn pick(folder: bool, start: Option<PathBuf>) -> Outcome {
     let picked = if folder {
         dialog.pick_folder()
     } else {
-        let extensions: Vec<_> = catalog::supported_extensions().collect();
+        let extensions: Vec<_> = formats::supported_extensions().collect();
         dialog
             .add_filter("Images and videos", &extensions)
             .add_filter("All files", &["*"])

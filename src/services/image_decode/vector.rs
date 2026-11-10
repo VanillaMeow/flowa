@@ -13,7 +13,7 @@ use resvg::usvg::{Options, Tree, fontdb};
 use super::{Budget, Decoded, PREVIEW_EDGE, THUMBNAIL_SIZE, color_image};
 use crate::{
     utils::units::MIB,
-    viewer::{image_session::DecodedFrame, vector::VectorImage},
+    viewer::{image_session::ImageFrame, vector::VectorImage},
 };
 
 const MAX_SOURCE_BYTES: u64 = 32 * MIB;
@@ -31,12 +31,6 @@ impl<'a> VectorFile<'a> {
         Self { path, budget }
     }
 
-    pub fn matches(path: &Path) -> bool {
-        path.extension().is_some_and(|ext| {
-            ext.eq_ignore_ascii_case("svg") || ext.eq_ignore_ascii_case("svgz")
-        })
-    }
-
     /// Keeps pixels at the intrinsic size for copying and exporting, while the vector
     /// serves the preview and zoomed tiles
     pub fn decode(&self) -> Result<Decoded> {
@@ -45,7 +39,7 @@ impl<'a> VectorFile<'a> {
 
         let pixels = vector.render(Pos2::ZERO, 1.0, vector.size())?;
         let preview = vector.render_fitted([PREVIEW_EDGE, PREVIEW_EDGE])?;
-        let frame = DecodedFrame {
+        let frame = ImageFrame {
             pixels: Arc::new(pixels),
             preview: color_image(&preview),
             delay: Duration::ZERO,

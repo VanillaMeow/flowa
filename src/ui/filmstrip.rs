@@ -16,7 +16,7 @@ use crate::{
         thumbnails::{ThumbnailRequest, ThumbnailWorker},
         worker::Generation,
     },
-    viewer::{browser::Browser, catalog::Entry},
+    viewer::{browser::Browser, catalog::Entry, formats::MediaKind},
 };
 
 use super::{
@@ -220,7 +220,7 @@ impl Filmstrip {
         };
         ui.painter().rect_filled(rect, radius::CONTROL, background);
 
-        self.paint_thumbnail(ui.painter(), &entry.path, rect, colors);
+        self.paint_thumbnail(ui.painter(), entry, rect, colors);
         paint_caption(ui, &entry.name, rect, selected, colors);
         paint_outline(ui.painter(), &response, selected, colors);
 
@@ -230,14 +230,14 @@ impl Filmstrip {
     fn paint_thumbnail(
         &mut self,
         painter: &egui::Painter,
-        path: &Path,
+        entry: &Entry,
         rect: Rect,
         colors: Colors,
     ) {
-        let Some(Some(texture)) = self.textures.get(path) else {
+        let Some(Some(texture)) = self.textures.get(&entry.path) else {
             icons::paint(
                 painter,
-                if crate::viewer::catalog::is_video(path) {
+                if entry.kind == MediaKind::Video {
                     Icon::Play
                 } else {
                     Icon::Image
@@ -246,7 +246,7 @@ impl Filmstrip {
                 22.,
                 colors.muted,
             );
-            self.request_thumbnail(path);
+            self.request_thumbnail(entry);
             return;
         };
 
@@ -260,19 +260,22 @@ impl Filmstrip {
         painter.image(texture.id(), destination, uv, Color32::WHITE);
     }
 
-    fn request_thumbnail(&mut self, path: &Path) {
+    fn request_thumbnail(&mut self, entry: &Entry) {
+        let path = &entry.path;
+
         if self.textures.contains_key(path) || self.pending.contains(path) {
             return;
         }
 
         let request = ThumbnailRequest {
-            path: path.to_path_buf(),
+            path: path.clone(),
+            kind: entry.kind,
             generation: self.generation.get(),
             budget: self.budget,
         };
 
         if self.worker.request(request) {
-            self.pending.insert(path.to_path_buf());
+            self.pending.insert(path.clone());
         }
     }
 }
