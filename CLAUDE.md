@@ -1,1 +1,1 @@
-/home/leah/Projects/flowa/AGENTS.md
+AGENTS.md
