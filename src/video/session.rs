@@ -177,6 +177,11 @@ impl VideoSession {
         self.command(PlayerCommand::Volume(volume.clamp(0., 100.)))
     }
 
+    /// Plays the audio stream with this container index from the current position
+    pub fn set_audio_track(&mut self, index: usize) -> Result<()> {
+        self.command(PlayerCommand::AudioTrack(index))
+    }
+
     /// Sets playback speed, kept for later videos, with the pitch of audio unchanged
     pub fn set_rate(&mut self, rate: f64) -> Result<()> {
         let slowest = super::PLAYBACK_RATES[0];

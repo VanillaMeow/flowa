@@ -15,6 +15,7 @@ use super::{
     icons::{self, Icon},
     style::{margin, size, space},
     theme::Colors,
+    tracks,
 };
 
 const TIMELINE_HEIGHT: f32 = 22.;
@@ -120,7 +121,7 @@ impl VideoControls {
         }
 
         ui.horizontal(|ui| self.timeline(ui, state, colors, commands));
-        ui.horizontal(|ui| self.transport(ui, state, commands));
+        ui.horizontal(|ui| self.transport(ui, state, colors, commands));
     }
 
     fn timeline(
@@ -239,6 +240,7 @@ impl VideoControls {
         &mut self,
         ui: &mut egui::Ui,
         state: &VideoState,
+        colors: Colors,
         commands: &mut Vec<Command>,
     ) {
         let volume_menu = ui.available_width() < INLINE_VOLUME_BREAKPOINT;
@@ -247,6 +249,12 @@ impl VideoControls {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             self.volume_controls(ui, state, volume_menu, commands);
             ui.add_enabled_ui(state.ready(), |ui| speed_menu(ui, state.rate, commands));
+
+            if tracks::available(state) {
+                ui.add_enabled_ui(state.ready(), |ui| {
+                    tracks::button(ui, state, colors, commands);
+                });
+            }
         });
     }
 

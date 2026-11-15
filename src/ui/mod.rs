@@ -13,6 +13,7 @@ pub(crate) mod rendering;
 pub(crate) mod style;
 pub(crate) mod theme;
 pub(crate) mod toolbar;
+pub(crate) mod tracks;
 pub(crate) mod video_controls;
 mod viewer_ui;
 pub(crate) mod widgets;

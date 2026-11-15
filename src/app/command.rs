@@ -67,6 +67,8 @@ pub enum PlaybackCommand {
     SetRate(f64),
     /// Moves to the next offered speed, faster for positive steps
     StepRate(i32),
+    /// Plays the audio stream with this container index
+    SelectAudio(usize),
     ToggleSlideshow,
 }
 

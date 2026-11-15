@@ -321,6 +321,32 @@ impl Engine {
         Ok(())
     }
 
+    /// Plays another audio stream, seeking to the current position so its packets are
+    /// read from here
+    pub fn set_audio_track(&mut self, index: usize) -> Result<()> {
+        let shared = self
+            .shared
+            .as_ref()
+            .map(Arc::clone)
+            .context("No video is open")?;
+        let position = {
+            let mut state = shared.lock();
+            ensure!(
+                state.tracks.audio.iter().any(|track| track.index == index),
+                "This video has no such audio track"
+            );
+
+            if state.audio_track == Some(index) {
+                return Ok(());
+            }
+
+            state.audio_track = Some(index);
+            state.position(Instant::now())?
+        };
+
+        self.seek(position)
+    }
+
     pub fn set_decoder(&mut self, preference: VideoDecoder) -> Result<()> {
         let failed = self
             .shared
@@ -473,7 +499,7 @@ impl Engine {
             return Ok(false);
         }
 
-        if stream.info.audio.is_some() && state.audio.is_none() && !state.audio_disabled
+        if state.audio_info.is_some() && state.audio.is_none() && !state.audio_disabled
         {
             open_audio(&mut state);
             shared.notify();
@@ -682,7 +708,9 @@ impl Engine {
                 .as_ref()
                 .and_then(|decoder| decoder.software_reason.clone()),
             codec: info.map_or("", |info| info.codec),
-            audio: info.and_then(|info| info.audio),
+            audio: state.audio_info,
+            tracks: state.tracks.clone(),
+            audio_track: state.audio_track,
             error: state.error.clone(),
         };
 
@@ -920,6 +948,97 @@ mod tests {
             ensure!(lag < 0.15, "Video fell {lag} seconds behind at {rate}×");
             ensure!(audio_queued(&engine), "Audio stopped at {rate}×");
         }
+
+        engine.stop();
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "Requires Vulkan and ffmpeg with libx264"]
+    fn switching_audio_tracks_keeps_the_position_and_reports_the_track() -> Result<()> {
+        let folder = tempfile::tempdir()?;
+        let clip = folder.path().join("tracks.mkv");
+        let generated = std::process::Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=160x90:rate=30",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:sample_rate=48000",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=880:sample_rate=48000",
+                "-map",
+                "0",
+                "-map",
+                "1",
+                "-map",
+                "2",
+                "-t",
+                "8",
+                "-c:v",
+                "libx264",
+                "-c:a",
+                "aac",
+                "-ac:a:0",
+                "2",
+                "-ac:a:1",
+                "1",
+                "-metadata:s:a:0",
+                "language=eng",
+                "-metadata:s:a:1",
+                "language=jpn",
+                "-metadata:s:a:1",
+                "title=Commentary",
+            ])
+            .arg(&clip)
+            .status()?;
+        ensure!(generated.success(), "Could not generate the tracks fixture");
+
+        let mut engine = audible_engine(&clip)?;
+        let state = pump(&mut engine, |state| state.video.position > 1.)?.video;
+        let labels: Vec<_> = state
+            .tracks
+            .audio
+            .iter()
+            .map(|t| t.label.as_str())
+            .collect();
+        ensure!(
+            labels == ["English · AAC stereo", "Commentary · Japanese · AAC mono"],
+            "Unexpected track labels {labels:?}"
+        );
+
+        let first = state.tracks.audio[0].index;
+        let second = state.tracks.audio[1].index;
+        ensure!(
+            state.audio_track == Some(first),
+            "The first track did not play"
+        );
+
+        let position = state.position;
+        engine.set_audio_track(second)?;
+        let switched = pump(&mut engine, |state| {
+            state.video.audio_track == Some(second)
+                && !state.video.seeking
+                && state.video.audio.is_some_and(|audio| audio.channels == 1)
+        })?
+        .video;
+        ensure!(
+            (switched.position - position).abs() < 0.5,
+            "Switching moved playback from {position} to {}",
+            switched.position
+        );
+
+        let later = switched.position + 0.5;
+        pump(&mut engine, |state| state.video.position > later)?;
+        ensure!(audio_queued(&engine), "The new track did not play");
 
         engine.stop();
         Ok(())

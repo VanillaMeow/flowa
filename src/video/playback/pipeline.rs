@@ -59,6 +59,7 @@ impl Pipeline {
             PlayerCommand::Seek(seconds) => self.engine.seek(seconds),
             PlayerCommand::Volume(volume) => self.engine.set_volume(volume),
             PlayerCommand::Rate(rate) => self.engine.set_rate(rate),
+            PlayerCommand::AudioTrack(index) => self.engine.set_audio_track(index),
             PlayerCommand::Decoder(preference) => {
                 self.engine.set_decoder(preference)?;
                 self.needs_redraw = true;

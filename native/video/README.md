@@ -51,6 +51,12 @@ Rendering always needs Vulkan, even when decoding in software.
 
 Without an audio device, playback continues silently.
 
+Videos with several audio tracks show a tracks button on the controls, labeled
+from each stream's title, language, and format. Choosing one records it as the
+wanted track and seeks to the current position; the demux worker opens its
+decoder while applying that seek, so the new track's packets are read from
+there.
+
 Playback speed runs from 0.25× to 4×, from the speed button, the context menu, or
 `[`, `]`, and Backspace. FFmpeg's `atempo` filter stretches audio so voices keep
 their pitch, and the clock counts each second of queued audio or wall time as
@@ -64,7 +70,7 @@ resumes, which seeks to the shown frame to refill it. A backward step seeks one
 frame duration back; seeking is frame-accurate, so it decodes from the previous
 keyframe.
 
-Not implemented yet: subtitles, track selection, and HDR output.
+Not implemented yet: subtitles and HDR output.
 
 ## Thumbnails
 

@@ -17,7 +17,7 @@ use super::{
     icons::{self, Icon},
     style::{margin, size, space, text},
     theme::Colors,
-    video_controls,
+    tracks, video_controls,
 };
 
 /// The flower fills most of its button, like an app icon
@@ -425,6 +425,16 @@ fn speed_menu(
     });
 }
 
+fn audio_menu(
+    ui: &mut egui::Ui,
+    state: &ToolbarState<'_>,
+    commands: &mut Vec<Command>,
+) {
+    ui.menu_button("Audio track", |ui| {
+        tracks::audio_options(ui, state.video, commands);
+    });
+}
+
 fn sort_menu(ui: &mut egui::Ui, state: &ToolbarState<'_>, commands: &mut Vec<Command>) {
     let old = (state.settings.sort, state.settings.reverse_sort);
     let (mut order, mut reverse) = old;
@@ -453,6 +463,10 @@ fn playback_menu(
         actions::NEXT_FRAME.menu(ui, ready, commands);
         actions::PREVIOUS_FRAME.menu(ui, ready, commands);
         ui.add_enabled_ui(ready, |ui| speed_menu(ui, state, commands));
+
+        if tracks::available(state.video) {
+            ui.add_enabled_ui(ready, |ui| audio_menu(ui, state, commands));
+        }
         return;
     }
 

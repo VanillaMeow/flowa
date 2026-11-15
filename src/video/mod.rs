@@ -50,6 +50,26 @@ pub fn thumbnail(
     thumbnail::extract(path, generation, expected)
 }
 
+/// One audio or subtitle stream the user can choose
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Track {
+    /// The stream's index in its container
+    pub index: usize,
+    /// Title, language, and format, as far as the file describes them
+    pub label: String,
+    /// The file marks this stream as the one to use by default
+    pub default: bool,
+    /// Subtitles meant to be shown even to viewers who did not ask for subtitles
+    pub forced: bool,
+}
+
+/// The audio and subtitle streams of the playing video
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Tracks {
+    pub audio: Vec<Track>,
+    pub subtitles: Vec<Track>,
+}
+
 /// Playback speeds offered by the controls, slowest first
 pub const PLAYBACK_RATES: &[f64] =
     &[0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 3.0, 4.0];
@@ -119,6 +139,9 @@ pub struct VideoState {
     pub software_reason: Option<String>,
     pub codec: &'static str,
     pub audio: Option<AudioInfo>,
+    pub tracks: Tracks,
+    /// The container index of the audio stream being played
+    pub audio_track: Option<usize>,
     pub error: Option<String>,
 }
 
@@ -166,6 +189,8 @@ impl Default for VideoState {
             software_reason: None,
             codec: "",
             audio: None,
+            tracks: Tracks::default(),
+            audio_track: None,
             error: None,
         }
     }
@@ -184,4 +209,6 @@ pub(super) enum PlayerCommand {
     Decoder(VideoDecoder),
     /// Brightness, contrast, saturation, and gamma for every later frame
     Adjust(Adjustments),
+    /// Plays the audio stream with this container index from the current position
+    AudioTrack(usize),
 }

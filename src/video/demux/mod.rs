@@ -13,7 +13,7 @@ use std::{
 use anyhow::Result;
 
 use super::{
-    AudioInfo,
+    AudioInfo, Track, Tracks,
     ffi::ffmpeg as ffi,
     ffmpeg::{
         Input, Packet, PacketKind, Probe, Stream, StreamInfo, check, rational,
@@ -33,6 +33,7 @@ pub(super) struct Media {
     video_index: usize,
     audio_index: Option<usize>,
     pub info: StreamInfo,
+    pub tracks: Tracks,
 }
 
 impl Media {
@@ -48,13 +49,37 @@ impl Media {
         let video_index = input.best_stream(ffi::AVMEDIA_TYPE_VIDEO)?;
         let audio_index = input.best_stream(ffi::AVMEDIA_TYPE_AUDIO).ok();
         let info = stream_info(&input, video_index, audio_index);
+        let tracks = Tracks {
+            audio: tracks(&input, ffi::AVMEDIA_TYPE_AUDIO),
+            subtitles: tracks(&input, ffi::AVMEDIA_TYPE_SUBTITLE),
+        };
 
         Ok(Self {
             input,
             video_index,
             audio_index,
             info,
+            tracks,
         })
+    }
+
+    pub fn audio_index(&self) -> Option<usize> {
+        self.audio_index
+    }
+
+    /// Reads another audio stream from the next packet on; the caller seeks and opens
+    /// its decoder
+    pub fn select_audio(&mut self, index: usize) -> Result<()> {
+        anyhow::ensure!(
+            self.tracks.audio.iter().any(|track| track.index == index),
+            "The video has no audio track {index}"
+        );
+
+        self.audio_index = Some(index);
+        self.info.audio = Some(audio_info(self.input.stream(index)));
+        self.info.audio_time_base = rational(self.input.stream(index).time_base);
+
+        Ok(())
     }
 
     /// An independent copy of the video stream for decoders on other threads
@@ -130,16 +155,7 @@ fn stream_info(
         )
     };
     let codec = codec_name(unsafe { (*video.codecpar).codec_id });
-    let audio = audio_index.map(|index| {
-        // SAFETY: The input owns the selected stream and its codec parameters
-        let parameters = unsafe { &*input.stream(index).codecpar };
-        AudioInfo {
-            codec: codec_name(parameters.codec_id),
-            channels: parameters.ch_layout.nb_channels.max(0) as u32,
-            sample_rate: parameters.sample_rate.max(0) as u32,
-            bit_rate: parameters.bit_rate.max(0) as u64,
-        }
-    });
+    let audio = audio_index.map(|index| audio_info(input.stream(index)));
 
     let video_time_base = rational(video.time_base);
     let mut duration = if format.duration == i64::MIN {
@@ -170,6 +186,148 @@ fn stream_info(
         rotation: stream_rotation(video).unwrap_or(0.0),
         audio,
         codec,
+    }
+}
+
+fn audio_info(stream: &ffi::AVStream) -> AudioInfo {
+    // SAFETY: The input owns the stream and its codec parameters
+    let parameters = unsafe { &*stream.codecpar };
+
+    AudioInfo {
+        codec: codec_name(parameters.codec_id),
+        channels: parameters.ch_layout.nb_channels.max(0) as u32,
+        sample_rate: parameters.sample_rate.max(0) as u32,
+        bit_rate: parameters.bit_rate.max(0) as u64,
+    }
+}
+
+/// Every stream of one kind, labeled for the track menus
+fn tracks(input: &Input<'_>, kind: ffi::AVMediaType) -> Vec<Track> {
+    let count = input.data().nb_streams as usize;
+    let mut tracks = Vec::new();
+
+    for index in 0..count {
+        let stream = input.stream(index);
+
+        // SAFETY: The input owns the stream and its codec parameters
+        let parameters = unsafe { &*stream.codecpar };
+        if parameters.codec_type != kind {
+            continue;
+        }
+
+        let number = tracks.len() + 1;
+        tracks.push(Track {
+            index,
+            label: track_label(stream, parameters, number),
+            default: stream.disposition & ffi::AV_DISPOSITION_DEFAULT as i32 != 0,
+            forced: stream.disposition & ffi::AV_DISPOSITION_FORCED as i32 != 0,
+        });
+    }
+
+    tracks
+}
+
+/// Joins the title, language, and format, such as `Commentary · English · AAC stereo`
+fn track_label(
+    stream: &ffi::AVStream,
+    parameters: &ffi::AVCodecParameters,
+    number: usize,
+) -> String {
+    let title = metadata(stream, c"title");
+    let language = metadata(stream, c"language").map(|code| language_name(&code));
+    let format = match parameters.codec_type {
+        ffi::AVMEDIA_TYPE_AUDIO => format!(
+            "{} {}",
+            format_name(codec_name(parameters.codec_id)),
+            channel_description(parameters.ch_layout.nb_channels)
+        ),
+        _ => format_name(codec_name(parameters.codec_id)).to_owned(),
+    };
+
+    let parts: Vec<String> = [title, language].into_iter().flatten().collect();
+
+    if parts.is_empty() {
+        return format!("Track {number} · {format}");
+    }
+
+    format!("{} · {format}", parts.join(" · "))
+}
+
+fn metadata(stream: &ffi::AVStream, key: &CStr) -> Option<String> {
+    // SAFETY: The stream owns its dictionary, and FFmpeg returns a borrowed entry
+    let entry =
+        unsafe { ffi::av_dict_get(stream.metadata, key.as_ptr(), ptr::null(), 0) };
+
+    if entry.is_null() {
+        return None;
+    }
+
+    // SAFETY: Dictionary values are NUL-terminated strings owned by the stream
+    let value = unsafe { CStr::from_ptr((*entry).value) }.to_string_lossy();
+    let value = value.trim();
+
+    (!value.is_empty() && value != "und").then(|| value.to_owned())
+}
+
+/// English names for common ISO 639-2 codes, or the code itself
+fn language_name(code: &str) -> String {
+    let name = match code.to_ascii_lowercase().as_str() {
+        "eng" | "en" => "English",
+        "jpn" | "ja" => "Japanese",
+        "ger" | "deu" | "de" => "German",
+        "fre" | "fra" | "fr" => "French",
+        "spa" | "es" => "Spanish",
+        "ita" | "it" => "Italian",
+        "por" | "pt" => "Portuguese",
+        "rus" | "ru" => "Russian",
+        "chi" | "zho" | "zh" => "Chinese",
+        "kor" | "ko" => "Korean",
+        "dut" | "nld" | "nl" => "Dutch",
+        "pol" | "pl" => "Polish",
+        "swe" | "sv" => "Swedish",
+        "nor" | "no" => "Norwegian",
+        "dan" | "da" => "Danish",
+        "fin" | "fi" => "Finnish",
+        "ara" | "ar" => "Arabic",
+        "hin" | "hi" => "Hindi",
+        "tur" | "tr" => "Turkish",
+        "ukr" | "uk" => "Ukrainian",
+        _ => return code.to_owned(),
+    };
+
+    name.to_owned()
+}
+
+fn format_name(codec: &str) -> &str {
+    match codec {
+        "aac" => "AAC",
+        "ac3" => "AC-3",
+        "eac3" => "E-AC-3",
+        "dts" => "DTS",
+        "truehd" => "TrueHD",
+        "flac" => "FLAC",
+        "opus" => "Opus",
+        "vorbis" => "Vorbis",
+        "mp3" => "MP3",
+        "subrip" => "SRT",
+        "ass" | "ssa" => "ASS",
+        "webvtt" => "WebVTT",
+        "mov_text" => "Timed text",
+        "hdmv_pgs_subtitle" => "PGS",
+        "dvd_subtitle" => "VobSub",
+        "dvb_subtitle" => "DVB",
+        other if other.starts_with("pcm_") => "PCM",
+        other => other,
+    }
+}
+
+fn channel_description(channels: i32) -> String {
+    match channels {
+        1 => "mono".into(),
+        2 => "stereo".into(),
+        6 => "5.1".into(),
+        8 => "7.1".into(),
+        other => format!("{other} channels"),
     }
 }
 

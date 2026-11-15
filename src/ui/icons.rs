@@ -34,6 +34,7 @@ pub enum Icon {
     Alert,
     Heart,
     Adjust,
+    Tracks,
     /// The flower from the desktop icon, without its backdrop
     Logo,
 }
@@ -67,6 +68,7 @@ impl Icon {
             Self::Adjust => {
                 include_str!("../../assets/icons/lucide/sliders-horizontal.svg")
             }
+            Self::Tracks => include_str!("../../assets/icons/lucide/audio-lines.svg"),
             Self::Logo => include_str!("../../assets/flowa-mark.svg"),
         }
     }

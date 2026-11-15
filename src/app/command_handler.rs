@@ -122,6 +122,10 @@ impl Flowa {
             PlaybackCommand::StepRate(steps) => {
                 self.set_rate(video::step_rate(self.video.state.rate, steps));
             }
+            PlaybackCommand::SelectAudio(index) => {
+                let result = self.video.set_audio_track(index);
+                self.report(result);
+            }
             PlaybackCommand::ToggleSlideshow => self.toggle_slideshow(),
         }
     }

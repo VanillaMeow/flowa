@@ -12,6 +12,7 @@ use super::{
     queues::PacketQueue,
 };
 use crate::video::{
+    AudioInfo, Tracks,
     audio::{AudioOutput, BYTES_PER_SECOND},
     decoding::{PacketSource, SourcePacket},
     demux::InterruptFlags,
@@ -27,6 +28,11 @@ pub(super) struct Seek {
 /// Playback state shared by the UI-side engine and the demux worker
 pub(super) struct PlaybackState {
     pub stream: Option<Arc<Stream>>,
+    pub tracks: Tracks,
+    /// The audio stream the user wants; the worker switches to it at the next seek
+    pub audio_track: Option<usize>,
+    /// The audio stream being decoded, which follows `audio_track`
+    pub audio_info: Option<AudioInfo>,
     pub packets: PacketQueue,
     pub eof: bool,
     pub seek: Option<Seek>,
@@ -57,6 +63,9 @@ impl PlaybackState {
 
         Self {
             stream: None,
+            tracks: Tracks::default(),
+            audio_track: None,
+            audio_info: None,
             packets: PacketQueue::default(),
             eof: false,
             seek: None,

@@ -7,7 +7,7 @@ use std::{
     time::Instant,
 };
 
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 
 use super::{queues::BYTE_LIMIT, state::Shared};
 use crate::video::{
@@ -92,11 +92,17 @@ fn run(path: &Path, shared: &Shared) -> Result<()> {
     let mut audio = media.audio_stream().map(AudioDecoder::open).transpose()?;
     let mut feed = AudioFeed::default();
     let stream = media.copy_stream()?;
-    shared.lock().stream = Some(stream);
+    {
+        let mut state = shared.lock();
+        state.stream = Some(stream);
+        state.tracks = media.tracks.clone();
+        state.audio_track = media.audio_index();
+        state.audio_info = media.info.audio;
+    }
     shared.notify();
 
     while !shared.stopped() {
-        if apply_seek(&mut media, audio.as_mut(), shared)? {
+        if apply_seek(&mut media, &mut audio, shared)? {
             continue;
         }
 
@@ -170,10 +176,10 @@ fn queue_video(packet: Packet, shared: &Shared, generation: u64) -> Result<()> {
 
 fn apply_seek(
     media: &mut Media,
-    audio: Option<&mut AudioDecoder>,
+    audio: &mut Option<AudioDecoder>,
     shared: &Shared,
 ) -> Result<bool> {
-    let request = {
+    let (request, track) = {
         let mut state = shared.lock();
         let Some(request) = state.seek.take() else {
             return Ok(false);
@@ -181,7 +187,7 @@ fn apply_seek(
 
         // Clearing the interrupt under this lock cannot erase a newer UI seek request
         shared.interrupt.seeking.store(false, Ordering::SeqCst);
-        request
+        (request, state.audio_track)
     };
 
     if let Err(error) = media.seek(request.target) {
@@ -191,7 +197,9 @@ fn apply_seek(
         return Err(error);
     }
 
-    if let Some(audio) = audio {
+    if let Some(track) = track.filter(|&track| Some(track) != media.audio_index()) {
+        switch_audio(media, audio, track, shared);
+    } else if let Some(audio) = audio {
         audio.flush()?;
     }
 
@@ -204,6 +212,31 @@ fn apply_seek(
     drop(state);
     shared.notify();
     Ok(true)
+}
+
+/// Decodes another audio stream, or plays silently when its decoder cannot open
+fn switch_audio(
+    media: &mut Media,
+    audio: &mut Option<AudioDecoder>,
+    track: usize,
+    shared: &Shared,
+) {
+    let opened = media.select_audio(track).and_then(|()| {
+        let stream = media
+            .audio_stream()
+            .context("The audio track disappeared")?;
+        AudioDecoder::open(stream)
+    });
+
+    *audio = match opened {
+        Ok(decoder) => Some(decoder),
+        Err(error) => {
+            log::warn!("Cannot play audio track {track}: {error:#}");
+            None
+        }
+    };
+
+    shared.lock().audio_info = audio.as_ref().and(media.info.audio);
 }
 
 fn finish_input(
