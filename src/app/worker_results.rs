@@ -57,7 +57,7 @@ impl Flowa {
             }
 
             if let Some(decoded) = &self.image.decoded {
-                self.ui.canvas.renderer.sync_frame(ctx, &self.image);
+                self.ui.canvas.renderer.sync_frame(&self.image);
 
                 if let Some(entry) = self.browser.current() {
                     let thumbnail = ctx.load_texture(

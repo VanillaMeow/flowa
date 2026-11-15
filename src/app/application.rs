@@ -80,6 +80,10 @@ impl Flowa {
             gpu,
         );
 
+        if let Some(graphics) = &cc.wgpu_render_state {
+            app.ui.canvas.renderer.attach_gpu(graphics);
+        }
+
         if video_device {
             app.video = VideoSession::new(cc);
 
@@ -356,7 +360,7 @@ impl Flowa {
         self.handle_commands(commands, ctx);
 
         self.advance_playback(ctx);
-        self.ui.canvas.renderer.sync_frame(ctx, &self.image);
+        self.ui.canvas.renderer.sync_frame(&self.image);
 
         let dropped = ctx.input(|input| {
             input
@@ -486,10 +490,7 @@ impl Flowa {
 
         let nearest = self.settings.values.nearest;
         if nearest != previous.nearest {
-            self.ui
-                .canvas
-                .renderer
-                .set_sampling(ctx, &self.image, nearest);
+            self.ui.canvas.renderer.set_sampling(&self.image, nearest);
         }
 
         self.preload_neighbors();

@@ -5,7 +5,8 @@ use std::{
     time::Duration,
 };
 
-use egui::{Color32, Pos2, Rect, TextureHandle, TextureOptions, Vec2, vec2};
+use eframe::egui_wgpu::RenderState;
+use egui::{Color32, Pos2, Rect, Vec2, vec2};
 
 use crate::{
     services::{
@@ -14,10 +15,14 @@ use crate::{
     },
     settings::{Canvas, Settings},
     ui::theme::{self, Colors},
-    viewer::{image_session::ImageSession, transform::View},
+    viewer::{adjustments::Adjustments, image_session::ImageSession, transform::View},
 };
 
-use super::geometry;
+use super::{
+    adjusted::AdjustedQuad,
+    geometry,
+    image_texture::{ImageTexture, TextureStore},
+};
 
 const TILE_UPLOADS_PER_FRAME: usize = 4;
 const TILE_REQUESTS_PER_FRAME: usize = 4;
@@ -25,15 +30,16 @@ const TILE_REQUESTS_PER_FRAME: usize = 4;
 const MAX_CACHED_TILES: usize = 46;
 
 struct TileTexture {
-    texture: TextureHandle,
+    texture: ImageTexture,
     source: Rect,
     touched: u64,
 }
 
 pub struct FrozenPreview {
-    texture: TextureHandle,
+    texture: ImageTexture,
     size: Vec2,
     view: View,
+    adjustments: Adjustments,
 }
 
 impl FrozenPreview {
@@ -53,14 +59,13 @@ impl FrozenPreview {
             canvas_color(settings, colors),
             settings,
         );
-        paint_source(
-            painter,
-            self.texture.id(),
+        let placement = Placement {
             source,
-            self.size,
+            size: self.size,
             canvas,
-            &self.view,
-        );
+            view: &self.view,
+        };
+        paint_texture(painter, &self.texture, &placement, self.adjustments);
     }
 }
 
@@ -70,17 +75,27 @@ pub struct RenderFrame<'a> {
     pub canvas: Rect,
     pub settings: &'a Settings,
     pub colors: Colors,
+    pub adjustments: Adjustments,
+}
+
+/// Where a texture's source rectangle lands on the canvas
+pub struct Placement<'a> {
+    pub source: Rect,
+    pub size: Vec2,
+    pub canvas: Rect,
+    pub view: &'a View,
 }
 
 pub struct ImageRenderer {
-    preview: Option<TextureHandle>,
+    store: TextureStore,
+    preview: Option<ImageTexture>,
     preview_frame: usize,
     worker: TileWorker,
     generation: Generation,
     tiles: HashMap<TileKey, TileTexture>,
     pending_tiles: HashSet<TileKey>,
     paint_counter: u64,
-    options: TextureOptions,
+    nearest: bool,
 }
 
 impl ImageRenderer {
@@ -88,6 +103,7 @@ impl ImageRenderer {
         let generation = Generation::default();
 
         Self {
+            store: TextureStore::new(ctx.clone()),
             preview: None,
             preview_frame: usize::MAX,
             worker: TileWorker::new(ctx, &generation),
@@ -95,8 +111,16 @@ impl ImageRenderer {
             tiles: HashMap::new(),
             pending_tiles: HashSet::new(),
             paint_counter: 0,
-            options: texture_options(nearest),
+            nearest,
         }
+    }
+
+    /// Creates later textures on the window's device, so color adjustments apply
+    pub fn attach_gpu(&mut self, graphics: &RenderState) {
+        self.store.attach(graphics);
+        self.preview = None;
+        self.preview_frame = usize::MAX;
+        self.tiles.clear();
     }
 
     pub fn reset(&mut self, generation: u64) {
@@ -107,15 +131,21 @@ impl ImageRenderer {
         self.pending_tiles.clear();
     }
 
-    pub fn freeze(&mut self, size: Vec2, view: &View) -> Option<FrozenPreview> {
+    pub fn freeze(
+        &mut self,
+        size: Vec2,
+        view: &View,
+        adjustments: Adjustments,
+    ) -> Option<FrozenPreview> {
         Some(FrozenPreview {
             texture: self.preview.take()?,
             size,
             view: view.clone(),
+            adjustments,
         })
     }
 
-    pub fn sync_frame(&mut self, ctx: &egui::Context, image: &ImageSession) {
+    pub fn sync_frame(&mut self, image: &ImageSession) {
         if self.preview_frame == image.animation.frame_index {
             return;
         }
@@ -127,30 +157,23 @@ impl ImageRenderer {
             return;
         };
 
-        if let Some(texture) = &mut self.preview {
-            texture.set(frame.preview.clone(), self.options);
-        } else {
-            self.preview = Some(ctx.load_texture(
-                "image-preview",
-                frame.preview.clone(),
-                self.options,
-            ));
-        }
+        self.store.replace(
+            &mut self.preview,
+            "image-preview",
+            frame.preview.clone(),
+            self.nearest,
+        );
 
         self.preview_frame = image.animation.frame_index;
     }
 
-    pub fn set_sampling(
-        &mut self,
-        ctx: &egui::Context,
-        image: &ImageSession,
-        nearest: bool,
-    ) {
-        self.options = texture_options(nearest);
+    pub fn set_sampling(&mut self, image: &ImageSession, nearest: bool) {
+        self.nearest = nearest;
         self.tiles.clear();
+        self.preview = None;
         self.preview_frame = usize::MAX;
 
-        self.sync_frame(ctx, image);
+        self.sync_frame(image);
     }
 
     pub fn begin_pass(&mut self) {
@@ -173,20 +196,21 @@ impl ImageRenderer {
 
         paint_backdrop(painter, image_rect, base, frame.settings);
         if let Some(texture) = &self.preview {
-            paint_source(
-                painter,
-                texture.id(),
-                Rect::from_min_size(Pos2::ZERO, size),
+            let placement = Placement {
+                source: Rect::from_min_size(Pos2::ZERO, size),
                 size,
-                frame.canvas,
-                frame.view,
-            );
+                canvas: frame.canvas,
+                view: frame.view,
+            };
+            paint_texture(painter, texture, &placement, frame.adjustments);
         }
 
         self.paint_tiles(painter, ctx, &frame, size, base);
     }
 
     pub fn poll(&mut self, ctx: &egui::Context, generation: u64) {
+        let store = &self.store;
+
         // Bound texture work per frame so decoding a large image does not stall input
         for _ in 0..TILE_UPLOADS_PER_FRAME {
             let Ok(result) = self.worker.results.try_recv() else {
@@ -198,11 +222,8 @@ impl ImageRenderer {
                 continue;
             }
 
-            let texture = ctx.load_texture(
-                format!("tile:{:?}", result.key),
-                result.image,
-                self.options,
-            );
+            let name = format!("tile:{:?}", result.key);
+            let texture = store.load(&name, result.image, self.nearest);
 
             self.tiles.insert(
                 result.key,
@@ -355,8 +376,6 @@ fn paint_resident_tile(
 ) {
     let canvas = frame.canvas;
     let image_rect = frame.view.image_rect(size, canvas);
-    let texture_id = tile.texture.id();
-    let source = tile.source;
     let core = key.core(size);
     let core_points = [
         core.left_top(),
@@ -371,15 +390,14 @@ fn paint_resident_tile(
     // Clear the preview here so translucent pixels are not blended twice
     painter.rect_filled(clip, 0., base);
     paint_backdrop(&painter, image_rect, base, frame.settings);
-    paint_source(&painter, texture_id, source, size, canvas, frame.view);
-}
 
-fn texture_options(nearest: bool) -> TextureOptions {
-    if nearest {
-        TextureOptions::NEAREST
-    } else {
-        TextureOptions::LINEAR
-    }
+    let placement = Placement {
+        source: tile.source,
+        size,
+        canvas,
+        view: frame.view,
+    };
+    paint_texture(&painter, &tile.texture, &placement, frame.adjustments);
 }
 
 pub fn canvas_color(settings: &Settings, colors: Colors) -> Color32 {
@@ -450,18 +468,48 @@ fn paint_backdrop(
 pub fn paint_source(
     painter: &egui::Painter,
     texture: egui::TextureId,
-    source: Rect,
-    size: Vec2,
-    canvas: Rect,
-    view: &View,
+    placement: &Placement<'_>,
 ) {
-    let points = [
-        source.left_top(),
-        source.right_top(),
-        source.right_bottom(),
-        source.left_bottom(),
-    ]
-    .map(|point| view.image_to_screen(point.to_vec2(), size, canvas));
+    geometry::uv_quad(painter, texture, placement.corners());
+}
 
-    geometry::uv_quad(painter, texture, points);
+/// Paints an image texture, through the adjustment shader when colors are changed
+fn paint_texture(
+    painter: &egui::Painter,
+    texture: &ImageTexture,
+    placement: &Placement<'_>,
+    adjustments: Adjustments,
+) {
+    let bind_group = texture.adjustable().filter(|_| !adjustments.is_neutral());
+
+    let Some(bind_group) = bind_group else {
+        paint_source(painter, texture.id(), placement);
+        return;
+    };
+
+    let quad = AdjustedQuad {
+        pass: painter.ctx().cumulative_pass_nr(),
+        corners: placement.corners(),
+        adjustments,
+        texture: bind_group.clone(),
+    };
+    painter.add(quad.into_shape(painter.clip_rect()));
+}
+
+impl Placement<'_> {
+    /// Screen corners of the source: left top, right top, right bottom, left bottom
+    fn corners(&self) -> [Pos2; 4] {
+        let source = self.source;
+
+        [
+            source.left_top(),
+            source.right_top(),
+            source.right_bottom(),
+            source.left_bottom(),
+        ]
+        .map(|point| {
+            self.view
+                .image_to_screen(point.to_vec2(), self.size, self.canvas)
+        })
+    }
 }

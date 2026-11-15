@@ -75,7 +75,8 @@ impl ImageCanvas {
 
     pub fn reset(&mut self, generation: u64, remember_view: bool) {
         if let Some(size) = self.displayed_size.take()
-            && let Some(preview) = self.renderer.freeze(size, &self.view)
+            && let Some(preview) =
+                self.renderer.freeze(size, &self.view, self.adjustments)
         {
             self.previous = Some(preview);
         }
@@ -179,14 +180,13 @@ impl ImageCanvas {
         self.fit_image(size, content, ui.ctx().pixels_per_point());
 
         let painter = ui.painter().with_clip_rect(self.rect);
-        super::rendering::image_renderer::paint_source(
-            &painter,
-            texture,
-            Rect::from_min_size(egui::Pos2::ZERO, size),
+        let placement = renderer::Placement {
+            source: Rect::from_min_size(egui::Pos2::ZERO, size),
             size,
-            self.rect,
-            &self.view,
-        );
+            canvas: self.rect,
+            view: &self.view,
+        };
+        renderer::paint_source(&painter, texture, &placement);
     }
 
     fn show_image(
@@ -210,6 +210,7 @@ impl ImageCanvas {
             canvas: self.rect,
             settings: content.settings,
             colors: content.colors,
+            adjustments: self.adjustments,
         };
 
         self.renderer.paint(&painter, ctx, frame);

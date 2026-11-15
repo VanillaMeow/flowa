@@ -9,7 +9,7 @@ Flowa is one Rust crate. `src/main.rs` handles the native entry point, codec reg
 | `app/` | Application construction and coordination | `application.rs`, `native.rs`, `command.rs`, `command_handler.rs`, `worker_results.rs`, `launch.rs` |
 | `viewer/` | Viewing state and rules | `browser.rs`, `catalog.rs`, `formats.rs`, `image_session.rs`, `animation.rs`, `slideshow.rs`, `transform.rs`, `vector.rs` |
 | `ui/` | Egui components, styling, input, and drawing | `viewer_ui.rs`, `canvas.rs`, `filmstrip.rs`, `toolbar.rs`, `inspector.rs`, `dialogs.rs`, `preferences.rs`, `keyboard.rs`, `theme.rs`, `style.rs`, `widgets.rs`, `icons.rs` |
-| `ui/rendering/` | GPU textures and drawing geometry | `image_renderer.rs`, `icon_cache.rs`, `geometry.rs` |
+| `ui/rendering/` | GPU textures, drawing geometry, and the color adjustment shader | `image_renderer.rs`, `image_texture.rs`, `adjusted.rs`, `icon_cache.rs`, `geometry.rs` |
 | `services/` | Filesystem access, codecs, desktop integration, and background workers | `folder_scan.rs`, `image_decode/`, `image_loader/mod.rs`, `worker.rs`, `tiles.rs`, `thumbnails.rs`, `file_actions.rs` |
 | `video/` | FFmpeg media ownership, decoding, playback workers, and native GPU presentation | `session.rs`, `decoding/`, `playback/`, `presentation/`, `demux/`, `audio/`, `gpu/`, `ffmpeg/`, `ffi/`, `thumbnail.rs` |
 | `settings/` | Configuration values and persistence | `model.rs`, `store.rs` |
@@ -143,6 +143,12 @@ remain in the [backend roadmap](native/video/BACKENDS.md).
 ## Coordinate system
 
 The image is centered in the canvas. Horizontal/vertical flips apply in source coordinates, followed by clockwise quarter-turn rotation, zoom, and pan. Source-to-screen and screen-to-source transforms are inverses. Pointer-centered zoom adjusts pan so the image point underneath the pointer stays fixed. The actual-pixels action accounts for native display scale.
+
+## Color adjustments
+
+`viewer/adjustments.rs` holds brightness, contrast, saturation, and gamma, using libplacebo's definitions: contrast scales every channel from black, saturation scales color away from BT.709 luma, brightness is added afterward, and gamma raises the result to `1 / gamma`, all on gamma-encoded values. The canvas keeps them for the session; they never change copies or exports. Videos pass them to libplacebo. Images go through `ui/rendering/adjusted.rs`, an egui paint callback with its own wgpu pipeline in `adjust.wgsl` that repeats those steps and then writes colors the way egui's shader does, so blending and dithering match. Each pass stages the quads' corners and adjustments into one uniform buffer read with dynamic offsets. Neutral adjustments use egui's ordinary textured meshes.
+
+The shader must sample a texture in the same frame it is uploaded, which egui's own textures cannot guarantee from a callback. `ui/rendering/image_texture.rs` therefore creates preview and tile textures on the window's device, registers them with egui for the mesh path, and keeps a bind group for the shader. Without an attached renderer, as in UI tests, it falls back to egui textures drawn without adjustments.
 
 Each tile has a source rectangle and a texture. The renderer calculates visible source bounds, picks a power-of-two resolution level, and paints transformed quads. A one-sample overlap provides neighboring pixels for bilinear filtering. Painting a tile first restores the canvas/checkerboard in its core region so semitransparent pixels do not blend twice over the underlying preview.
 
