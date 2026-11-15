@@ -20,6 +20,7 @@ use crate::video::{
     decoding::{DecodedFrame, DecoderSelection},
     ffmpeg::{self, Stream, StreamInfo},
     gpu::NativeGpu,
+    subtitles::ActiveSubtitles,
 };
 
 /// Bounds how many late frames one poll may skip while catching up to the clock
@@ -76,6 +77,8 @@ pub(super) struct Engine {
     last_pts: f64,
     volume: f64,
     rate: f64,
+    /// Whether newly opened videos pick subtitles, cleared when the user turns them off
+    subtitles_wanted: bool,
     /// Frames still to show while paused, one per forward step
     steps_forward: u32,
     /// Where the latest backward step is seeking, so repeated steps keep going back
@@ -100,6 +103,7 @@ impl Engine {
             last_pts: 0.0,
             volume: 100.0,
             rate: 1.0,
+            subtitles_wanted: true,
             steps_forward: 0,
             step_back_target: None,
         }
@@ -108,6 +112,7 @@ impl Engine {
     pub fn open(&mut self, path: &Path) -> Result<()> {
         self.stop();
         let shared = Arc::new(Shared::new(self.ctx.clone(), self.volume, self.rate));
+        shared.lock().subtitles_wanted = self.subtitles_wanted;
         let worker = worker::spawn(path.to_owned(), Arc::clone(&shared))?;
         self.shared = Some(shared);
         self.worker = Some(worker);
@@ -345,6 +350,61 @@ impl Engine {
         };
 
         self.seek(position)
+    }
+
+    /// Shows another subtitle track, or none
+    ///
+    /// Embedded tracks seek to the current position so their packets are read again;
+    /// subtitle files were read whole when the video opened
+    pub fn set_subtitle_track(&mut self, track: Option<usize>) -> Result<()> {
+        let shared = self
+            .shared
+            .as_ref()
+            .map(Arc::clone)
+            .context("No video is open")?;
+        let reread = {
+            let mut state = shared.lock();
+            let chosen = track.map(|index| {
+                state
+                    .tracks
+                    .subtitles
+                    .iter()
+                    .find(|candidate| candidate.index == index)
+                    .cloned()
+                    .context("This video has no such subtitle track")
+            });
+            let chosen = chosen.transpose()?;
+
+            self.subtitles_wanted = track.is_some();
+            state.subtitles_wanted = self.subtitles_wanted;
+
+            if state.subtitle_track == track {
+                return Ok(());
+            }
+
+            state.subtitle_track = track;
+            state.subtitles = state
+                .external_subtitles
+                .iter()
+                .find(|subtitles| Some(subtitles.track.index) == track)
+                .map(|subtitles| subtitles.cues.clone())
+                .unwrap_or_default();
+
+            let embedded = chosen.is_some_and(|chosen| !chosen.external);
+            embedded
+                .then(|| state.position(Instant::now()))
+                .transpose()?
+        };
+        shared.notify();
+
+        match reread {
+            Some(position) if self.seekable(&shared) => self.seek(position),
+            _ => Ok(()),
+        }
+    }
+
+    fn seekable(&self, shared: &Shared) -> bool {
+        stream_info(&shared.lock()).is_some_and(|info| info.duration > 0.)
     }
 
     pub fn set_decoder(&mut self, preference: VideoDecoder) -> Result<()> {
@@ -711,6 +771,12 @@ impl Engine {
             audio: state.audio_info,
             tracks: state.tracks.clone(),
             audio_track: state.audio_track,
+            subtitle_track: state.subtitle_track,
+            subtitles: if state.subtitle_track.is_some() {
+                state.subtitles.active(position)
+            } else {
+                ActiveSubtitles::default()
+            },
             error: state.error.clone(),
         };
 
@@ -1042,6 +1108,127 @@ mod tests {
 
         engine.stop();
         Ok(())
+    }
+
+    #[test]
+    #[ignore = "Requires Vulkan and ffmpeg with libx264"]
+    fn embedded_and_external_subtitles_show_at_their_times() -> Result<()> {
+        let folder = tempfile::tempdir()?;
+        let embedded = folder.path().join("embedded.srt");
+        std::fs::write(
+            &embedded,
+            "1\n00:00:00,500 --> 00:00:03,000\nHello <i>there</i>\n\n\
+             2\n00:00:04,000 --> 00:00:06,000\nSecond line\n",
+        )?;
+        let clip = folder.path().join("captioned.mkv");
+        let generated = std::process::Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=160x90:rate=30",
+            ])
+            .arg("-i")
+            .arg(&embedded)
+            .args([
+                "-t",
+                "8",
+                "-c:v",
+                "libx264",
+                "-c:s",
+                "srt",
+                "-metadata:s:s:0",
+                "language=eng",
+                "-disposition:s:0",
+                "default",
+            ])
+            .arg(&clip)
+            .status()?;
+        ensure!(
+            generated.success(),
+            "Could not generate the subtitle fixture"
+        );
+        std::fs::write(
+            folder.path().join("captioned.fr.srt"),
+            "1\n00:00:01,000 --> 00:00:05,000\nBonjour\n",
+        )?;
+
+        let graphics = test_graphics()?;
+        let gpu = gpu::for_device(&graphics.device)?;
+        let mut engine = Engine::new(gpu, egui::Context::default());
+        engine.set_decoder(VideoDecoder::Software)?;
+        engine.open(&clip)?;
+
+        let state =
+            pump(&mut engine, |state| state.video.tracks.subtitles.len() == 2)?.video;
+        let labels: Vec<_> = state
+            .tracks
+            .subtitles
+            .iter()
+            .map(|t| t.label.as_str())
+            .collect();
+        ensure!(
+            labels == ["English · SRT", "French · SRT · External"],
+            "Unexpected subtitle labels {labels:?}"
+        );
+        let [embedded_track, external_track] =
+            [0, 1].map(|i| state.tracks.subtitles[i].index);
+        ensure!(
+            state.subtitle_track == Some(embedded_track),
+            "The default subtitle track was not chosen"
+        );
+
+        let state = pump(&mut engine, |state| state.video.position > 1.)?.video;
+        ensure!(
+            cue_text(&state) == ["Hello there"],
+            "Unexpected cues {:?}",
+            cue_text(&state)
+        );
+
+        engine.set_subtitle_track(Some(external_track))?;
+        let state = engine.poll().video;
+        ensure!(
+            state.position < 3. && cue_text(&state) == ["Bonjour"],
+            "The subtitle file did not show at {}: {:?}",
+            state.position,
+            cue_text(&state)
+        );
+
+        engine.set_subtitle_track(Some(embedded_track))?;
+        let state = pump(&mut engine, |state| state.video.position > 4.2)?.video;
+        ensure!(
+            cue_text(&state) == ["Second line"],
+            "Switching back did not show the embedded cue: {:?}",
+            cue_text(&state)
+        );
+
+        engine.set_subtitle_track(None)?;
+        ensure!(
+            engine.poll().video.subtitles.is_empty(),
+            "Subtitles stayed on"
+        );
+
+        engine.stop();
+        Ok(())
+    }
+
+    fn cue_text(state: &VideoState) -> Vec<String> {
+        state
+            .subtitles
+            .iter()
+            .filter_map(|cue| match &cue.content {
+                crate::video::subtitles::CueContent::Text(text) => Some(
+                    text.spans
+                        .iter()
+                        .map(|span| span.text.as_str())
+                        .collect::<String>(),
+                ),
+                crate::video::subtitles::CueContent::Bitmap(_) => None,
+            })
+            .collect()
     }
 
     fn clip_with_audio(

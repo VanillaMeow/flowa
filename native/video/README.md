@@ -20,6 +20,7 @@ See [BACKENDS.md](BACKENDS.md) for the roadmap.
 | `src/video/presentation/` | libplacebo rendering into wgpu textures, and copies of frames it can't sample |
 | `src/video/demux/` | Opening files and reading and seeking packets |
 | `src/video/audio/` | Audio decoding, resampling, pitch-preserving tempo changes, and SDL3 output |
+| `src/video/subtitles/` | Subtitle decoding, subtitle files beside the video, and the cues to show |
 | `src/video/gpu/` | Creates the Vulkan device with only the queues flowa uses and shares it with wgpu |
 | `src/video/ffmpeg/` | FFmpeg wrappers that know nothing about decoder backends |
 | `src/video/ffi/` | Generated FFmpeg, libplacebo, and SDL3 bindings |
@@ -70,7 +71,27 @@ resumes, which seeks to the shown frame to refill it. A backward step seeks one
 frame duration back; seeking is frame-accurate, so it decodes from the previous
 keyframe.
 
-Not implemented yet: subtitles and HDR output.
+Not implemented yet: HDR output and full ASS styling.
+
+## Subtitles
+
+Embedded subtitle streams and files named after the video (`Movie.srt`,
+`Movie.en.srt`, also `.ass`, `.ssa`, and `.vtt`) appear in the tracks menu. `S`
+turns them on and off. A new video shows forced subtitles, then ones the file marks
+as default, then a subtitle file beside it, unless subtitles were last turned off.
+
+FFmpeg decodes every format. Text arrives as ASS event lines, from which flowa
+keeps the text, italics, and top placement and skips vector drawings; positioning
+and fonts are not reproduced. Bitmap formats such as PGS and VobSub keep their
+images and place on the subtitle canvas. The demux worker decodes the chosen
+embedded stream into the playback state; subtitle files are read whole when the
+video opens. Each snapshot carries the cues showing at its position, which the
+canvas draws over the picture as outlined text or images.
+
+Choosing an embedded track seeks to the current position so its packets are read
+again. A cue that started before the nearest keyframe can be missed until the next
+one. Text cues are kept for the whole video; bitmap cues more than two minutes
+from the position are dropped.
 
 ## Thumbnails
 

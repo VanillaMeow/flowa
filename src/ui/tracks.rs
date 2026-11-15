@@ -1,4 +1,4 @@
-//! Choosing the audio track of the playing video
+//! Choosing the audio and subtitle tracks of the playing video
 
 use egui::{RichText, Vec2};
 
@@ -15,7 +15,7 @@ use super::{
 
 /// Whether the video offers anything to choose between
 pub fn available(state: &VideoState) -> bool {
-    state.tracks.audio.len() > 1
+    state.tracks.audio.len() > 1 || !state.tracks.subtitles.is_empty()
 }
 
 /// An icon button on the video controls that opens the track lists
@@ -34,9 +34,14 @@ pub fn button(
     } else {
         ui.visuals().weak_text_color()
     };
+    let icon = if state.tracks.subtitles.is_empty() {
+        Icon::Tracks
+    } else {
+        Icon::Captions
+    };
     icons::paint(
         ui.painter(),
-        Icon::Tracks,
+        icon,
         response.rect.center(),
         size::ICON,
         color,
@@ -58,6 +63,38 @@ pub fn menu(
     if state.tracks.audio.len() > 1 {
         caption(ui, "Audio", colors);
         audio_options(ui, state, commands);
+    }
+
+    if !state.tracks.subtitles.is_empty() {
+        if state.tracks.audio.len() > 1 {
+            ui.separator();
+        }
+
+        caption(ui, "Subtitles", colors);
+        subtitle_options(ui, state, commands);
+    }
+}
+
+/// Off, then every subtitle track, as selectable rows
+pub fn subtitle_options(
+    ui: &mut egui::Ui,
+    state: &VideoState,
+    commands: &mut Vec<Command>,
+) {
+    let off = state.subtitle_track.is_none();
+
+    if ui.selectable_label(off, "Off").clicked() && !off {
+        commands.push(PlaybackCommand::SelectSubtitles(None).into());
+        ui.close();
+    }
+
+    for track in &state.tracks.subtitles {
+        let selected = state.subtitle_track == Some(track.index);
+
+        if option(ui, track, selected).clicked() && !selected {
+            commands.push(PlaybackCommand::SelectSubtitles(Some(track.index)).into());
+            ui.close();
+        }
     }
 }
 

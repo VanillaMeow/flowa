@@ -435,6 +435,16 @@ fn audio_menu(
     });
 }
 
+fn subtitle_menu(
+    ui: &mut egui::Ui,
+    state: &ToolbarState<'_>,
+    commands: &mut Vec<Command>,
+) {
+    ui.menu_button("Subtitles", |ui| {
+        tracks::subtitle_options(ui, state.video, commands);
+    });
+}
+
 fn sort_menu(ui: &mut egui::Ui, state: &ToolbarState<'_>, commands: &mut Vec<Command>) {
     let old = (state.settings.sort, state.settings.reverse_sort);
     let (mut order, mut reverse) = old;
@@ -464,8 +474,12 @@ fn playback_menu(
         actions::PREVIOUS_FRAME.menu(ui, ready, commands);
         ui.add_enabled_ui(ready, |ui| speed_menu(ui, state, commands));
 
-        if tracks::available(state.video) {
+        if state.video.tracks.audio.len() > 1 {
             ui.add_enabled_ui(ready, |ui| audio_menu(ui, state, commands));
+        }
+
+        if !state.video.tracks.subtitles.is_empty() {
+            ui.add_enabled_ui(ready, |ui| subtitle_menu(ui, state, commands));
         }
         return;
     }

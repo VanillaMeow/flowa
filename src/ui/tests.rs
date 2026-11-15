@@ -402,3 +402,71 @@ mod toolbar {
         }
     }
 }
+
+mod subtitles {
+    use egui::{Pos2, Rect, vec2};
+
+    use crate::{
+        ui::subtitles::SubtitleOverlay,
+        video::subtitles::{Cue, CueContent, Span, SubtitleCues, SubtitleText},
+    };
+
+    fn cue(text: &str, top: bool) -> Cue {
+        Cue {
+            start: 0.,
+            end: 10.,
+            content: CueContent::Text(SubtitleText {
+                spans: vec![Span {
+                    text: text.into(),
+                    italic: false,
+                }],
+                top,
+            }),
+        }
+    }
+
+    #[test]
+    fn text_cues_sit_inside_the_visible_picture_at_their_edge() {
+        let ctx = egui::Context::default();
+        let mut overlay = SubtitleOverlay::default();
+        let mut cues = SubtitleCues::default();
+        cues.insert(cue("Bottom line", false));
+        cues.insert(cue("Top sign", true));
+        let active = cues.active(1.);
+
+        let screen = Rect::from_min_size(Pos2::ZERO, vec2(1280., 720.));
+        let picture = Rect::from_min_size(Pos2::new(140., 0.), vec2(1000., 720.));
+        let input = egui::RawInput {
+            screen_rect: Some(screen),
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            overlay.paint(ui.painter(), picture, picture, &active);
+        });
+        output.textures_delta.clear();
+
+        let text_bounds: Vec<Rect> = output
+            .shapes
+            .iter()
+            .filter(|shape| matches!(shape.shape, egui::Shape::Text(_)))
+            .map(|shape| shape.shape.visual_bounding_rect())
+            .collect();
+
+        assert!(!text_bounds.is_empty(), "No subtitle text was painted");
+        assert!(
+            text_bounds
+                .iter()
+                .all(|bounds| picture.expand(4.).contains_rect(*bounds))
+        );
+        assert!(
+            text_bounds
+                .iter()
+                .any(|bounds| bounds.top() > picture.center().y)
+        );
+        assert!(
+            text_bounds
+                .iter()
+                .any(|bounds| bounds.bottom() < picture.center().y)
+        );
+    }
+}

@@ -498,7 +498,7 @@ fn paint_texture(
 
 impl Placement<'_> {
     /// Screen corners of the source: left top, right top, right bottom, left bottom
-    fn corners(&self) -> [Pos2; 4] {
+    pub fn corners(&self) -> [Pos2; 4] {
         let source = self.source;
 
         [

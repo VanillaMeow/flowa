@@ -17,6 +17,7 @@ use crate::video::{
     decoding::{PacketSource, SourcePacket},
     demux::InterruptFlags,
     ffmpeg::Stream,
+    subtitles::{ExternalSubtitles, SubtitleCues},
 };
 
 #[derive(Clone, Copy)]
@@ -33,6 +34,13 @@ pub(super) struct PlaybackState {
     pub audio_track: Option<usize>,
     /// The audio stream being decoded, which follows `audio_track`
     pub audio_info: Option<AudioInfo>,
+    /// The subtitle track to show; embedded tracks switch at the next seek
+    pub subtitle_track: Option<usize>,
+    /// Cues of `subtitle_track`, filled by the worker or copied from a file
+    pub subtitles: SubtitleCues,
+    pub external_subtitles: Vec<ExternalSubtitles>,
+    /// Whether to pick subtitles for a newly opened video, kept across videos
+    pub subtitles_wanted: bool,
     pub packets: PacketQueue,
     pub eof: bool,
     pub seek: Option<Seek>,
@@ -66,6 +74,10 @@ impl PlaybackState {
             tracks: Tracks::default(),
             audio_track: None,
             audio_info: None,
+            subtitle_track: None,
+            subtitles: SubtitleCues::default(),
+            external_subtitles: Vec::new(),
+            subtitles_wanted: true,
             packets: PacketQueue::default(),
             eof: false,
             seek: None,

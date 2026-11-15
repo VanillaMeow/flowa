@@ -182,6 +182,11 @@ impl VideoSession {
         self.command(PlayerCommand::AudioTrack(index))
     }
 
+    /// Shows this subtitle track, or none; turning them off carries over to later videos
+    pub fn set_subtitles(&mut self, track: Option<usize>) -> Result<()> {
+        self.command(PlayerCommand::Subtitles(track))
+    }
+
     /// Sets playback speed, kept for later videos, with the pitch of audio unchanged
     pub fn set_rate(&mut self, rate: f64) -> Result<()> {
         let slowest = super::PLAYBACK_RATES[0];

@@ -32,6 +32,7 @@ pub(super) struct Media {
     input: Input<'static>,
     video_index: usize,
     audio_index: Option<usize>,
+    subtitle_index: Option<usize>,
     pub info: StreamInfo,
     pub tracks: Tracks,
 }
@@ -58,9 +59,46 @@ impl Media {
             input,
             video_index,
             audio_index,
+            subtitle_index: None,
             info,
             tracks,
         })
+    }
+
+    /// The coded picture size, which bitmap subtitles fall back to as their canvas
+    pub fn video_size(&self) -> [u32; 2] {
+        // SAFETY: The input owns the video stream and its codec parameters
+        let parameters = unsafe { &*self.input.stream(self.video_index).codecpar };
+
+        [parameters.width, parameters.height].map(|side| side.max(0) as u32)
+    }
+
+    pub fn stream_count(&self) -> usize {
+        self.input.data().nb_streams as usize
+    }
+
+    pub fn subtitle_index(&self) -> Option<usize> {
+        self.subtitle_index
+    }
+
+    /// Reports the embedded subtitle stream's packets as subtitles, or none
+    pub fn select_subtitles(&mut self, index: Option<usize>) -> Result<()> {
+        if let Some(index) = index {
+            anyhow::ensure!(
+                self.tracks
+                    .subtitles
+                    .iter()
+                    .any(|track| track.index == index && !track.external),
+                "The video has no subtitle track {index}"
+            );
+        }
+
+        self.subtitle_index = index;
+        Ok(())
+    }
+
+    pub fn subtitle_stream(&self) -> Option<&ffi::AVStream> {
+        self.subtitle_index.map(|index| self.input.stream(index))
     }
 
     pub fn audio_index(&self) -> Option<usize> {
@@ -105,6 +143,8 @@ impl Media {
             PacketKind::Video
         } else if Some(index) == self.audio_index {
             PacketKind::Audio
+        } else if Some(index) == self.subtitle_index {
+            PacketKind::Subtitle
         } else {
             PacketKind::Other
         };
@@ -221,6 +261,7 @@ fn tracks(input: &Input<'_>, kind: ffi::AVMediaType) -> Vec<Track> {
             label: track_label(stream, parameters, number),
             default: stream.disposition & ffi::AV_DISPOSITION_DEFAULT as i32 != 0,
             forced: stream.disposition & ffi::AV_DISPOSITION_FORCED as i32 != 0,
+            external: false,
         });
     }
 
@@ -270,7 +311,7 @@ fn metadata(stream: &ffi::AVStream, key: &CStr) -> Option<String> {
 }
 
 /// English names for common ISO 639-2 codes, or the code itself
-fn language_name(code: &str) -> String {
+pub(super) fn language_name(code: &str) -> String {
     let name = match code.to_ascii_lowercase().as_str() {
         "eng" | "en" => "English",
         "jpn" | "ja" => "Japanese",
@@ -298,7 +339,7 @@ fn language_name(code: &str) -> String {
     name.to_owned()
 }
 
-fn format_name(codec: &str) -> &str {
+pub(super) fn format_name(codec: &str) -> &str {
     match codec {
         "aac" => "AAC",
         "ac3" => "AC-3",

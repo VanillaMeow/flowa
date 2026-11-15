@@ -21,6 +21,7 @@ use super::{
         self as renderer, FrozenPreview, ImageRenderer, RenderFrame,
     },
     style::{space, text},
+    subtitles::SubtitleOverlay,
     theme::Colors,
     widgets,
 };
@@ -59,6 +60,7 @@ pub struct ImageCanvas {
     pub renderer: ImageRenderer,
     previous: Option<FrozenPreview>,
     displayed_size: Option<Vec2>,
+    subtitles: SubtitleOverlay,
 }
 
 impl ImageCanvas {
@@ -70,6 +72,7 @@ impl ImageCanvas {
             renderer: ImageRenderer::new(ctx, nearest),
             previous: None,
             displayed_size: None,
+            subtitles: SubtitleOverlay::default(),
         }
     }
 
@@ -187,6 +190,11 @@ impl ImageCanvas {
             view: &self.view,
         };
         renderer::paint_source(&painter, texture, &placement);
+
+        let picture = Rect::from_points(&placement.corners());
+        let visible = picture.intersect(self.rect);
+        self.subtitles
+            .paint(&painter, picture, visible, &video.state.subtitles);
     }
 
     fn show_image(

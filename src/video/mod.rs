@@ -1,6 +1,7 @@
 //! Video sessions backed by FFmpeg decoding and Vulkan presentation when the build has them
 
 mod session;
+pub(crate) mod subtitles;
 
 #[cfg(video_playback)]
 mod audio;
@@ -61,6 +62,8 @@ pub struct Track {
     pub default: bool,
     /// Subtitles meant to be shown even to viewers who did not ask for subtitles
     pub forced: bool,
+    /// Read from a subtitle file beside the video rather than from the container
+    pub external: bool,
 }
 
 /// The audio and subtitle streams of the playing video
@@ -68,6 +71,23 @@ pub struct Track {
 pub struct Tracks {
     pub audio: Vec<Track>,
     pub subtitles: Vec<Track>,
+}
+
+impl Tracks {
+    /// The subtitles to show without being asked: forced ones, then ones the file
+    /// marks as default, then a subtitle file placed beside the video
+    pub fn preferred_subtitles(&self) -> Option<usize> {
+        let pick = |wanted: fn(&Track) -> bool| {
+            self.subtitles
+                .iter()
+                .find(|track| wanted(track))
+                .map(|track| track.index)
+        };
+
+        pick(|track| track.forced)
+            .or_else(|| pick(|track| track.default))
+            .or_else(|| pick(|track| track.external))
+    }
 }
 
 /// Playback speeds offered by the controls, slowest first
@@ -142,6 +162,10 @@ pub struct VideoState {
     pub tracks: Tracks,
     /// The container index of the audio stream being played
     pub audio_track: Option<usize>,
+    /// The subtitle track being shown; files continue after the container's streams
+    pub subtitle_track: Option<usize>,
+    /// The cues to draw over the current frame
+    pub subtitles: subtitles::ActiveSubtitles,
     pub error: Option<String>,
 }
 
@@ -191,6 +215,8 @@ impl Default for VideoState {
             audio: None,
             tracks: Tracks::default(),
             audio_track: None,
+            subtitle_track: None,
+            subtitles: subtitles::ActiveSubtitles::default(),
             error: None,
         }
     }
@@ -211,4 +237,6 @@ pub(super) enum PlayerCommand {
     Adjust(Adjustments),
     /// Plays the audio stream with this container index from the current position
     AudioTrack(usize),
+    /// Shows this subtitle track, or none
+    Subtitles(Option<usize>),
 }

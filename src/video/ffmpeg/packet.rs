@@ -10,6 +10,7 @@ use super::ffi;
 pub(in crate::video) enum PacketKind {
     Video,
     Audio,
+    Subtitle,
     Other,
 }
 

@@ -11,6 +11,7 @@ pub(crate) mod keyboard;
 pub(crate) mod preferences;
 pub(crate) mod rendering;
 pub(crate) mod style;
+mod subtitles;
 pub(crate) mod theme;
 pub(crate) mod toolbar;
 pub(crate) mod tracks;

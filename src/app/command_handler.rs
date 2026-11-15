@@ -126,6 +126,8 @@ impl Flowa {
                 let result = self.video.set_audio_track(index);
                 self.report(result);
             }
+            PlaybackCommand::SelectSubtitles(track) => self.select_subtitles(track),
+            PlaybackCommand::ToggleSubtitles => self.toggle_subtitles(),
             PlaybackCommand::ToggleSlideshow => self.toggle_slideshow(),
         }
     }
@@ -279,6 +281,33 @@ impl Flowa {
 
         let result = self.video.set_rate(rate);
         self.report(result);
+    }
+
+    fn select_subtitles(&mut self, track: Option<usize>) {
+        if !self.video.state.ready() {
+            return;
+        }
+
+        let result = self.video.set_subtitles(track);
+        self.report(result);
+    }
+
+    fn toggle_subtitles(&mut self) {
+        let state = &self.video.state;
+        let tracks = &state.tracks;
+
+        let next = match state.subtitle_track {
+            Some(_) => None,
+            None => tracks
+                .preferred_subtitles()
+                .or_else(|| tracks.subtitles.first().map(|track| track.index)),
+        };
+
+        if next.is_none() && state.subtitle_track.is_none() {
+            return;
+        }
+
+        self.select_subtitles(next);
     }
 
     fn step_frames(&mut self, frames: i32) {

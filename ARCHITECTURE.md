@@ -11,7 +11,7 @@ Flowa is one Rust crate. `src/main.rs` handles the native entry point, codec reg
 | `ui/` | Egui components, styling, input, and drawing | `viewer_ui.rs`, `canvas.rs`, `filmstrip.rs`, `toolbar.rs`, `inspector.rs`, `dialogs.rs`, `preferences.rs`, `keyboard.rs`, `theme.rs`, `style.rs`, `widgets.rs`, `icons.rs` |
 | `ui/rendering/` | GPU textures, drawing geometry, and the color adjustment shader | `image_renderer.rs`, `image_texture.rs`, `adjusted.rs`, `icon_cache.rs`, `geometry.rs` |
 | `services/` | Filesystem access, codecs, desktop integration, and background workers | `folder_scan.rs`, `image_decode/`, `image_loader/mod.rs`, `worker.rs`, `tiles.rs`, `thumbnails.rs`, `file_actions.rs` |
-| `video/` | FFmpeg media ownership, decoding, playback workers, and native GPU presentation | `session.rs`, `decoding/`, `playback/`, `presentation/`, `demux/`, `audio/`, `gpu/`, `ffmpeg/`, `ffi/`, `thumbnail.rs` |
+| `video/` | FFmpeg media ownership, decoding, playback workers, subtitles, and native GPU presentation | `session.rs`, `decoding/`, `playback/`, `presentation/`, `demux/`, `audio/`, `subtitles/`, `gpu/`, `ffmpeg/`, `ffi/`, `thumbnail.rs` |
 | `settings/` | Configuration values and persistence | `model.rs`, `store.rs` |
 | `utils/` | General helpers with no application, viewer, or UI dependencies | `format.rs`, `filename.rs`, `size.rs` |
 
@@ -100,7 +100,7 @@ Windows. Without it, `video/unsupported.rs` supplies an uninhabited player, so
 `VideoSession` has one implementation that reports playback as unavailable.
 
 `video/demux/` opens the file, selects the streams, and reads and seeks packets.
-`video/audio/` decodes and resamples audio, stretches it for the playback rate with FFmpeg's `atempo` filter, and owns SDL3 output. A video with an
+`video/audio/` decodes and resamples audio, stretches it for the playback rate with FFmpeg's `atempo` filter, and owns SDL3 output. `video/subtitles/` decodes subtitle packets and files beside the video into timed cues; `ui/subtitles.rs` draws the cues each snapshot carries over the picture. A video with an
 audio track still plays, silently and timed by the wall clock, when no audio output
 device can be opened. Input owners retain stable interruption callbacks through
 close. Codec contexts keep their setup, including any callback storage, until

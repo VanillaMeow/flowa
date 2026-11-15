@@ -14,6 +14,7 @@ use crate::video::{
     audio::{AudioBlock, AudioDecoder, BYTES_PER_SECOND, CHANNELS, RATE, Tempo},
     demux::Media,
     ffmpeg::{Packet, PacketKind, Receive, Sent, StreamInfo},
+    subtitles::{SubtitleDecoder, SubtitleEvent, load_external},
 };
 
 /// Largest block of audio or inserted silence queued under one lock
@@ -91,6 +92,7 @@ fn run(path: &Path, shared: &Shared) -> Result<()> {
     let mut media = Media::open(path, Arc::clone(&shared.interrupt))?;
     let mut audio = media.audio_stream().map(AudioDecoder::open).transpose()?;
     let mut feed = AudioFeed::default();
+    let mut subtitles = None;
     let stream = media.copy_stream()?;
     {
         let mut state = shared.lock();
@@ -100,9 +102,10 @@ fn run(path: &Path, shared: &Shared) -> Result<()> {
         state.audio_info = media.info.audio;
     }
     shared.notify();
+    prepare_subtitles(path, &mut media, &mut subtitles, shared);
 
     while !shared.stopped() {
-        if apply_seek(&mut media, &mut audio, shared)? {
+        if apply_seek(&mut media, &mut audio, &mut subtitles, shared)? {
             continue;
         }
 
@@ -145,6 +148,11 @@ fn run(path: &Path, shared: &Shared) -> Result<()> {
                     feed_audio(audio, &mut feed, input, shared, generation)?;
                 }
             }
+            PacketKind::Subtitle => {
+                if let Some(decoder) = &mut subtitles {
+                    show_subtitles(decoder, &packet, media.subtitle_index(), shared);
+                }
+            }
             PacketKind::Audio | PacketKind::Other => {}
         }
     }
@@ -177,9 +185,10 @@ fn queue_video(packet: Packet, shared: &Shared, generation: u64) -> Result<()> {
 fn apply_seek(
     media: &mut Media,
     audio: &mut Option<AudioDecoder>,
+    subtitles: &mut Option<SubtitleDecoder>,
     shared: &Shared,
 ) -> Result<bool> {
-    let (request, track) = {
+    let (request, track, subtitle_track) = {
         let mut state = shared.lock();
         let Some(request) = state.seek.take() else {
             return Ok(false);
@@ -187,7 +196,8 @@ fn apply_seek(
 
         // Clearing the interrupt under this lock cannot erase a newer UI seek request
         shared.interrupt.seeking.store(false, Ordering::SeqCst);
-        (request, state.audio_track)
+        state.subtitles.prune(request.target);
+        (request, state.audio_track, state.subtitle_track)
     };
 
     if let Err(error) = media.seek(request.target) {
@@ -203,6 +213,8 @@ fn apply_seek(
         audio.flush()?;
     }
 
+    switch_subtitles(media, subtitles, subtitle_track);
+
     let mut state = shared.lock();
     if request.generation == state.generation {
         state.eof = false;
@@ -212,6 +224,113 @@ fn apply_seek(
     drop(state);
     shared.notify();
     Ok(true)
+}
+
+/// Reads subtitle files beside the video and picks the subtitles to show first
+fn prepare_subtitles(
+    path: &Path,
+    media: &mut Media,
+    decoder: &mut Option<SubtitleDecoder>,
+    shared: &Shared,
+) {
+    let interrupt = Arc::clone(&shared.interrupt);
+    let cancel = move || interrupt.abort.load(Ordering::SeqCst);
+    let external =
+        load_external(path, media.stream_count(), media.video_size(), cancel);
+
+    let choice = {
+        let mut state = shared.lock();
+        state
+            .tracks
+            .subtitles
+            .extend(external.iter().map(|subtitles| subtitles.track.clone()));
+        state.external_subtitles = external;
+
+        let choice = state
+            .tracks
+            .preferred_subtitles()
+            .filter(|_| state.subtitles_wanted);
+        let from_file = state
+            .external_subtitles
+            .iter()
+            .find(|subtitles| Some(subtitles.track.index) == choice)
+            .map(|subtitles| subtitles.cues.clone());
+
+        state.subtitle_track = choice;
+        state.subtitles = from_file.unwrap_or_default();
+        choice
+    };
+    shared.notify();
+
+    switch_subtitles(media, decoder, choice);
+}
+
+/// Decodes the chosen embedded subtitle stream, or none for files and no subtitles
+fn switch_subtitles(
+    media: &mut Media,
+    decoder: &mut Option<SubtitleDecoder>,
+    track: Option<usize>,
+) {
+    let embedded = track.filter(|&index| {
+        media
+            .tracks
+            .subtitles
+            .iter()
+            .any(|track| track.index == index && !track.external)
+    });
+
+    if embedded == media.subtitle_index() {
+        if let Some(decoder) = decoder {
+            decoder.flush();
+        }
+        return;
+    }
+
+    let opened = media.select_subtitles(embedded).and_then(|()| {
+        media
+            .subtitle_stream()
+            .map(|stream| {
+                SubtitleDecoder::open(stream, media.info.origin, media.video_size())
+            })
+            .transpose()
+    });
+
+    *decoder = opened.unwrap_or_else(|error| {
+        log::warn!("Cannot show subtitle track {embedded:?}: {error:#}");
+        let _ = media.select_subtitles(None);
+        None
+    });
+}
+
+/// Adds a packet's cues to the track being shown; a broken packet only loses its cues
+fn show_subtitles(
+    decoder: &mut SubtitleDecoder,
+    packet: &Packet,
+    index: Option<usize>,
+    shared: &Shared,
+) {
+    let event = match decoder.decode(packet) {
+        Ok(Some(event)) => event,
+        Ok(None) => return,
+        Err(error) => {
+            log::debug!("Skipping a subtitle packet: {error:#}");
+            return;
+        }
+    };
+
+    let mut state = shared.lock();
+    if state.subtitle_track != index {
+        return;
+    }
+
+    match event {
+        SubtitleEvent::Cues(cues) => {
+            cues.into_iter().for_each(|cue| state.subtitles.insert(cue))
+        }
+        SubtitleEvent::Clear(time) => state.subtitles.clear_at(time),
+    }
+    drop(state);
+    shared.notify();
 }
 
 /// Decodes another audio stream, or plays silently when its decoder cannot open

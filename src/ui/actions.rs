@@ -264,6 +264,11 @@ pub const NORMAL_SPEED: Action = Action::new(
     Command::Playback(PlaybackCommand::SetRate(1.)),
     &[key(Key::Backspace)],
 );
+pub const SUBTITLES: Action = Action::new(
+    "Subtitles on / off",
+    Command::Playback(PlaybackCommand::ToggleSubtitles),
+    &[key(Key::S)],
+);
 pub const SLIDESHOW: Action = Action::new(
     "Slideshow",
     Command::Playback(PlaybackCommand::ToggleSlideshow),
@@ -322,6 +327,7 @@ pub const VIEWER: &[Action] = &[
     FASTER,
     SLOWER,
     NORMAL_SPEED,
+    SUBTITLES,
     COPY_PATH,
     COPY_IMAGE,
     EXPORT,

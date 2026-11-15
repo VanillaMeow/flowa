@@ -69,6 +69,10 @@ pub enum PlaybackCommand {
     StepRate(i32),
     /// Plays the audio stream with this container index
     SelectAudio(usize),
+    /// Shows this subtitle track, or none
+    SelectSubtitles(Option<usize>),
+    /// Hides subtitles, or shows the preferred or first track
+    ToggleSubtitles,
     ToggleSlideshow,
 }
 
