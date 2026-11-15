@@ -108,6 +108,7 @@ impl Flowa {
     fn handle_playback(&mut self, command: PlaybackCommand) {
         match command {
             PlaybackCommand::TogglePlay => self.toggle_play(),
+            PlaybackCommand::StepFrames(frames) => self.step_frames(frames),
             PlaybackCommand::Seek(position) => {
                 let result = self.video.seek(position);
                 self.report(result);
@@ -260,6 +261,15 @@ impl Flowa {
         } else {
             self.toggle_slideshow();
         }
+    }
+
+    fn step_frames(&mut self, frames: i32) {
+        if !self.video.state.ready() {
+            return;
+        }
+
+        let result = self.video.step(frames);
+        self.report(result);
     }
 
     fn toggle_slideshow(&mut self) {

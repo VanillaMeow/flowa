@@ -40,6 +40,9 @@ pub(super) struct PlaybackState {
     pub audio: Option<AudioOutput>,
     /// Set when no output device could be opened; playback then continues silently
     pub audio_disabled: bool,
+    /// Set after stepping forward while paused, when queued audio no longer matches the
+    /// frame; new samples are dropped until a seek realigns them
+    pub holding_audio: bool,
     pub volume: f64,
     pub error: Option<String>,
 }
@@ -60,6 +63,7 @@ impl PlaybackState {
             clock: Clock::default(),
             audio: None,
             audio_disabled: false,
+            holding_audio: false,
             volume,
             error: None,
         }

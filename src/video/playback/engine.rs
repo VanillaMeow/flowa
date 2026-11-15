@@ -24,6 +24,8 @@ use crate::video::{
 
 /// Bounds how many late frames one poll may skip while catching up to the clock
 const MAX_FRAMES_PER_POLL: usize = 12;
+/// Bounds forward steps waiting for frames, so a held key never runs far ahead
+const MAX_QUEUED_STEPS: u32 = 8;
 
 /// The UI-facing playback state plus scheduling details used by the player
 #[derive(Clone)]
@@ -73,6 +75,10 @@ pub(super) struct Engine {
     frame_serial: u64,
     last_pts: f64,
     volume: f64,
+    /// Frames still to show while paused, one per forward step
+    steps_forward: u32,
+    /// Where the latest backward step is seeking, so repeated steps keep going back
+    step_back_target: Option<f64>,
 }
 
 impl Engine {
@@ -92,6 +98,8 @@ impl Engine {
             frame_serial: 0,
             last_pts: 0.0,
             volume: 100.0,
+            steps_forward: 0,
+            step_back_target: None,
         }
     }
 
@@ -125,6 +133,8 @@ impl Engine {
         self.frame_serial = 0;
         self.applied_generation = 0;
         self.last_pts = 0.0;
+        self.steps_forward = 0;
+        self.step_back_target = None;
 
         drop(shared);
     }
@@ -133,21 +143,86 @@ impl Engine {
         let Some(shared) = &self.shared else {
             return Ok(());
         };
+        let paused = shared.lock().paused;
+
+        self.set_paused(!paused)
+    }
+
+    fn set_paused(&mut self, paused: bool) -> Result<()> {
+        let Some(shared) = &self.shared else {
+            return Ok(());
+        };
         let mut state = shared.lock();
         let now = Instant::now();
         let position = state.position(now)?;
         state.clock.anchor(position, now);
-        state.paused = !state.paused;
-        let restart = state.ended && !state.paused;
+        state.paused = paused;
+        let restart = state.ended && !paused;
+        let realign = state.holding_audio && !paused;
         if let Some(audio) = &state.audio {
-            audio.pause(state.paused || !state.started)?;
+            audio.pause(paused || !state.started)?;
         }
         drop(state);
         shared.notify();
+        self.steps_forward = 0;
 
         if restart {
             self.seek(0.0)?;
+        } else if realign {
+            // Queued audio belongs to where stepping started, so refill it from here
+            self.seek(position)?;
         }
+        Ok(())
+    }
+
+    /// Pauses and shows the next frame, or seeks back to the previous one
+    pub fn step(&mut self, frames: i32) -> Result<()> {
+        let Some(shared) = self.shared.as_ref().map(Arc::clone) else {
+            return Ok(());
+        };
+        let Some(info) = stream_info(&shared.lock()) else {
+            return Ok(());
+        };
+
+        self.set_paused(true)?;
+
+        if frames < 0 {
+            return self.step_back(&shared, info, frames.unsigned_abs());
+        }
+
+        let mut state = shared.lock();
+        if state.ended {
+            return Ok(());
+        }
+
+        state.holding_audio = true;
+        self.steps_forward = (self.steps_forward + frames as u32).min(MAX_QUEUED_STEPS);
+        drop(state);
+        shared.notify();
+
+        Ok(())
+    }
+
+    /// Seeks one frame duration back per step from the shown frame, or from a backward
+    /// step that is still seeking
+    fn step_back(
+        &mut self,
+        shared: &Shared,
+        info: StreamInfo,
+        frames: u32,
+    ) -> Result<()> {
+        let shown = self
+            .current
+            .as_ref()
+            .map(|frame| frame.position)
+            .unwrap_or(shared.lock().clock.floor);
+        let from = self.step_back_target.unwrap_or(shown);
+        let target = (from - info.frame_duration * f64::from(frames)).max(0.);
+
+        self.steps_forward = 0;
+        self.seek(target)?;
+        self.step_back_target = Some(target);
+
         Ok(())
     }
 
@@ -176,6 +251,7 @@ impl Engine {
         state.started = false;
         state.ended = false;
         state.eof = false;
+        state.holding_audio = false;
         state.clock.seek(target, floor, Instant::now());
         state.packets.clear();
         shared.interrupt.seeking.store(true, Ordering::SeqCst);
@@ -186,6 +262,7 @@ impl Engine {
 
         // Keep current and its displayed texture until the requested frame replaces it
         shared.notify();
+        self.step_back_target = None;
         Ok(())
     }
 
@@ -418,19 +495,28 @@ impl Engine {
             let mut state = shared.lock();
             let now = state.position(Instant::now())?;
             let starting = !state.started;
+            let stepping = !starting && state.paused && self.steps_forward > 0;
 
             if pending.position + info.frame_duration * 0.5 < state.clock.floor {
                 self.pending = None;
                 continue;
             }
-            if !starting && (state.paused || pending.position > now + 0.002) {
+            if !starting
+                && !stepping
+                && (state.paused || pending.position > now + 0.002)
+            {
                 return Ok(());
             }
 
             let position = pending.position;
             self.current = self.pending.take();
             self.frame_serial += 1;
+            if stepping {
+                self.steps_forward -= 1;
+                state.clock.anchor(position, Instant::now());
+            }
             if starting {
+                self.step_back_target = None;
                 let position = position.max(state.clock.floor);
                 state.clock.anchor(position, Instant::now());
                 state.started = true;
@@ -698,6 +784,155 @@ mod tests {
         ensure!(state.audio.is_none(), "A silent clip reported audio");
         engine.stop();
         Ok(())
+    }
+
+    #[test]
+    #[ignore = "Requires Vulkan and ffmpeg with libx264"]
+    fn frame_steps_move_one_frame_and_playback_resumes_from_there() -> Result<()> {
+        let folder = tempfile::tempdir()?;
+        let clip = folder.path().join("steps.mp4");
+        let generated = std::process::Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=160x90:rate=10",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:sample_rate=48000",
+                "-t",
+                "6",
+                "-c:v",
+                "libx264",
+                "-g",
+                "20",
+                "-c:a",
+                "aac",
+            ])
+            .arg(&clip)
+            .status()?;
+        ensure!(generated.success(), "Could not generate the step fixture");
+
+        let _audio = crate::video::audio::AudioRuntime::new();
+        let graphics = test_graphics()?;
+        let gpu = gpu::for_device(&graphics.device)?;
+        let mut engine = Engine::new(gpu, egui::Context::default());
+        engine.set_decoder(VideoDecoder::Software)?;
+        engine.open(&clip)?;
+        pump(&mut engine, |state| state.video.position > 0.5)?;
+        let audible = engine
+            .shared
+            .as_ref()
+            .is_some_and(|shared| shared.lock().audio.is_some());
+        ensure!(
+            audible,
+            "No audio output opened; set SDL_AUDIO_DRIVER=dummy"
+        );
+
+        engine.toggle_pause()?;
+        let start = shown(&engine)?;
+
+        // Twelve steps outlast the audio queue, which must not stop video packets
+        for step in 1..=12 {
+            engine.step(1)?;
+            let expected = start + f64::from(step) * 0.1;
+            pump_engine(&mut engine, |engine, _| near(engine, expected))?;
+        }
+        let state = engine.poll().video;
+        ensure!(state.paused, "Stepping resumed playback");
+        ensure!(
+            (state.position - (start + 1.2)).abs() < 0.02,
+            "The clock did not follow the stepped frame"
+        );
+
+        engine.step(-1)?;
+        pump_engine(&mut engine, |engine, state| {
+            near(engine, start + 1.1) && !state.video.seeking
+        })?;
+
+        // A second backward step before the first lands still moves back two frames
+        engine.step(-1)?;
+        engine.step(-1)?;
+        pump_engine(&mut engine, |engine, state| {
+            near(engine, start + 0.9) && !state.video.seeking
+        })?;
+
+        engine.step(1)?;
+        pump_engine(&mut engine, |engine, _| near(engine, start + 1.0))?;
+        engine.toggle_pause()?;
+        let resumed = pump(&mut engine, |state| {
+            !state.video.paused && state.video.position > start + 1.5
+        })?;
+        ensure!(
+            resumed.video.position < start + 3.,
+            "Playback did not resume from the stepped frame"
+        );
+        let holding = engine
+            .shared
+            .as_ref()
+            .is_some_and(|shared| shared.lock().holding_audio);
+        ensure!(!holding, "Resuming kept dropping audio");
+
+        engine.stop();
+        Ok(())
+    }
+
+    fn test_graphics() -> Result<RenderState> {
+        let setup = gpu::setup()?;
+        let instance = pollster::block_on(setup.new_instance());
+        let config = WgpuConfiguration {
+            wgpu_setup: setup,
+            ..Default::default()
+        };
+
+        Ok(pollster::block_on(RenderState::create(
+            &config,
+            &instance,
+            None,
+            RendererOptions::default(),
+        ))?)
+    }
+
+    fn shown(engine: &Engine) -> Result<f64> {
+        engine
+            .current
+            .as_ref()
+            .map(|frame| frame.position)
+            .context("No frame is shown")
+    }
+
+    fn near(engine: &Engine, position: f64) -> bool {
+        shown(engine).is_ok_and(|shown| (shown - position).abs() < 0.02)
+    }
+
+    fn pump_engine(
+        engine: &mut Engine,
+        ready: impl Fn(&Engine, &Snapshot) -> bool,
+    ) -> Result<Snapshot> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+
+        loop {
+            let state = engine.poll();
+            ensure!(
+                state.video.error.is_none(),
+                "Playback failed: {:?}",
+                state.video.error
+            );
+            if ready(engine, &state) {
+                return Ok(state);
+            }
+
+            ensure!(
+                Instant::now() < deadline,
+                "Timed out at {:?}",
+                shown(engine).ok()
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 
     fn pump(

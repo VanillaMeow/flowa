@@ -62,15 +62,20 @@ impl Requests {
         });
     }
 
-    /// Keeps only the latest command of each kind; two queued toggles cancel out
-    pub fn command(&mut self, command: PlayerCommand) {
+    /// Keeps only the latest command of each kind; two queued toggles cancel out, and
+    /// queued steps add up
+    pub fn command(&mut self, mut command: PlayerCommand) {
         let previous = self.commands.iter().position(|queued| {
             std::mem::discriminant(queued) == std::mem::discriminant(&command)
         });
         if let Some(index) = previous {
-            self.commands.remove(index);
-            if matches!(command, PlayerCommand::TogglePause) {
-                return;
+            let queued = self.commands.remove(index);
+            match (queued, &mut command) {
+                (PlayerCommand::TogglePause, _) => return,
+                (PlayerCommand::Step(earlier), PlayerCommand::Step(frames)) => {
+                    *frames = frames.saturating_add(earlier);
+                }
+                _ => {}
             }
         }
         self.commands.push(command);
@@ -100,5 +105,15 @@ mod tests {
         requests.command(PlayerCommand::TogglePause);
         requests.command(PlayerCommand::TogglePause);
         assert_eq!(requests.commands.len(), 2);
+    }
+
+    #[test]
+    fn queued_frame_steps_add_up() {
+        let mut requests = Requests::default();
+        requests.command(PlayerCommand::Step(1));
+        requests.command(PlayerCommand::Step(1));
+        requests.command(PlayerCommand::Step(-3));
+
+        assert_eq!(requests.commands, vec![PlayerCommand::Step(-1)]);
     }
 }

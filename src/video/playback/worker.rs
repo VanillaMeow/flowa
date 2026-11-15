@@ -278,7 +278,8 @@ fn put_audio(
             }
 
             // Without an output device the clock runs from wall time, so samples are dropped
-            if state.audio_disabled {
+            // Stepped frames drop them too, so a full queue never stops video packets
+            if state.audio_disabled || state.holding_audio {
                 return Ok(true);
             }
 

@@ -436,8 +436,11 @@ fn playback_menu(
     commands: &mut Vec<Command>,
 ) {
     if state.video.active {
+        let ready = state.video.ready();
         let label = if state.video.paused { "Play" } else { "Pause" };
-        actions::PLAY.menu_label(ui, label, state.video.ready(), false, commands);
+        actions::PLAY.menu_label(ui, label, ready, false, commands);
+        actions::NEXT_FRAME.menu(ui, ready, commands);
+        actions::PREVIOUS_FRAME.menu(ui, ready, commands);
         return;
     }
 

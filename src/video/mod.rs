@@ -154,6 +154,8 @@ impl Default for VideoState {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum PlayerCommand {
     TogglePause,
+    /// Pauses, then shows the next frame for positive counts or seeks back for negative
+    Step(i32),
     Seek(f64),
     Volume(f64),
     Decoder(VideoDecoder),

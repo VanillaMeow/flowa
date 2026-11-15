@@ -239,6 +239,16 @@ pub const PLAY: Action = Action::new(
     Command::Playback(PlaybackCommand::TogglePlay),
     &[key(Key::Space)],
 );
+pub const NEXT_FRAME: Action = Action::new(
+    "Next frame",
+    Command::Playback(PlaybackCommand::StepFrames(1)),
+    &[key(Key::Period)],
+);
+pub const PREVIOUS_FRAME: Action = Action::new(
+    "Previous frame",
+    Command::Playback(PlaybackCommand::StepFrames(-1)),
+    &[key(Key::Comma)],
+);
 pub const SLIDESHOW: Action = Action::new(
     "Slideshow",
     Command::Playback(PlaybackCommand::ToggleSlideshow),
@@ -292,6 +302,8 @@ pub const VIEWER: &[Action] = &[
     ZOOM_IN,
     ZOOM_OUT,
     PLAY,
+    NEXT_FRAME,
+    PREVIOUS_FRAME,
     COPY_PATH,
     COPY_IMAGE,
     EXPORT,

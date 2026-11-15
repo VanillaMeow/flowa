@@ -51,6 +51,13 @@ Rendering always needs Vulkan, even when decoding in software.
 
 Without an audio device, playback continues silently.
 
+Period and comma step one frame forward or back, pausing first. A forward step
+shows the next decoded frame and moves the clock to it. Audio queued before the
+step no longer matches, so the demux worker drops new samples until playback
+resumes, which seeks to the shown frame to refill it. A backward step seeks one
+frame duration back; seeking is frame-accurate, so it decodes from the previous
+keyframe.
+
 Not implemented yet: subtitles, track selection, and HDR output.
 
 ## Thumbnails

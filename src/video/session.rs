@@ -148,6 +148,11 @@ impl VideoSession {
         self.command(PlayerCommand::TogglePause)
     }
 
+    /// Pauses and moves the given number of frames forward or back
+    pub fn step(&mut self, frames: i32) -> Result<()> {
+        self.command(PlayerCommand::Step(frames))
+    }
+
     /// Seeks to an absolute media time, bounded by the known duration
     pub fn seek(&mut self, seconds: f64) -> Result<()> {
         let position = seek_position(seconds, self.state.duration)?;

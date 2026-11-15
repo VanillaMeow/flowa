@@ -59,6 +59,8 @@ pub enum ViewCommand {
 #[derive(Clone, Debug, PartialEq)]
 pub enum PlaybackCommand {
     TogglePlay,
+    /// Frames to move a video by, pausing it first
+    StepFrames(i32),
     Seek(f64),
     SetVolume(f64),
     ToggleSlideshow,

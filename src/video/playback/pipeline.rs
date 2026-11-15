@@ -55,6 +55,7 @@ impl Pipeline {
     pub fn command(&mut self, command: PlayerCommand) -> Result<()> {
         match command {
             PlayerCommand::TogglePause => self.engine.toggle_pause(),
+            PlayerCommand::Step(frames) => self.engine.step(frames),
             PlayerCommand::Seek(seconds) => self.engine.seek(seconds),
             PlayerCommand::Volume(volume) => self.engine.set_volume(volume),
             PlayerCommand::Decoder(preference) => {
