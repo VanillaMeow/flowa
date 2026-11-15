@@ -1,6 +1,7 @@
 //! Egui components, styling, keyboard input, and rendering
 
 pub(crate) mod actions;
+pub(crate) mod adjustments;
 pub(crate) mod canvas;
 pub(crate) mod dialogs;
 pub(crate) mod filmstrip;

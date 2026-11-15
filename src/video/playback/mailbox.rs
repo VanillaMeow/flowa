@@ -55,7 +55,9 @@ impl Requests {
         self.commands.retain(|command| {
             matches!(
                 command,
-                PlayerCommand::Volume(_) | PlayerCommand::Decoder(_)
+                PlayerCommand::Volume(_)
+                    | PlayerCommand::Decoder(_)
+                    | PlayerCommand::Adjust(_)
             )
         });
     }

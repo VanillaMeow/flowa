@@ -5,6 +5,7 @@ use anyhow::Result;
 use crate::{
     services::file_actions::{self, Task},
     settings::SortOrder,
+    viewer::adjustments::Adjustments,
 };
 
 use super::{
@@ -70,6 +71,11 @@ impl Flowa {
     }
 
     fn handle_view(&mut self, command: ViewCommand, ctx: &egui::Context) {
+        if let ViewCommand::Adjust(adjustments) = command {
+            self.adjust(adjustments);
+            return;
+        }
+
         let canvas = &mut self.ui.canvas;
 
         match command {
@@ -84,6 +90,18 @@ impl Flowa {
             }
             ViewCommand::FlipHorizontal => canvas.view.flip_horizontal(),
             ViewCommand::FlipVertical => canvas.view.flip_vertical(),
+            ViewCommand::Adjust(_) => {}
+        }
+    }
+
+    /// Applies color adjustments to the canvas and to every video frame
+    fn adjust(&mut self, adjustments: Adjustments) {
+        let adjustments = adjustments.clamped();
+        self.ui.canvas.adjustments = adjustments;
+
+        if self.video.available() {
+            let result = self.video.set_adjustments(adjustments);
+            self.report(result);
         }
     }
 

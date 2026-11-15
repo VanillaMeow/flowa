@@ -12,7 +12,7 @@ use crate::{
 };
 
 use super::{
-    actions,
+    actions, adjustments,
     canvas::ImageCanvas,
     icons::{self, Icon},
     style::{margin, size, space, text},
@@ -106,6 +106,7 @@ fn compact_view_menu(
     let ready = state.image.decoded.is_some() || state.video.ready();
 
     ui.add_enabled_ui(ready, |ui| compact_zoom_menu(ui, commands));
+    ui.add_enabled_ui(ready, |ui| adjustments_menu(ui, state, commands));
     ui.separator();
 
     for (action, selected) in [
@@ -118,6 +119,16 @@ fn compact_view_menu(
 
     ui.separator();
     actions::PREFERENCES.menu(ui, true, commands);
+}
+
+fn adjustments_menu(
+    ui: &mut egui::Ui,
+    state: &ToolbarState<'_>,
+    commands: &mut Vec<Command>,
+) {
+    ui.menu_button("Adjust colors", |ui| {
+        adjustments::controls(ui, state.canvas.adjustments, state.colors, commands);
+    });
 }
 
 fn compact_zoom_menu(ui: &mut egui::Ui, commands: &mut Vec<Command>) {
@@ -263,6 +274,8 @@ fn view_buttons(
     actions::ZOOM_IN.button(ui, Icon::Plus, false, commands);
     zoom_percentage(ui, view.pixel_scale(pixels_per_point), commands);
     actions::ZOOM_OUT.button(ui, Icon::Minus, false, commands);
+
+    adjustments::button(ui, state.canvas.adjustments, state.colors, commands);
 }
 
 /// Plays animations and slideshows; videos have their own controls
@@ -389,6 +402,8 @@ pub fn context_menu(
     ] {
         action.menu(ui, true, commands);
     }
+
+    adjustments_menu(ui, state, commands);
 
     ui.separator();
     playback_menu(ui, state, commands);

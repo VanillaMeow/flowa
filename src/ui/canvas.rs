@@ -9,6 +9,7 @@ use crate::{
     settings::Settings,
     video::VideoSession,
     viewer::{
+        adjustments::Adjustments,
         image_session::{DecodedImage, ImageSession},
         transform::{MAX_ZOOM, View},
     },
@@ -52,6 +53,8 @@ impl CanvasContent<'_> {
 
 pub struct ImageCanvas {
     pub view: View,
+    /// Kept across files for the session, like zoom when remembering the view
+    pub adjustments: Adjustments,
     pub rect: Rect,
     pub renderer: ImageRenderer,
     previous: Option<FrozenPreview>,
@@ -62,6 +65,7 @@ impl ImageCanvas {
     pub fn new(ctx: egui::Context, nearest: bool) -> Self {
         Self {
             view: View::default(),
+            adjustments: Adjustments::NEUTRAL,
             rect: Rect::NOTHING,
             renderer: ImageRenderer::new(ctx, nearest),
             previous: None,

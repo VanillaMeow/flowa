@@ -1,6 +1,7 @@
-//! Image-viewing state, formats, ordering, animation, slideshows, transforms, and vector
-//! images
+//! Image-viewing state, formats, ordering, animation, slideshows, transforms, color
+//! adjustments, and vector images
 
+pub(crate) mod adjustments;
 pub(crate) mod animation;
 pub(crate) mod browser;
 pub(crate) mod catalog;

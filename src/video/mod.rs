@@ -34,7 +34,10 @@ use anyhow::Result;
 
 pub(crate) use session::VideoSession;
 
-use crate::{services::worker::Generation, settings::VideoDecoder};
+use crate::{
+    services::worker::Generation, settings::VideoDecoder,
+    viewer::adjustments::Adjustments,
+};
 
 /// Extracts filmstrip pixels without requiring an initialized playback device
 pub fn thumbnail(
@@ -154,4 +157,6 @@ pub(super) enum PlayerCommand {
     Seek(f64),
     Volume(f64),
     Decoder(VideoDecoder),
+    /// Brightness, contrast, saturation, and gamma for every later frame
+    Adjust(Adjustments),
 }

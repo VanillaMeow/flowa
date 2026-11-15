@@ -1,5 +1,68 @@
 //! Unit tests for the viewer area
 
+mod adjustments {
+    use crate::viewer::adjustments::Adjustments;
+
+    fn close(actual: [f32; 3], expected: [f32; 3]) -> bool {
+        actual
+            .iter()
+            .zip(expected)
+            .all(|(actual, expected)| (actual - expected).abs() < 1e-5)
+    }
+
+    #[test]
+    fn neutral_adjustments_leave_colors_unchanged() {
+        let color = [0.2, 0.5, 0.9];
+
+        assert!(Adjustments::NEUTRAL.is_neutral());
+        assert!(close(Adjustments::NEUTRAL.apply(color), color));
+    }
+
+    #[test]
+    fn contrast_scales_from_black_and_brightness_lifts_every_channel() {
+        let adjustments = Adjustments {
+            brightness: 0.1,
+            contrast: 0.5,
+            ..Adjustments::NEUTRAL
+        };
+
+        assert!(close(adjustments.apply([0., 0.4, 1.]), [0.1, 0.3, 0.6]));
+    }
+
+    #[test]
+    fn zero_saturation_is_gray_and_gamma_above_one_brightens_midtones() {
+        let gray = Adjustments {
+            saturation: 0.,
+            ..Adjustments::NEUTRAL
+        }
+        .apply([1., 0., 0.]);
+        assert!(close(gray, [0.2126; 3]));
+
+        let brighter = Adjustments {
+            gamma: 2.,
+            ..Adjustments::NEUTRAL
+        }
+        .apply([0.25; 3]);
+        assert!(close(brighter, [0.5; 3]));
+    }
+
+    #[test]
+    fn clamping_keeps_values_in_range_and_replaces_invalid_ones() {
+        let clamped = Adjustments {
+            brightness: 3.,
+            contrast: f32::NAN,
+            saturation: -1.,
+            gamma: 100.,
+        }
+        .clamped();
+
+        assert_eq!(clamped.brightness, 0.5);
+        assert_eq!(clamped.contrast, 1.);
+        assert_eq!(clamped.saturation, 0.);
+        assert_eq!(clamped.gamma, 4.);
+    }
+}
+
 mod catalog {
     use crate::viewer::catalog::next_index;
 

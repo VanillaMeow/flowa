@@ -9,6 +9,7 @@ use anyhow::Result;
 use eframe::egui_wgpu::RenderState;
 
 use super::{decoding::DecodedFrame, ffmpeg::Stream, gpu::NativeGpu};
+use crate::viewer::adjustments::Adjustments;
 
 mod frame_import;
 mod frame_transfer;
@@ -71,6 +72,11 @@ impl Presenter {
 
     pub fn displayed(&self) -> Option<egui::TextureId> {
         self.ring.displayed()
+    }
+
+    /// Changes the color adjustments of later renders; the caller redraws the frame
+    pub fn set_adjustments(&mut self, adjustments: Adjustments) {
+        self.renderer.set_adjustments(adjustments);
     }
 
     pub fn displayed_target(&self) -> Option<Target> {

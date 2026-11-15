@@ -5,7 +5,7 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 
 use super::{PlayerCommand, VideoState, playback};
-use crate::settings::VideoDecoder;
+use crate::{settings::VideoDecoder, viewer::adjustments::Adjustments};
 
 /// Coordinates playback state and the texture displayed by the image canvas
 #[derive(Default)]
@@ -152,6 +152,13 @@ impl VideoSession {
     pub fn seek(&mut self, seconds: f64) -> Result<()> {
         let position = seek_position(seconds, self.state.duration)?;
         self.command(PlayerCommand::Seek(position))
+    }
+
+    /// Changes brightness, contrast, saturation, and gamma, redrawing a paused frame
+    ///
+    /// The player keeps them for every later video
+    pub fn set_adjustments(&mut self, adjustments: Adjustments) -> Result<()> {
+        self.command(PlayerCommand::Adjust(adjustments.clamped()))
     }
 
     /// Sets output volume as a percentage between zero and one hundred

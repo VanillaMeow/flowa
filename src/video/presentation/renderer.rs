@@ -10,11 +10,14 @@ use super::{
     frame_transfer::TransferredFrame,
     targets::{RenderTarget, TARGET_SLOTS},
 };
-use crate::video::{
-    decoding::DecodedFrame,
-    ffi::native,
-    ffmpeg::{AvFrame, Stream},
-    gpu::SharedDevice,
+use crate::{
+    video::{
+        decoding::DecodedFrame,
+        ffi::native,
+        ffmpeg::{AvFrame, Stream},
+        gpu::SharedDevice,
+    },
+    viewer::adjustments::Adjustments,
 };
 
 /// Submissions the GPU may fall behind by before rendering stops adding more
@@ -70,6 +73,7 @@ pub(super) struct FrameRenderer {
     targets: [WrappedTarget; TARGET_SLOTS],
     import: FrameImport,
     flights: Vec<Flight>,
+    adjustment: native::pl_color_adjustment,
 }
 
 impl FrameRenderer {
@@ -87,7 +91,13 @@ impl FrameRenderer {
             }; TARGET_SLOTS],
             import: FrameImport::default(),
             flights: Vec::new(),
+            adjustment: color_adjustment(Adjustments::NEUTRAL),
         })
+    }
+
+    /// Changes the brightness, contrast, saturation, and gamma of later renders
+    pub fn set_adjustments(&mut self, adjustments: Adjustments) {
+        self.adjustment = color_adjustment(adjustments);
     }
 
     /// Draws a decoded frame into the target and returns the image at its signal value
@@ -131,7 +141,16 @@ impl FrameRenderer {
             transferred,
         });
 
-        if !draw(device, self.renderer, &mut mapped, texture, target) {
+        let drawn = draw(
+            device,
+            self.renderer,
+            &mut mapped,
+            texture,
+            target,
+            &self.adjustment,
+        );
+
+        if !drawn {
             return Err(RenderError::Failed(
                 "The Vulkan video render submission failed",
             ));
@@ -249,6 +268,7 @@ fn draw(
     mapped: &mut native::pl_frame,
     texture: native::pl_tex,
     target: &RenderTarget,
+    adjustment: &native::pl_color_adjustment,
 ) -> bool {
     let gpu = device.gpu();
     let lend = native::pl_vulkan_release_params {
@@ -275,7 +295,8 @@ fn draw(
     // signal value, and a flight keeps the mapped frame's images alive
     unsafe {
         native::pl_vulkan_release_ex(gpu, &lend);
-        let rendered = native::flowa_frame_render(renderer, mapped, texture);
+        let rendered =
+            native::flowa_frame_render(renderer, mapped, texture, adjustment);
         native::flowa_frame_unmap(gpu, mapped);
 
         // Always return ownership, even when a shader or hardware import fails
@@ -283,5 +304,19 @@ fn draw(
         native::pl_gpu_flush(gpu);
 
         rendered && held
+    }
+}
+
+/// Libplacebo's form of the viewer's adjustments, with hue and temperature left neutral
+fn color_adjustment(adjustments: Adjustments) -> native::pl_color_adjustment {
+    let adjustments = adjustments.clamped();
+
+    native::pl_color_adjustment {
+        brightness: adjustments.brightness,
+        contrast: adjustments.contrast,
+        saturation: adjustments.saturation,
+        hue: 0.,
+        gamma: adjustments.gamma,
+        temperature: 0.,
     }
 }

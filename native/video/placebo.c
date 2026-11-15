@@ -42,7 +42,8 @@ void flowa_frame_unmap(pl_gpu gpu, struct pl_frame *mapped) {
 bool flowa_frame_render(
     pl_renderer renderer,
     const struct pl_frame *mapped,
-    pl_tex target
+    pl_tex target,
+    const struct pl_color_adjustment *adjustment
 ) {
     struct pl_frame output = {
         .num_planes = 1,
@@ -53,5 +54,8 @@ bool flowa_frame_render(
         .color = pl_color_space_srgb,
     };
 
-    return pl_render_image(renderer, mapped, &output, &pl_render_default_params);
+    struct pl_render_params params = pl_render_default_params;
+    params.color_adjustment = adjustment;
+
+    return pl_render_image(renderer, mapped, &output, &params);
 }

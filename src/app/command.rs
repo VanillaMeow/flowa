@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use crate::settings::SortOrder;
+use crate::{settings::SortOrder, viewer::adjustments::Adjustments};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command {
@@ -41,7 +41,7 @@ pub enum BrowseCommand {
     Sort { order: SortOrder, reverse: bool },
 }
 
-/// Zooming, rotating, and flipping the canvas
+/// Zooming, rotating, flipping, and adjusting the colors of the canvas
 #[derive(Clone, Debug, PartialEq)]
 pub enum ViewCommand {
     Fit,
@@ -51,6 +51,8 @@ pub enum ViewCommand {
     RotateCounterclockwise,
     FlipHorizontal,
     FlipVertical,
+    /// Brightness, contrast, saturation, and gamma for images and videos
+    Adjust(Adjustments),
 }
 
 /// Videos, animations, and slideshows

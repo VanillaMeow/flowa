@@ -62,6 +62,11 @@ impl Pipeline {
                 self.needs_redraw = true;
                 Ok(())
             }
+            PlayerCommand::Adjust(adjustments) => {
+                self.presenter.set_adjustments(adjustments);
+                self.needs_redraw = true;
+                Ok(())
+            }
         }
     }
 

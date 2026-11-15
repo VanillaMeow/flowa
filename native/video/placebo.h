@@ -26,8 +26,10 @@ bool flowa_frame_map(
 void flowa_frame_unmap(pl_gpu gpu, struct pl_frame *mapped);
 
 // Converts a mapped frame to sRGB in an RGBA target with the default render settings
+// and the given brightness, contrast, saturation, and gamma
 bool flowa_frame_render(
     pl_renderer renderer,
     const struct pl_frame *mapped,
-    pl_tex target
+    pl_tex target,
+    const struct pl_color_adjustment *adjustment
 );

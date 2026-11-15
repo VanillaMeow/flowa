@@ -44,6 +44,9 @@ chosen decoder, or from one that failed during playback, shows a notice.
 
 Hardware frames stay on the GPU. Software frames upload into reusable textures.
 Both go through the same libplacebo color conversion and tone mapping to SDR.
+Brightness, contrast, saturation, and gamma from the toolbar's color adjustments
+are libplacebo's `pl_color_adjustment`, applied during that conversion. Changing
+them redraws a paused frame.
 Rendering always needs Vulkan, even when decoding in software.
 
 Without an audio device, playback continues silently.
