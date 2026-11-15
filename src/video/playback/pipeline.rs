@@ -58,6 +58,7 @@ impl Pipeline {
             PlayerCommand::Step(frames) => self.engine.step(frames),
             PlayerCommand::Seek(seconds) => self.engine.seek(seconds),
             PlayerCommand::Volume(volume) => self.engine.set_volume(volume),
+            PlayerCommand::Rate(rate) => self.engine.set_rate(rate),
             PlayerCommand::Decoder(preference) => {
                 self.engine.set_decoder(preference)?;
                 self.needs_redraw = true;

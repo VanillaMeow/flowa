@@ -33,6 +33,9 @@ pub(super) struct PlaybackState {
     pub seeking: bool,
     pub generation: u64,
     pub flushed_generation: u64,
+    /// Increments when the playback rate changes, so audio stretched for the old rate
+    /// is dropped
+    pub rate_epoch: u64,
     pub started: bool,
     pub paused: bool,
     pub ended: bool,
@@ -48,7 +51,10 @@ pub(super) struct PlaybackState {
 }
 
 impl PlaybackState {
-    pub fn new(volume: f64) -> Self {
+    pub fn new(volume: f64, rate: f64) -> Self {
+        let mut clock = Clock::default();
+        clock.set_rate(rate, 0.0, Instant::now());
+
         Self {
             stream: None,
             packets: PacketQueue::default(),
@@ -57,10 +63,11 @@ impl PlaybackState {
             seeking: false,
             generation: 0,
             flushed_generation: 0,
+            rate_epoch: 0,
             started: false,
             paused: false,
             ended: false,
-            clock: Clock::default(),
+            clock,
             audio: None,
             audio_disabled: false,
             holding_audio: false,
@@ -94,9 +101,9 @@ pub(super) struct Shared {
 }
 
 impl Shared {
-    pub fn new(ctx: egui::Context, volume: f64) -> Self {
+    pub fn new(ctx: egui::Context, volume: f64, rate: f64) -> Self {
         Self {
-            state: Mutex::new(PlaybackState::new(volume)),
+            state: Mutex::new(PlaybackState::new(volume, rate)),
             changed: Condvar::new(),
             interrupt: Arc::new(InterruptFlags::default()),
             ctx,

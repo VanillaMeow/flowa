@@ -1,4 +1,7 @@
 //! Playback time derived from queued audio, with a monotonic clock for silent clips
+//!
+//! Positions are media seconds. At a playback rate other than one, each second of
+//! queued output audio and of wall time covers `rate` media seconds
 
 use std::time::Instant;
 
@@ -15,6 +18,7 @@ pub(super) struct Clock {
     pub audio_end: Option<f64>,
     drained_at: Option<Instant>,
     drained_position: f64,
+    rate: f64,
 }
 
 impl Default for Clock {
@@ -26,6 +30,7 @@ impl Default for Clock {
             audio_end: None,
             drained_at: None,
             drained_position: 0.0,
+            rate: 1.0,
         }
     }
 }
@@ -43,7 +48,7 @@ impl Clock {
         }
 
         let position = if let (Some(end), Some(audio)) = (self.audio_end, audio) {
-            let mut position = end - audio.queued - audio.latency;
+            let mut position = end - (audio.queued + audio.latency) * self.rate;
             if audio.queued > 0.0 {
                 self.drained_at = None;
             } else if eof {
@@ -56,13 +61,24 @@ impl Clock {
                     }
                 };
                 position = self.drained_position
-                    + now.saturating_duration_since(drained).as_secs_f64();
+                    + now.saturating_duration_since(drained).as_secs_f64() * self.rate;
             }
             position
         } else {
-            self.anchor + now.saturating_duration_since(self.at).as_secs_f64()
+            self.anchor
+                + now.saturating_duration_since(self.at).as_secs_f64() * self.rate
         };
         position.max(self.floor)
+    }
+
+    pub fn rate(&self) -> f64 {
+        self.rate
+    }
+
+    /// Changes speed from `position` on, which the caller reads at the old rate
+    pub fn set_rate(&mut self, rate: f64, position: f64, now: Instant) {
+        self.anchor(position, now);
+        self.rate = rate;
     }
 
     pub fn anchor(&mut self, position: f64, now: Instant) {
@@ -139,6 +155,29 @@ mod tests {
         assert_eq!(
             clock.position(now + Duration::from_secs(1), true, drained, true),
             3.0
+        );
+    }
+
+    #[test]
+    fn rate_scales_queued_audio_and_wall_time() {
+        let now = Instant::now();
+        let mut clock = Clock {
+            audio_end: Some(10.0),
+            ..Clock::default()
+        };
+        clock.set_rate(2.0, 9.0, now);
+
+        let queued = Some(AudioTiming {
+            queued: 0.5,
+            latency: 0.0,
+        });
+        assert_eq!(clock.position(now, true, queued, false), 9.0);
+
+        let mut silent = Clock::default();
+        silent.set_rate(0.5, 4.0, now);
+        assert_eq!(
+            silent.position(now + Duration::from_secs(2), true, None, false),
+            5.0
         );
     }
 

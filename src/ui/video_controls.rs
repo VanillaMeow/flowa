@@ -7,7 +7,7 @@ use egui::{Align, Id, Layout, Response, RichText, style::HandleShape, vec2};
 use crate::{
     app::{Command, PlaybackCommand},
     utils::format::media_time,
-    video::VideoState,
+    video::{PLAYBACK_RATES, VideoState},
 };
 
 use super::{
@@ -21,6 +21,9 @@ const TIMELINE_HEIGHT: f32 = 22.;
 const ROW_SPACING: f32 = space::XS;
 const INLINE_VOLUME_WIDTH: f32 = 104.;
 const INLINE_VOLUME_BREAKPOINT: f32 = 420.;
+const SPEED_WIDTH: f32 = 54.;
+/// Narrower compact rows leave speed to its shortcuts and the context menu
+const COMPACT_SPEED_BREAKPOINT: f32 = 480.;
 const SEEK_ACKNOWLEDGEMENT_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Keeps a scrub preview stable while FFmpeg seeks to the new frame
@@ -204,19 +207,31 @@ impl VideoControls {
         ui.add_enabled_ui(state.ready(), |ui| play_button(ui, state.paused, commands));
 
         let volume_menu = ui.available_width() < 640.;
+        let show_speed = ui.available_width() >= COMPACT_SPEED_BREAKPOINT;
+        let spacing = ui.spacing().item_spacing.x;
         let volume_width = if volume_menu {
             size::CONTROL
         } else {
-            size::CONTROL + INLINE_VOLUME_WIDTH + ui.spacing().item_spacing.x
+            size::CONTROL + INLINE_VOLUME_WIDTH + spacing
+        };
+        let speed_width = if show_speed {
+            SPEED_WIDTH + spacing
+        } else {
+            0.
         };
         let timeline_width =
-            ui.available_width() - volume_width - ui.spacing().item_spacing.x;
+            ui.available_width() - volume_width - speed_width - spacing;
 
         ui.allocate_ui_with_layout(
             vec2(timeline_width, size::CONTROL),
             Layout::left_to_right(Align::Center),
             |ui| self.timeline(ui, state, colors, commands),
         );
+
+        if show_speed {
+            ui.add_enabled_ui(state.ready(), |ui| speed_menu(ui, state.rate, commands));
+        }
+
         self.volume_controls(ui, state, volume_menu, commands);
     }
 
@@ -231,6 +246,7 @@ impl VideoControls {
 
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             self.volume_controls(ui, state, volume_menu, commands);
+            ui.add_enabled_ui(state.ready(), |ui| speed_menu(ui, state.rate, commands));
         });
     }
 
@@ -324,6 +340,41 @@ fn play_button(ui: &mut egui::Ui, paused: bool, commands: &mut Vec<Command>) {
     let verb = if paused { "Play" } else { "Pause" };
 
     actions::PLAY.button_label(ui, icon, verb, false, commands);
+}
+
+/// A button showing the current speed that opens the list of offered speeds
+fn speed_menu(ui: &mut egui::Ui, rate: f64, commands: &mut Vec<Command>) {
+    let label = RichText::new(rate_label(rate)).monospace();
+    let button = egui::Button::new(label).min_size(vec2(SPEED_WIDTH, size::CONTROL));
+    let (response, _) = egui::containers::menu::MenuButton::from_button(button)
+        .ui(ui, |ui| speed_options(ui, rate, commands));
+
+    let shortcuts = format!(
+        "Playback speed · {} / {}",
+        actions::SLOWER.shortcut_text(ui.ctx()),
+        actions::FASTER.shortcut_text(ui.ctx())
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), "Playback speed")
+    });
+    response.on_hover_text(shortcuts);
+}
+
+/// The offered speeds as selectable rows, for the speed button and context menus
+pub fn speed_options(ui: &mut egui::Ui, rate: f64, commands: &mut Vec<Command>) {
+    for &option in PLAYBACK_RATES.iter().rev() {
+        let selected = (option - rate).abs() < 1e-6;
+
+        if ui.selectable_label(selected, rate_label(option)).clicked() {
+            commands.push(PlaybackCommand::SetRate(option).into());
+            ui.close();
+        }
+    }
+}
+
+/// Reads as `1×`, `1.5×`, or `0.25×`
+fn rate_label(rate: f64) -> String {
+    format!("{rate}×")
 }
 
 fn volume_slider(

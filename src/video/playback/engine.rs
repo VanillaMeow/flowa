@@ -15,7 +15,7 @@ use super::{
 };
 use crate::settings::VideoDecoder;
 use crate::video::{
-    VideoState,
+    PLAYBACK_RATES, VideoState,
     audio::AudioOutput,
     decoding::{DecodedFrame, DecoderSelection},
     ffmpeg::{self, Stream, StreamInfo},
@@ -75,6 +75,7 @@ pub(super) struct Engine {
     frame_serial: u64,
     last_pts: f64,
     volume: f64,
+    rate: f64,
     /// Frames still to show while paused, one per forward step
     steps_forward: u32,
     /// Where the latest backward step is seeking, so repeated steps keep going back
@@ -98,6 +99,7 @@ impl Engine {
             frame_serial: 0,
             last_pts: 0.0,
             volume: 100.0,
+            rate: 1.0,
             steps_forward: 0,
             step_back_target: None,
         }
@@ -105,7 +107,7 @@ impl Engine {
 
     pub fn open(&mut self, path: &Path) -> Result<()> {
         self.stop();
-        let shared = Arc::new(Shared::new(self.ctx.clone(), self.volume));
+        let shared = Arc::new(Shared::new(self.ctx.clone(), self.volume, self.rate));
         let worker = worker::spawn(path.to_owned(), Arc::clone(&shared))?;
         self.shared = Some(shared);
         self.worker = Some(worker);
@@ -279,6 +281,46 @@ impl Engine {
         Ok(())
     }
 
+    /// Changes playback speed from the current position, keeping the pitch of audio
+    ///
+    /// Audio already queued was stretched for the old rate, so it is dropped and the
+    /// worker refills the queue; the rate also applies to later videos
+    pub fn set_rate(&mut self, rate: f64) -> Result<()> {
+        ensure!(
+            rate.is_finite() && rate > 0.0,
+            "Playback rate must be positive"
+        );
+        let slowest = PLAYBACK_RATES[0];
+        let fastest = PLAYBACK_RATES[PLAYBACK_RATES.len() - 1];
+        self.rate = rate.clamp(slowest, fastest);
+
+        let Some(shared) = &self.shared else {
+            return Ok(());
+        };
+        let mut state = shared.lock();
+        if state.clock.rate() == self.rate {
+            return Ok(());
+        }
+
+        let now = Instant::now();
+        let position = state.position(now)?;
+        state.clock.set_rate(self.rate, position, now);
+        state.rate_epoch += 1;
+
+        if let Some(audio) = &state.audio {
+            audio.clear()?;
+            audio.pause(state.paused || !state.started)?;
+
+            if state.clock.audio_end.is_some() {
+                state.clock.audio_end = Some(position);
+            }
+        }
+        drop(state);
+        shared.notify();
+
+        Ok(())
+    }
+
     pub fn set_decoder(&mut self, preference: VideoDecoder) -> Result<()> {
         let failed = self
             .shared
@@ -359,6 +401,7 @@ impl Engine {
         Snapshot {
             video: VideoState {
                 volume: self.volume,
+                rate: self.rate,
                 error,
                 ..VideoState::default()
             },
@@ -611,10 +654,11 @@ impl Engine {
             position = position.min(duration);
         }
 
+        let rate = state.clock.rate();
         let next_frame_delay = self
             .pending
             .as_ref()
-            .map_or(0.005, |frame| (frame.position - position).max(0.0));
+            .map_or(0.005, |frame| (frame.position - position).max(0.0) / rate);
         let size = self.current.as_ref().map_or([0; 2], |frame| {
             frame
                 .frame
@@ -629,6 +673,7 @@ impl Engine {
             position,
             duration,
             volume: state.volume,
+            rate,
             size,
             decoder: self.decoder.as_ref().and_then(|decoder| decoder.selected),
             fallback: self.decoder.as_ref().and_then(|decoder| decoder.fallback),
@@ -790,48 +835,9 @@ mod tests {
     #[ignore = "Requires Vulkan and ffmpeg with libx264"]
     fn frame_steps_move_one_frame_and_playback_resumes_from_there() -> Result<()> {
         let folder = tempfile::tempdir()?;
-        let clip = folder.path().join("steps.mp4");
-        let generated = std::process::Command::new("ffmpeg")
-            .args([
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-f",
-                "lavfi",
-                "-i",
-                "testsrc2=size=160x90:rate=10",
-                "-f",
-                "lavfi",
-                "-i",
-                "sine=frequency=440:sample_rate=48000",
-                "-t",
-                "6",
-                "-c:v",
-                "libx264",
-                "-g",
-                "20",
-                "-c:a",
-                "aac",
-            ])
-            .arg(&clip)
-            .status()?;
-        ensure!(generated.success(), "Could not generate the step fixture");
-
-        let _audio = crate::video::audio::AudioRuntime::new();
-        let graphics = test_graphics()?;
-        let gpu = gpu::for_device(&graphics.device)?;
-        let mut engine = Engine::new(gpu, egui::Context::default());
-        engine.set_decoder(VideoDecoder::Software)?;
-        engine.open(&clip)?;
+        let clip = clip_with_audio(folder.path(), 10)?;
+        let mut engine = audible_engine(&clip)?;
         pump(&mut engine, |state| state.video.position > 0.5)?;
-        let audible = engine
-            .shared
-            .as_ref()
-            .is_some_and(|shared| shared.lock().audio.is_some());
-        ensure!(
-            audible,
-            "No audio output opened; set SDL_AUDIO_DRIVER=dummy"
-        );
 
         engine.toggle_pause()?;
         let start = shown(&engine)?;
@@ -871,14 +877,132 @@ mod tests {
             resumed.video.position < start + 3.,
             "Playback did not resume from the stepped frame"
         );
-        let holding = engine
-            .shared
-            .as_ref()
-            .is_some_and(|shared| shared.lock().holding_audio);
-        ensure!(!holding, "Resuming kept dropping audio");
+        ensure!(!holding_audio(&engine), "Resuming kept dropping audio");
 
         engine.stop();
         Ok(())
+    }
+
+    #[test]
+    #[ignore = "Requires Vulkan and ffmpeg with libx264"]
+    fn playback_rate_scales_the_clock_while_audio_keeps_playing() -> Result<()> {
+        let folder = tempfile::tempdir()?;
+        let clip = clip_with_audio(folder.path(), 30)?;
+        let mut engine = audible_engine(&clip)?;
+        pump(&mut engine, |state| state.video.position > 0.3)?;
+
+        for (rate, wall) in [(2.0, 1.5), (0.5, 2.0)] {
+            engine.set_rate(rate)?;
+
+            // Let the worker refill the audio queue that the change dropped
+            let settled = Instant::now() + Duration::from_millis(300);
+            pump_engine(&mut engine, |_, _| Instant::now() > settled)?;
+
+            let before = engine.poll();
+            let serial = before.frame_serial;
+            let until = Instant::now() + Duration::from_secs_f64(wall);
+            let after = pump_engine(&mut engine, |_, _| Instant::now() > until)?;
+            let advanced = after.video.position - before.video.position;
+
+            ensure!(
+                after.video.rate == rate,
+                "The snapshot reported another rate"
+            );
+            ensure!(
+                (advanced - wall * rate).abs() < 0.25,
+                "At {rate}× the clock moved {advanced} seconds in {wall}"
+            );
+            ensure!(
+                after.frame_serial > serial + (wall * 30. * rate * 0.8) as u64,
+                "Too few video frames at {rate}×"
+            );
+            let lag = after.video.position - shown(&engine)?;
+            ensure!(lag < 0.15, "Video fell {lag} seconds behind at {rate}×");
+            ensure!(audio_queued(&engine), "Audio stopped at {rate}×");
+        }
+
+        engine.stop();
+        Ok(())
+    }
+
+    fn clip_with_audio(
+        folder: &std::path::Path,
+        frame_rate: u32,
+    ) -> Result<std::path::PathBuf> {
+        let clip = folder.join("audible.mp4");
+        let video = format!("testsrc2=size=160x90:rate={frame_rate}");
+        let keyframes = (frame_rate * 2).to_string();
+        let generated = std::process::Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                &video,
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:sample_rate=48000",
+                "-t",
+                "12",
+                "-c:v",
+                "libx264",
+                "-g",
+                &keyframes,
+                "-c:a",
+                "aac",
+            ])
+            .arg(&clip)
+            .status()?;
+        ensure!(
+            generated.success(),
+            "Could not generate the audible fixture"
+        );
+
+        Ok(clip)
+    }
+
+    /// A software-decoding engine that has opened an audio device for the clip
+    fn audible_engine(clip: &std::path::Path) -> Result<Engine> {
+        // SDL keeps the audio subsystem initialized for the rest of the test process
+        std::mem::forget(crate::video::audio::AudioRuntime::new()?);
+
+        let graphics = test_graphics()?;
+        let gpu = gpu::for_device(&graphics.device)?;
+        let mut engine = Engine::new(gpu, egui::Context::default());
+        engine.set_decoder(VideoDecoder::Software)?;
+        engine.open(clip)?;
+        pump(&mut engine, |state| state.video.position > 0.1)?;
+
+        let audible = engine
+            .shared
+            .as_ref()
+            .is_some_and(|shared| shared.lock().audio.is_some());
+        ensure!(
+            audible,
+            "No audio output opened; set SDL_AUDIO_DRIVER=dummy"
+        );
+
+        Ok(engine)
+    }
+
+    fn holding_audio(engine: &Engine) -> bool {
+        engine
+            .shared
+            .as_ref()
+            .is_some_and(|shared| shared.lock().holding_audio)
+    }
+
+    fn audio_queued(engine: &Engine) -> bool {
+        engine.shared.as_ref().is_some_and(|shared| {
+            let state = shared.lock();
+            state
+                .audio
+                .as_ref()
+                .is_some_and(|audio| audio.queued_bytes().is_ok_and(|bytes| bytes > 0))
+        })
     }
 
     fn test_graphics() -> Result<RenderState> {

@@ -63,6 +63,10 @@ pub enum PlaybackCommand {
     StepFrames(i32),
     Seek(f64),
     SetVolume(f64),
+    /// A speed multiplier for videos, kept for later ones
+    SetRate(f64),
+    /// Moves to the next offered speed, faster for positive steps
+    StepRate(i32),
     ToggleSlideshow,
 }
 

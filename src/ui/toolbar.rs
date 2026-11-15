@@ -17,6 +17,7 @@ use super::{
     icons::{self, Icon},
     style::{margin, size, space, text},
     theme::Colors,
+    video_controls,
 };
 
 /// The flower fills most of its button, like an app icon
@@ -414,6 +415,16 @@ pub fn context_menu(
     ui.menu_button("Sort folder", |ui| sort_menu(ui, state, commands));
 }
 
+fn speed_menu(
+    ui: &mut egui::Ui,
+    state: &ToolbarState<'_>,
+    commands: &mut Vec<Command>,
+) {
+    ui.menu_button("Speed", |ui| {
+        video_controls::speed_options(ui, state.video.rate, commands);
+    });
+}
+
 fn sort_menu(ui: &mut egui::Ui, state: &ToolbarState<'_>, commands: &mut Vec<Command>) {
     let old = (state.settings.sort, state.settings.reverse_sort);
     let (mut order, mut reverse) = old;
@@ -441,6 +452,7 @@ fn playback_menu(
         actions::PLAY.menu_label(ui, label, ready, false, commands);
         actions::NEXT_FRAME.menu(ui, ready, commands);
         actions::PREVIOUS_FRAME.menu(ui, ready, commands);
+        ui.add_enabled_ui(ready, |ui| speed_menu(ui, state, commands));
         return;
     }
 

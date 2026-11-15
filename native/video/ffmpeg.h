@@ -3,6 +3,9 @@
 
 #include <errno.h>
 #include <libavcodec/avcodec.h>
+#include <libavfilter/avfilter.h>
+#include <libavfilter/buffersink.h>
+#include <libavfilter/buffersrc.h>
 #include <libavformat/avformat.h>
 #include <libavutil/display.h>
 #include <libavutil/hwcontext.h>

@@ -21,6 +21,8 @@ mod presentation;
 #[cfg(video_playback)]
 mod thumbnail;
 
+#[cfg(test)]
+mod tests;
 #[cfg(not(video_playback))]
 mod unsupported;
 #[cfg(not(video_playback))]
@@ -46,6 +48,22 @@ pub fn thumbnail(
     expected: u64,
 ) -> Result<egui::ColorImage> {
     thumbnail::extract(path, generation, expected)
+}
+
+/// Playback speeds offered by the controls, slowest first
+pub const PLAYBACK_RATES: &[f64] =
+    &[0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 3.0, 4.0];
+
+/// The offered speed `steps` places faster or slower than `rate`, stopping at the ends
+pub fn step_rate(rate: f64, steps: i32) -> f64 {
+    let nearest = PLAYBACK_RATES
+        .iter()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| (*a - rate).abs().total_cmp(&(*b - rate).abs()))
+        .map_or(0, |(index, _)| index);
+    let index = nearest.saturating_add_signed(steps as isize);
+
+    PLAYBACK_RATES[index.min(PLAYBACK_RATES.len() - 1)]
 }
 
 /// Source audio properties before playback resampling
@@ -80,7 +98,8 @@ impl DecoderFallback {
 
 /// Playback properties reported by the FFmpeg player
 ///
-/// Times are seconds, volume is a percentage, and size includes display aspect ratio
+/// Times are seconds, volume is a percentage, rate is a speed multiplier, and size
+/// includes display aspect ratio
 #[derive(Clone, Debug, PartialEq)]
 pub struct VideoState {
     pub active: bool,
@@ -90,6 +109,7 @@ pub struct VideoState {
     pub position: f64,
     pub duration: f64,
     pub volume: f64,
+    pub rate: f64,
     pub size: [u32; 2],
     /// The decoder producing frames, or `None` while candidates are still being tried
     pub decoder: Option<VideoDecoder>,
@@ -139,6 +159,7 @@ impl Default for VideoState {
             position: 0.,
             duration: 0.,
             volume: 100.,
+            rate: 1.,
             size: [0; 2],
             decoder: None,
             fallback: None,
@@ -158,6 +179,8 @@ pub(super) enum PlayerCommand {
     Step(i32),
     Seek(f64),
     Volume(f64),
+    /// Playback speed, which also applies to later videos
+    Rate(f64),
     Decoder(VideoDecoder),
     /// Brightness, contrast, saturation, and gamma for every later frame
     Adjust(Adjustments),

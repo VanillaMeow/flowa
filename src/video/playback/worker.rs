@@ -11,7 +11,7 @@ use anyhow::{Result, ensure};
 
 use super::{queues::BYTE_LIMIT, state::Shared};
 use crate::video::{
-    audio::{AudioBlock, AudioDecoder, BYTES_PER_SECOND, CHANNELS, RATE},
+    audio::{AudioBlock, AudioDecoder, BYTES_PER_SECOND, CHANNELS, RATE, Tempo},
     demux::Media,
     ffmpeg::{Packet, PacketKind, Receive, Sent, StreamInfo},
 };
@@ -21,6 +21,54 @@ const AUDIO_CHUNK_FRAMES: usize = 4096;
 
 static SILENCE: [f32; AUDIO_CHUNK_FRAMES * CHANNELS] =
     [0.0; AUDIO_CHUNK_FRAMES * CHANNELS];
+
+/// Stretches decoded audio for the playback rate and tracks how far input has reached
+#[derive(Default)]
+struct AudioFeed {
+    generation: u64,
+    epoch: u64,
+    /// The rate the filter was built for; zero until the first block
+    rate: f64,
+    tempo: Option<Tempo>,
+    /// Media time where the next input sample belongs, which the filter's output lags
+    fed_end: Option<f64>,
+}
+
+impl AudioFeed {
+    /// Starts over after a seek or rate change, with a filter for the new rate
+    fn sync(&mut self, generation: u64, epoch: u64, rate: f64) -> Result<()> {
+        if self.generation == generation && self.epoch == epoch && self.rate == rate {
+            return Ok(());
+        }
+
+        self.generation = generation;
+        self.epoch = epoch;
+        self.rate = rate;
+        self.fed_end = None;
+        self.tempo = None;
+
+        if (rate - 1.0).abs() > f64::EPSILON {
+            self.tempo = Some(Tempo::new(rate)?);
+        }
+
+        Ok(())
+    }
+
+    /// Forces the next block to rebuild the filter, as after its input ended
+    fn invalidate(&mut self) {
+        self.rate = 0.0;
+        self.tempo = None;
+    }
+}
+
+/// Where the first output sample of a write belongs in media time
+#[derive(Clone, Copy)]
+enum Start {
+    /// Exactly here, as for audio that is not stretched
+    At(f64),
+    /// Right after the audio already queued, or here when nothing is
+    After(f64),
+}
 
 pub(super) fn spawn(path: PathBuf, shared: Arc<Shared>) -> Result<JoinHandle<()>> {
     Ok(thread::Builder::new()
@@ -42,6 +90,7 @@ pub(super) fn spawn(path: PathBuf, shared: Arc<Shared>) -> Result<JoinHandle<()>
 fn run(path: &Path, shared: &Shared) -> Result<()> {
     let mut media = Media::open(path, Arc::clone(&shared.interrupt))?;
     let mut audio = media.audio_stream().map(AudioDecoder::open).transpose()?;
+    let mut feed = AudioFeed::default();
     let stream = media.copy_stream()?;
     shared.lock().stream = Some(stream);
     shared.notify();
@@ -76,7 +125,7 @@ fn run(path: &Path, shared: &Shared) -> Result<()> {
             Err(error) => return Err(error),
         };
         let Some(packet) = packet else {
-            finish_input(audio.as_mut(), &media.info, shared, generation)?;
+            finish_input(audio.as_mut(), &mut feed, &media.info, shared, generation)?;
             continue;
         };
 
@@ -86,7 +135,8 @@ fn run(path: &Path, shared: &Shared) -> Result<()> {
             }
             PacketKind::Audio if !shared.lock().audio_disabled => {
                 if let Some(audio) = &mut audio {
-                    feed_audio(audio, &media.info, Some(&packet), shared, generation)?;
+                    let input = (&media.info, Some(&packet));
+                    feed_audio(audio, &mut feed, input, shared, generation)?;
                 }
             }
             PacketKind::Audio | PacketKind::Other => {}
@@ -158,12 +208,14 @@ fn apply_seek(
 
 fn finish_input(
     audio: Option<&mut AudioDecoder>,
+    feed: &mut AudioFeed,
     info: &StreamInfo,
     shared: &Shared,
     generation: u64,
 ) -> Result<()> {
     if let Some(audio) = audio {
-        feed_audio(audio, info, None, shared, generation)?;
+        feed_audio(audio, feed, (info, None), shared, generation)?;
+        finish_stretching(feed, shared, generation)?;
     }
 
     let mut state = shared.lock();
@@ -178,10 +230,35 @@ fn finish_input(
     Ok(())
 }
 
+/// Releases what the tempo filter still holds once the audio stream has ended
+fn finish_stretching(
+    feed: &mut AudioFeed,
+    shared: &Shared,
+    generation: u64,
+) -> Result<()> {
+    let (Some(tempo), Some(fed_end)) = (feed.tempo.as_mut(), feed.fed_end) else {
+        return Ok(());
+    };
+    let mut output = Vec::new();
+    tempo.finish(&mut output)?;
+
+    let (epoch, rate) = (feed.epoch, feed.rate);
+    feed.invalidate();
+    put_audio(
+        shared,
+        &output,
+        Start::After(fed_end),
+        rate,
+        (generation, epoch),
+    )?;
+
+    Ok(())
+}
+
 fn feed_audio(
     audio: &mut AudioDecoder,
-    info: &StreamInfo,
-    packet: Option<&Packet>,
+    feed: &mut AudioFeed,
+    (info, packet): (&StreamInfo, Option<&Packet>),
     shared: &Shared,
     generation: u64,
 ) -> Result<()> {
@@ -192,19 +269,20 @@ fn feed_audio(
 
         match audio.send(packet)? {
             Sent::Again => {
-                if !drain_audio(audio, info, shared, generation)? {
+                if !drain_audio(audio, feed, info, shared, generation)? {
                     return Ok(());
                 }
             }
             Sent::Accepted | Sent::End => break,
         }
     }
-    drain_audio(audio, info, shared, generation)?;
+    drain_audio(audio, feed, info, shared, generation)?;
     Ok(())
 }
 
 fn drain_audio(
     audio: &mut AudioDecoder,
+    feed: &mut AudioFeed,
     info: &StreamInfo,
     shared: &Shared,
     generation: u64,
@@ -212,7 +290,7 @@ fn drain_audio(
     while !shared.stopped() {
         match audio.receive()? {
             Receive::Item(block) => {
-                if !queue_block(&block, info, shared, generation)? {
+                if !queue_block(&block, feed, info, shared, generation)? {
                     return Ok(false);
                 }
             }
@@ -224,21 +302,30 @@ fn drain_audio(
 
 fn queue_block(
     block: &AudioBlock,
+    feed: &mut AudioFeed,
     info: &StreamInfo,
     shared: &Shared,
     generation: u64,
 ) -> Result<bool> {
-    let (floor, mut previous) = {
+    let (floor, queued_end, epoch, rate) = {
         let mut state = shared.lock();
         if generation != state.generation {
             return Ok(false);
         }
-        let previous = match state.clock.audio_end {
+        let queued_end = match state.clock.audio_end {
             Some(end) => end,
             None => state.position(Instant::now())?,
         };
-        (state.clock.floor, previous)
+        (
+            state.clock.floor,
+            queued_end,
+            state.rate_epoch,
+            state.clock.rate(),
+        )
     };
+    feed.sync(generation, epoch, rate)?;
+
+    let mut previous = feed.fed_end.unwrap_or(queued_end);
     let position = block.position(info, previous);
     ensure!(position.is_finite(), "Invalid audio timestamp");
     let frames = block.samples().len() / CHANNELS;
@@ -255,25 +342,57 @@ fn queue_block(
         if gap == 0 {
             break;
         }
-        if !put_audio(shared, &SILENCE[..gap * CHANNELS], previous, generation)? {
+        let silence = &SILENCE[..gap * CHANNELS];
+        if !stretch_audio(shared, feed, silence, previous, (generation, epoch))? {
             return Ok(false);
         }
         previous += gap as f64 / RATE as f64;
+        feed.fed_end = Some(previous);
     }
 
-    put_audio(shared, samples, position, generation)
+    if !stretch_audio(shared, feed, samples, position, (generation, epoch))? {
+        return Ok(false);
+    }
+    feed.fed_end = Some(position + (samples.len() / CHANNELS) as f64 / RATE as f64);
+
+    Ok(true)
 }
 
+/// Queues samples that start at `position`, stretched first when the rate is not one
+fn stretch_audio(
+    shared: &Shared,
+    feed: &mut AudioFeed,
+    samples: &[f32],
+    position: f64,
+    tags: (u64, u64),
+) -> Result<bool> {
+    let Some(tempo) = &mut feed.tempo else {
+        return put_audio(shared, samples, Start::At(position), 1.0, tags);
+    };
+
+    let mut output = Vec::new();
+    tempo.push(samples, &mut output)?;
+
+    put_audio(shared, &output, Start::After(position), feed.rate, tags)
+}
+
+/// Queues output samples, each covering `rate` frames of media time
+///
+/// Returns false once a seek or rate change has made them stale
 fn put_audio(
     shared: &Shared,
     samples: &[f32],
-    mut position: f64,
-    generation: u64,
+    start: Start,
+    rate: f64,
+    (generation, epoch): (u64, u64),
 ) -> Result<bool> {
+    let mut position = None;
+
     for chunk in samples.chunks(AUDIO_CHUNK_FRAMES * CHANNELS) {
         let mut state = shared.lock();
         loop {
-            if shared.stopped() || generation != state.generation {
+            let stale = generation != state.generation || epoch != state.rate_epoch;
+            if shared.stopped() || stale {
                 return Ok(false);
             }
 
@@ -284,11 +403,11 @@ fn put_audio(
             }
 
             // Startup allows delayed video decoders to receive enough packets to produce a frame
-            let limit = if state.started {
-                BYTES_PER_SECOND / 3
-            } else {
-                BYTES_PER_SECOND * 2
-            };
+            let seconds = if state.started { 1. / 3. } else { 2. };
+
+            // Slow rates keep as much media queued as normal speed, so video reads ahead
+            let stretch = (1. / state.clock.rate()).max(1.);
+            let limit = (BYTES_PER_SECOND as f64 * seconds * stretch) as usize;
             if let Some(audio) = &state.audio
                 && audio.queued_bytes()? <= limit
             {
@@ -298,10 +417,21 @@ fn put_audio(
             state = shared.wait(state);
         }
 
-        position += (chunk.len() / CHANNELS) as f64 / RATE as f64;
-        state.clock.audio_end = Some(position);
+        let begin = *position.get_or_insert(match start {
+            Start::At(position) => position,
+            Start::After(position) => state.clock.audio_end.unwrap_or(position),
+        });
+        let end = begin + (chunk.len() / CHANNELS) as f64 * rate / RATE as f64;
+        position = Some(end);
+        state.clock.audio_end = Some(end);
         drop(state);
         shared.notify();
     }
-    Ok(!shared.stopped() && shared.lock().generation == generation)
+
+    let state = shared.lock();
+    Ok(
+        !shared.stopped()
+            && state.generation == generation
+            && state.rate_epoch == epoch,
+    )
 }

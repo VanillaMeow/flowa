@@ -19,7 +19,7 @@ See [BACKENDS.md](BACKENDS.md) for the roadmap.
 | `src/video/playback/` | Playback engine, demux and audio worker, clock, and the service thread |
 | `src/video/presentation/` | libplacebo rendering into wgpu textures, and copies of frames it can't sample |
 | `src/video/demux/` | Opening files and reading and seeking packets |
-| `src/video/audio/` | Audio decoding, resampling, and SDL3 output |
+| `src/video/audio/` | Audio decoding, resampling, pitch-preserving tempo changes, and SDL3 output |
 | `src/video/gpu/` | Creates the Vulkan device with only the queues flowa uses and shares it with wgpu |
 | `src/video/ffmpeg/` | FFmpeg wrappers that know nothing about decoder backends |
 | `src/video/ffi/` | Generated FFmpeg, libplacebo, and SDL3 bindings |
@@ -50,6 +50,12 @@ them redraws a paused frame.
 Rendering always needs Vulkan, even when decoding in software.
 
 Without an audio device, playback continues silently.
+
+Playback speed runs from 0.25× to 4×, from the speed button, the context menu, or
+`[`, `]`, and Backspace. FFmpeg's `atempo` filter stretches audio so voices keep
+their pitch, and the clock counts each second of queued audio or wall time as
+`rate` media seconds. Changing speed drops the audio queued for the old rate, so
+sound pauses for a moment while video continues.
 
 Period and comma step one frame forward or back, pausing first. A forward step
 shows the next decoded frame and moves the clock to it. Audio queued before the

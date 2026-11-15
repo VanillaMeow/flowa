@@ -56,6 +56,7 @@ impl Requests {
             matches!(
                 command,
                 PlayerCommand::Volume(_)
+                    | PlayerCommand::Rate(_)
                     | PlayerCommand::Decoder(_)
                     | PlayerCommand::Adjust(_)
             )

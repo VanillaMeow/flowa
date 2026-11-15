@@ -1,11 +1,13 @@
-//! Audio decoding, resampling to the output format, and SDL3 output
+//! Audio decoding, resampling to the output format, tempo changes, and SDL3 output
 
 mod decoder;
 mod output;
 mod resampler;
+mod tempo;
 
 pub(super) use decoder::{AudioBlock, AudioDecoder};
 pub(super) use output::{AudioOutput, AudioRuntime};
+pub(super) use tempo::Tempo;
 
 /// The output sample rate every source is resampled to
 pub(super) const RATE: usize = 48_000;

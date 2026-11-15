@@ -41,13 +41,14 @@ impl VideoSession {
         }
     }
 
-    /// Replaces the selected file while keeping the user's volume
+    /// Replaces the selected file while keeping the user's volume and speed
     pub fn open(&mut self, path: &Path) {
         self.close();
         self.state = VideoState {
             active: true,
             loading: true,
             volume: self.state.volume,
+            rate: self.state.rate,
             ..Default::default()
         };
 
@@ -77,6 +78,7 @@ impl VideoSession {
 
         self.state = VideoState {
             volume: self.state.volume,
+            rate: self.state.rate,
             ..Default::default()
         };
         self.texture = None;
@@ -175,8 +177,22 @@ impl VideoSession {
         self.command(PlayerCommand::Volume(volume.clamp(0., 100.)))
     }
 
+    /// Sets playback speed, kept for later videos, with the pitch of audio unchanged
+    pub fn set_rate(&mut self, rate: f64) -> Result<()> {
+        let slowest = super::PLAYBACK_RATES[0];
+        let fastest = super::PLAYBACK_RATES[super::PLAYBACK_RATES.len() - 1];
+        let rate = rate.clamp(slowest, fastest);
+
+        self.command(PlayerCommand::Rate(rate))?;
+        self.state.rate = rate;
+
+        Ok(())
+    }
+
     fn command(&mut self, command: PlayerCommand) -> Result<()> {
-        if let PlayerCommand::Seek(value) | PlayerCommand::Volume(value) = command
+        if let PlayerCommand::Seek(value)
+        | PlayerCommand::Volume(value)
+        | PlayerCommand::Rate(value) = command
             && !value.is_finite()
         {
             bail!("Playback control must be finite");

@@ -249,6 +249,21 @@ pub const PREVIOUS_FRAME: Action = Action::new(
     Command::Playback(PlaybackCommand::StepFrames(-1)),
     &[key(Key::Comma)],
 );
+pub const FASTER: Action = Action::new(
+    "Faster",
+    Command::Playback(PlaybackCommand::StepRate(1)),
+    &[key(Key::CloseBracket)],
+);
+pub const SLOWER: Action = Action::new(
+    "Slower",
+    Command::Playback(PlaybackCommand::StepRate(-1)),
+    &[key(Key::OpenBracket)],
+);
+pub const NORMAL_SPEED: Action = Action::new(
+    "Normal speed",
+    Command::Playback(PlaybackCommand::SetRate(1.)),
+    &[key(Key::Backspace)],
+);
 pub const SLIDESHOW: Action = Action::new(
     "Slideshow",
     Command::Playback(PlaybackCommand::ToggleSlideshow),
@@ -304,6 +319,9 @@ pub const VIEWER: &[Action] = &[
     PLAY,
     NEXT_FRAME,
     PREVIOUS_FRAME,
+    FASTER,
+    SLOWER,
+    NORMAL_SPEED,
     COPY_PATH,
     COPY_IMAGE,
     EXPORT,

@@ -211,6 +211,7 @@ impl Player {
             video: VideoState {
                 loading: path.is_some(),
                 volume: self.status.video.volume,
+                rate: self.status.video.rate,
                 ..VideoState::default()
             },
             ..Snapshot::default()

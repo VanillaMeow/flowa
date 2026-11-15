@@ -100,7 +100,7 @@ Windows. Without it, `video/unsupported.rs` supplies an uninhabited player, so
 `VideoSession` has one implementation that reports playback as unavailable.
 
 `video/demux/` opens the file, selects the streams, and reads and seeks packets.
-`video/audio/` decodes and resamples audio and owns SDL3 output. A video with an
+`video/audio/` decodes and resamples audio, stretches it for the playback rate with FFmpeg's `atempo` filter, and owns SDL3 output. A video with an
 audio track still plays, silently and timed by the wall clock, when no audio output
 device can be opened. Input owners retain stable interruption callbacks through
 close. Codec contexts keep their setup, including any callback storage, until

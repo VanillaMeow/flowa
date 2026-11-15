@@ -8,6 +8,7 @@ use std::{
 };
 
 const MEDIA_LIBRARIES: &[(&str, &str)] = &[
+    ("libavfilter", "12"),
     ("libavformat", "63"),
     ("libavcodec", "63"),
     ("libavutil", "61"),

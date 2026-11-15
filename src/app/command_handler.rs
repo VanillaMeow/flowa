@@ -5,6 +5,7 @@ use anyhow::Result;
 use crate::{
     services::file_actions::{self, Task},
     settings::SortOrder,
+    video,
     viewer::adjustments::Adjustments,
 };
 
@@ -116,6 +117,10 @@ impl Flowa {
             PlaybackCommand::SetVolume(volume) => {
                 let result = self.video.set_volume(volume);
                 self.report(result);
+            }
+            PlaybackCommand::SetRate(rate) => self.set_rate(rate),
+            PlaybackCommand::StepRate(steps) => {
+                self.set_rate(video::step_rate(self.video.state.rate, steps));
             }
             PlaybackCommand::ToggleSlideshow => self.toggle_slideshow(),
         }
@@ -261,6 +266,15 @@ impl Flowa {
         } else {
             self.toggle_slideshow();
         }
+    }
+
+    fn set_rate(&mut self, rate: f64) {
+        if !self.video.available() {
+            return;
+        }
+
+        let result = self.video.set_rate(rate);
+        self.report(result);
     }
 
     fn step_frames(&mut self, frames: i32) {
