@@ -26,8 +26,13 @@ pub enum FileCommand {
     Reveal,
     RequestRename,
     RequestTrash,
-    ConfirmRename { path: PathBuf, name: String },
+    ConfirmRename {
+        path: PathBuf,
+        name: String,
+    },
     ConfirmTrash(PathBuf),
+    /// Offers the file to the application under the pointer while the button is held
+    DragOut(PathBuf),
 }
 
 /// Moving through and ordering the current folder

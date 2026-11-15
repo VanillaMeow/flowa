@@ -57,6 +57,10 @@ impl Flowa {
             FileCommand::ConfirmTrash(path) => {
                 self.start_task(Task::Trash(path), "Moving to trash…");
             }
+            FileCommand::DragOut(path) => {
+                let result = self.drag_out.start(&[path]);
+                self.report(result);
+            }
         }
     }
 

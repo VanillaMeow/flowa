@@ -10,7 +10,7 @@ Flowa is one Rust crate. `src/main.rs` handles the native entry point, codec reg
 | `viewer/` | Viewing state and rules | `browser.rs`, `catalog.rs`, `formats.rs`, `image_session.rs`, `animation.rs`, `slideshow.rs`, `transform.rs`, `vector.rs` |
 | `ui/` | Egui components, styling, input, and drawing | `viewer_ui.rs`, `canvas.rs`, `filmstrip.rs`, `toolbar.rs`, `inspector.rs`, `dialogs.rs`, `preferences.rs`, `keyboard.rs`, `theme.rs`, `style.rs`, `widgets.rs`, `icons.rs` |
 | `ui/rendering/` | GPU textures, drawing geometry, and the color adjustment shader | `image_renderer.rs`, `image_texture.rs`, `adjusted.rs`, `icon_cache.rs`, `geometry.rs` |
-| `services/` | Filesystem access, codecs, desktop integration, and background workers | `folder_scan.rs`, `image_decode/`, `image_loader/mod.rs`, `worker.rs`, `tiles.rs`, `thumbnails.rs`, `file_actions.rs` |
+| `services/` | Filesystem access, codecs, desktop integration, and background workers | `folder_scan.rs`, `image_decode/`, `image_loader/mod.rs`, `worker.rs`, `tiles.rs`, `thumbnails.rs`, `file_actions.rs`, `drag_out/` |
 | `video/` | FFmpeg media ownership, decoding, playback workers, subtitles, and native GPU presentation | `session.rs`, `decoding/`, `playback/`, `presentation/`, `demux/`, `audio/`, `subtitles/`, `gpu/`, `ffmpeg/`, `ffi/`, `thumbnail.rs` |
 | `settings/` | Configuration values and persistence | `model.rs`, `store.rs` |
 | `utils/` | General helpers with no application, viewer, or UI dependencies | `format.rs`, `filename.rs`, `size.rs` |
@@ -159,6 +159,10 @@ Each tile has a source rectangle and a texture. The renderer calculates visible 
 Pixel sizes are `[u32; 2]` outside the UI, which uses egui's `Vec2`. `utils/size.rs` fits sizes into boxes, either shrinking only or scaling both ways, and `services/resize.rs` resamples pixels.
 
 `VectorFile` parses SVGs into a `viewer/vector.rs` `VectorImage`, which renders any region at any scale. A decoded SVG keeps it beside pixels at the intrinsic size, which copying and exporting use. Its preview and thumbnail are rendered to fill their full size, and fitting always enlarges it. A `TileSource` is either raster pixels, which stop adding detail at one sample per pixel, or a `VectorImage`, which renders tiles at finer levels past 100% zoom so SVGs stay sharp at any magnification.
+
+## Dragging files out
+
+Winit accepts dropped files but cannot start a drag, so `services/drag_out/` adds a drag source per Linux display protocol, built from the window handles at startup. On Wayland it attaches a second event queue to the window's connection with its own seat, pointer, and data device; pointer events reach every pointer object of a client, so it knows the press serial that `start_drag` must name, and a thread answers the compositor's data requests. On X11 the UI thread releases winit's automatic pointer grab through Xlib, and a thread with its own connection grabs the pointer, speaks XDND to aware windows under it, and serves the file list as `XdndSelection`. Either way the files go as a `text/uri-list`. The window never sees the button release that ends the drag, so the next frame's raw input gets one added. Without a drag source, as on other platforms, filmstrip items keep dragging to scroll.
 
 ## Persistence and file operations
 

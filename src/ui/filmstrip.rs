@@ -11,7 +11,7 @@ use egui::{
 };
 
 use crate::{
-    app::{BrowseCommand, Command},
+    app::{BrowseCommand, Command, FileCommand},
     services::{
         thumbnails::{ThumbnailRequest, ThumbnailWorker},
         worker::Generation,
@@ -42,6 +42,8 @@ pub struct Filmstrip {
     pending: HashSet<PathBuf>,
     order: Vec<PathBuf>,
     scroll_to_current: bool,
+    /// Items can be dragged into other applications; otherwise dragging scrolls
+    pub draggable: bool,
 }
 
 impl Filmstrip {
@@ -56,6 +58,7 @@ impl Filmstrip {
             pending: HashSet::new(),
             order: Vec::new(),
             scroll_to_current: false,
+            draggable: false,
         }
     }
 
@@ -186,7 +189,9 @@ impl Filmstrip {
 
             let response = self.show_item(ui, entry, index, rect, selected, colors);
 
-            if response.clicked() {
+            if response.drag_started() {
+                commands.push(FileCommand::DragOut(entry.path.clone()).into());
+            } else if response.clicked() {
                 clicked = Some(index);
             } else if response.hovered() && !selected {
                 commands.push(BrowseCommand::Preload(index).into());
@@ -208,7 +213,12 @@ impl Filmstrip {
         selected: bool,
         colors: Colors,
     ) -> egui::Response {
-        let response = ui.interact(rect, ui.scope_id().with(index), Sense::click());
+        let sense = if self.draggable {
+            Sense::click_and_drag()
+        } else {
+            Sense::click()
+        };
+        let response = ui.interact(rect, ui.scope_id().with(index), sense);
         response.widget_info(|| {
             egui::WidgetInfo::labeled(egui::Role::Button, true, &entry.name)
         });

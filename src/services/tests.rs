@@ -299,3 +299,22 @@ mod tiles {
         assert_eq!(raster.max_density(), 1.0);
     }
 }
+
+mod drag_out {
+    use std::path::PathBuf;
+
+    use crate::services::drag_out::uri_list;
+
+    #[test]
+    fn dragged_files_become_percent_encoded_file_uris() {
+        let list = uri_list(&[
+            PathBuf::from("/home/me/Pictures/cat photo #1.jpg"),
+            PathBuf::from("/tmp/naïve.png"),
+        ]);
+
+        assert_eq!(
+            String::from_utf8(list).expect("ASCII"),
+            "file:///home/me/Pictures/cat%20photo%20%231.jpg\r\nfile:///tmp/na%C3%AFve.png\r\n"
+        );
+    }
+}

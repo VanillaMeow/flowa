@@ -1444,6 +1444,7 @@ dependencies = [
  "open",
  "pkg-config",
  "pollster",
+ "raw-window-handle",
  "resvg",
  "rfd",
  "serde",
@@ -1451,6 +1452,10 @@ dependencies = [
  "strum",
  "tempfile",
  "trash",
+ "wayland-backend",
+ "wayland-client",
+ "x11-dl",
+ "x11rb",
  "zbus",
 ]
 

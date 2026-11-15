@@ -7,6 +7,7 @@ use std::{
 
 use crate::{
     services::{
+        drag_out::DragOut,
         file_actions::Actions,
         folder_scan::FolderScanner,
         image_loader::{LoadRequest, Loader},
@@ -40,6 +41,7 @@ pub struct Flowa {
     pub(super) scanner: FolderScanner,
     pub(super) loader: Loader,
     pub(super) actions: Actions,
+    pub(super) drag_out: DragOut,
     pub(super) slideshow: Slideshow,
     pub(super) busy: Option<String>,
 
@@ -84,6 +86,9 @@ impl Flowa {
             app.ui.canvas.renderer.attach_gpu(graphics);
         }
 
+        app.drag_out = DragOut::new(cc, cc, &cc.egui_ctx);
+        app.ui.filmstrip.draggable = app.drag_out.available();
+
         if video_device {
             app.video = VideoSession::new(cc);
 
@@ -125,6 +130,7 @@ impl Flowa {
             scanner: FolderScanner::new(),
             loader,
             actions: Actions::new(ctx.clone()),
+            drag_out: DragOut::unavailable(),
             slideshow: Slideshow::new(),
             busy: None,
             colors,
@@ -336,6 +342,23 @@ impl eframe::App for Flowa {
         self.maintain_settings(&ctx);
 
         ctx.request_repaint_after(MAINTENANCE_INTERVAL);
+    }
+
+    /// Releases the pointer button that a finished drag kept from reaching the window
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        if !self.drag_out.take_finished() {
+            return;
+        }
+
+        let pos = ctx
+            .input(|input| input.pointer.latest_pos())
+            .unwrap_or_default();
+        raw_input.events.push(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: ctx.input(|input| input.modifiers),
+        });
     }
 
     fn on_exit(&mut self) {

@@ -28,6 +28,7 @@ lcms2 = { version = "6", features = ["static"] }
 libheif-rs = { version = "3", optional = true, default-features = false, features = ["v1_17", "image"] }
 natord = "1"
 open = "5"
+raw-window-handle = "0.6"
 resvg = "0.49"
 rfd = { version = "0.18", default-features = false, features = ["xdg-portal"] }
 serde = { version = "1", features = ["derive"] }
@@ -43,6 +44,10 @@ pollster = { version = "1", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
+wayland-backend = { version = "0.3", features = ["client_system"] }
+wayland-client = "0.31"
+x11-dl = "2"
+x11rb = "0.13"
 zbus = "5"
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
