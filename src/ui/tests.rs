@@ -823,6 +823,95 @@ mod screenshots {
             });
         })?;
 
+        let subtitles = {
+            let mut cues = crate::video::subtitles::SubtitleCues::default();
+            for (text, top) in [
+                ("A line of dialogue that runs a little long", false),
+                ("Sign", true),
+            ] {
+                cues.insert(crate::video::subtitles::Cue {
+                    start: 0.,
+                    end: 9.,
+                    content: crate::video::subtitles::CueContent::Text(
+                        crate::video::subtitles::SubtitleText {
+                            spans: vec![crate::video::subtitles::Span {
+                                text: text.into(),
+                                italic: !top,
+                            }],
+                            top,
+                        },
+                    ),
+                });
+            }
+            cues.active(1.)
+        };
+        let mut overlay = crate::ui::subtitles::SubtitleOverlay::default();
+        screenshot(&graphics, "subtitles", [960, 540], |ui| {
+            let picture = ui.max_rect();
+            ui.painter().rect_filled(
+                picture,
+                0.,
+                egui::Color32::from_rgb(170, 160, 140),
+            );
+            overlay.paint(ui.painter(), picture, picture, &subtitles);
+        })?;
+
+        let tracked = VideoState {
+            tracks: crate::video::Tracks {
+                audio: ["English · AAC stereo", "Commentary · Japanese · AAC mono"]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, label)| crate::video::Track {
+                        index: index + 1,
+                        label: label.into(),
+                        default: index == 0,
+                        forced: false,
+                        external: false,
+                    })
+                    .collect(),
+                subtitles: vec![crate::video::Track {
+                    index: 3,
+                    label: "French · SRT · External".into(),
+                    default: false,
+                    forced: false,
+                    external: true,
+                }],
+            },
+            audio_track: Some(1),
+            subtitle_track: Some(3),
+            ..playing()
+        };
+        screenshot(&graphics, "tracks", [520, 300], |ui| {
+            popup(ui, |ui| {
+                crate::ui::tracks::menu(ui, &tracked, colors, &mut Vec::new())
+            });
+        })?;
+
+        for width in [1200, 760] {
+            let browser = crate::viewer::browser::Browser::new();
+            let image = crate::viewer::image_session::ImageSession::new();
+            let canvas =
+                crate::ui::canvas::ImageCanvas::new(egui::Context::default(), false);
+            let settings = crate::settings::Settings::default();
+            let video = playing();
+            screenshot(&graphics, &format!("toolbar-{width}"), [width, 120], |ui| {
+                let state = crate::ui::toolbar::ToolbarState {
+                    browser: &browser,
+                    image: &image,
+                    video: &video,
+                    canvas: &canvas,
+                    settings: &settings,
+                    colors,
+                    fullscreen: false,
+                    preferences_open: false,
+                    inspector_open: false,
+                    busy: None,
+                    slideshow: false,
+                };
+                crate::ui::toolbar::show(ui, &state, &mut Vec::new());
+            })?;
+        }
+
         for (name, compact, width) in [
             ("controls-compact", true, 1200),
             ("controls-compact-narrow", true, 640),
