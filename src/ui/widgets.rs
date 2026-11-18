@@ -33,6 +33,24 @@ pub fn section<R>(
     inner
 }
 
+/// Menu settings for popups holding sliders and number fields, which close only when
+/// the user clicks outside them
+pub fn adjusting_menu() -> egui::containers::menu::MenuConfig {
+    egui::containers::menu::MenuConfig::new()
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+}
+
+/// A submenu that stays open while its sliders and fields are used
+pub fn adjusting_submenu<R>(
+    ui: &mut Ui,
+    label: &str,
+    add_contents: impl FnOnce(&mut Ui) -> R,
+) {
+    egui::containers::menu::SubMenuButton::new(label)
+        .config(adjusting_menu())
+        .ui(ui, add_contents);
+}
+
 /// A small uppercase label above a value or section
 pub fn caption(ui: &mut Ui, label: &str, colors: Colors) {
     ui.label(

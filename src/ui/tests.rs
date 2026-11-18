@@ -511,6 +511,61 @@ mod adjustments {
         commands
     }
 
+    fn click(pos: Pos2) -> Vec<Event> {
+        [true, false]
+            .map(|pressed| Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            })
+            .into_iter()
+            .chain([Event::PointerMoved(pos)])
+            .collect()
+    }
+
+    fn button_frame(ctx: &egui::Context, events: Vec<Event>) -> Rect {
+        let colors = theme::colors(Theme::Charcoal, Accent::Theme, true);
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800., 600.))),
+            events,
+            ..Default::default()
+        };
+        let mut rect = Rect::NOTHING;
+        let mut output = ctx.run_ui(input, |ui| {
+            let current = Adjustments::NEUTRAL;
+            rect = adjustments::button(ui, current, colors, &mut Vec::new()).rect;
+        });
+        output.textures_delta.clear();
+
+        rect
+    }
+
+    #[test]
+    fn clicks_inside_the_popup_keep_it_open_and_clicks_outside_close_it() {
+        let ctx = egui::Context::default();
+        let button = button_frame(&ctx, Vec::new());
+
+        button_frame(&ctx, click(button.center()));
+        button_frame(&ctx, Vec::new());
+        assert!(egui::Popup::is_any_open(&ctx), "The popup did not open");
+
+        // The first slider row sits just below the button
+        button_frame(&ctx, click(button.center_bottom() + vec2(60., 20.)));
+        button_frame(&ctx, Vec::new());
+        assert!(
+            egui::Popup::is_any_open(&ctx),
+            "A click inside closed the popup"
+        );
+
+        button_frame(&ctx, click(Pos2::new(780., 580.)));
+        button_frame(&ctx, Vec::new());
+        assert!(
+            !egui::Popup::is_any_open(&ctx),
+            "A click outside left it open"
+        );
+    }
+
     #[test]
     fn delete_on_a_focused_slider_resets_only_that_value() {
         let ctx = egui::Context::default();

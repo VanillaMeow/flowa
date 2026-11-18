@@ -230,6 +230,10 @@ impl FeedState {
         }
 
         let frames = self.read.min(self.stretch.input_latency() * 2);
+        if frames == 0 {
+            return;
+        }
+
         let first = (self.read - frames) * CHANNELS;
 
         self.input.clear();
@@ -282,7 +286,10 @@ impl FeedState {
         let (needed, produced) = if available as f64 >= wanted.floor() {
             (wanted.floor() as usize, frames)
         } else {
-            (available, (available as f64 / self.rate) as usize)
+            (
+                available,
+                ((available as f64 / self.rate) as usize).min(frames),
+            )
         };
 
         self.carry = if produced == frames {

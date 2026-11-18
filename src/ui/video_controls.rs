@@ -15,7 +15,7 @@ use super::{
     icons::{self, Icon},
     style::{margin, size, space},
     theme::Colors,
-    tracks,
+    tracks, widgets,
 };
 
 const TIMELINE_HEIGHT: f32 = 22.;
@@ -314,8 +314,9 @@ impl VideoControls {
         commands: &mut Vec<Command>,
     ) {
         let button = egui::Button::new("").min_size(vec2(size::CONTROL, size::CONTROL));
-        let (response, _) =
-            egui::containers::menu::MenuButton::from_button(button).ui(ui, |ui| {
+        let (response, _) = egui::containers::menu::MenuButton::from_button(button)
+            .config(widgets::adjusting_menu())
+            .ui(ui, |ui| {
                 ui.label(format!("Volume · {:.0}%", state.volume));
                 ui.horizontal(|ui| {
                     self.mute_button(ui, state, commands);
@@ -376,6 +377,7 @@ fn speed_menu(ui: &mut egui::Ui, rate: f64, commands: &mut Vec<Command>) {
     let label = RichText::new(rate_label(rate)).monospace();
     let button = egui::Button::new(label).min_size(vec2(SPEED_WIDTH, size::CONTROL));
     let (response, _) = egui::containers::menu::MenuButton::from_button(button)
+        .config(widgets::adjusting_menu())
         .ui(ui, |ui| speed_options(ui, rate, commands));
 
     let shortcuts = format!(

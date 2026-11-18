@@ -21,6 +21,7 @@ use std::{
 use anyhow::Result;
 
 /// The MIME type file managers and chat apps accept for dropped files
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const URI_LIST: &str = "text/uri-list";
 
 /// Starts drags of files out of the window, when the display protocol allows it

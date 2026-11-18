@@ -13,6 +13,7 @@ use super::{
     icons::{self, Icon},
     style::{size, space, text},
     theme::Colors,
+    widgets,
 };
 
 const SLIDER_WIDTH: f32 = 150.;
@@ -78,11 +79,12 @@ pub fn button(
     current: Adjustments,
     colors: Colors,
     commands: &mut Vec<Command>,
-) {
+) -> egui::Response {
     let button = egui::Button::new("")
         .min_size(Vec2::splat(size::CONTROL))
         .selected(!current.is_neutral());
     let (response, _) = egui::containers::menu::MenuButton::from_button(button)
+        .config(widgets::adjusting_menu())
         .ui(ui, |ui| controls(ui, current, colors, commands));
 
     icons::paint(
@@ -96,7 +98,7 @@ pub fn button(
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), "Adjust colors")
     });
-    response.on_hover_text("Adjust colors");
+    response.on_hover_text("Adjust colors")
 }
 
 /// The sliders and a reset button, for the toolbar popup and context menus

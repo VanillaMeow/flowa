@@ -17,7 +17,7 @@ use super::{
     icons::{self, Icon},
     style::{margin, size, space, text},
     theme::Colors,
-    tracks, video_controls,
+    tracks, video_controls, widgets,
 };
 
 /// The flower fills most of its button, like an app icon
@@ -125,7 +125,7 @@ fn adjustments_menu(
     state: &ToolbarState<'_>,
     commands: &mut Vec<Command>,
 ) {
-    ui.menu_button("Adjust colors", |ui| {
+    widgets::adjusting_submenu(ui, "Adjust colors", |ui| {
         adjustments::controls(ui, state.canvas.adjustments, state.colors, commands);
     });
 }
@@ -413,7 +413,7 @@ fn speed_menu(
     state: &ToolbarState<'_>,
     commands: &mut Vec<Command>,
 ) {
-    ui.menu_button("Speed", |ui| {
+    widgets::adjusting_submenu(ui, "Speed", |ui| {
         video_controls::speed_options(ui, state.video.rate, commands);
     });
 }
