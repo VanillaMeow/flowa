@@ -82,6 +82,11 @@ impl CodecSetup for HardwareFormat {
         context.opaque = ptr::from_mut(&mut self.format).cast::<c_void>();
         context.thread_count = 1;
         context.thread_type = 0;
+
+        // Frames playback keeps for stepping back must not exhaust the surface pool
+        context.extra_hw_frames = (crate::video::decoding::RETAINED_HARDWARE_FRAMES
+            + super::super::HELD_HARDWARE_FRAMES)
+            as i32;
     }
 }
 

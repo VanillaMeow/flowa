@@ -80,9 +80,14 @@ stretcher, which cannot keep up unoptimized.
 The feed keeps about three seconds of played audio. Period and comma step one
 frame forward or back, pausing first. A forward step shows the next decoded frame
 and moves the clock and the feed to it. Resuming within the kept audio continues
-without reading the file again; resuming earlier seeks. A backward step seeks one
-frame duration back; seeking is frame-accurate, so it decodes from the previous
-keyframe.
+without reading the file again; resuming earlier seeks.
+
+Backward steps show frames kept from playback or earlier steps: twelve for hardware
+decoders, which get that many extra pool surfaces, and up to 256 MiB of software
+frames. Stepping forward again replays the frames stepped past. When the kept
+frames run out, the step seeks one frame duration back, which decodes from the
+previous keyframe, and keeps the frames decoded on the way, so the next steps are
+instant again.
 
 Not implemented yet: HDR output and full ASS styling.
 

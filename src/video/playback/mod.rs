@@ -3,6 +3,7 @@
 
 mod clock;
 mod engine;
+mod frame_history;
 mod mailbox;
 mod pipeline;
 mod playback_thread;

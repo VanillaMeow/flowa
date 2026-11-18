@@ -17,6 +17,13 @@ mod selection;
 mod software;
 
 pub(super) use capabilities::available_decoders;
+
+/// Decoded hardware frames playback may hold beyond what decoding needs, for stepping
+/// back without decoding again; hardware decoders add this many pool surfaces
+pub(super) const RETAINED_HARDWARE_FRAMES: usize = 12;
+/// Further frames held at once: the shown frame, the next one, and frames the GPU is
+/// still reading
+const HELD_HARDWARE_FRAMES: usize = 4;
 pub(super) use frame::{DecodedFrame, HardwareFrame, HardwareStorage};
 pub(super) use selection::{DecoderSelection, PacketSource, SourcePacket};
 pub(super) use software::{SoftwareCodec, Threads};

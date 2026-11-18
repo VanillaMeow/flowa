@@ -10,6 +10,7 @@ use std::{
 use anyhow::{Context, Result, ensure};
 
 use super::{
+    frame_history::{FrameHistory, TimedFrame},
     state::{PlaybackState, Seek, Shared},
     worker,
 };
@@ -51,11 +52,6 @@ impl Default for Snapshot {
     }
 }
 
-struct TimedFrame {
-    frame: DecodedFrame,
-    position: f64,
-}
-
 struct Resume {
     position: f64,
     paused: bool,
@@ -71,7 +67,12 @@ pub(super) struct Engine {
     path: Option<PathBuf>,
     resume: Option<Resume>,
     current: Option<TimedFrame>,
+    /// The next frame, waiting for its time
     pending: Option<TimedFrame>,
+    /// Frames around the current one, for stepping without decoding
+    history: FrameHistory,
+    /// Set while seeking for a backward step, so frames before the target are kept
+    backfill: bool,
     applied_generation: u64,
     frame_serial: u64,
     last_pts: f64,
@@ -99,6 +100,8 @@ impl Engine {
             resume: None,
             current: None,
             pending: None,
+            history: FrameHistory::default(),
+            backfill: false,
             applied_generation: 0,
             frame_serial: 0,
             last_pts: 0.0,
@@ -143,6 +146,8 @@ impl Engine {
         // The demux worker has joined before its frames and audio output are released
         self.pending = None;
         self.current = None;
+        self.history.clear();
+        self.backfill = false;
         self.decoder = None;
         self.frame_serial = 0;
         self.applied_generation = 0;
@@ -216,27 +221,75 @@ impl Engine {
         Ok(())
     }
 
-    /// Seeks one frame duration back per step from the shown frame, or from a backward
-    /// step that is still seeking
+    /// Shows frames kept from before the current one, then seeks for the rest
+    ///
+    /// The seek keeps every frame decoded on the way to its target, so the steps after
+    /// it are instant again
     fn step_back(
         &mut self,
         shared: &Shared,
         info: StreamInfo,
         frames: u32,
     ) -> Result<()> {
+        self.steps_forward = 0;
+
+        let settled = {
+            let state = shared.lock();
+            state.started && !state.seeking
+        };
+        let mut remaining = frames;
+
+        while settled && remaining > 0 && self.history.has_previous() {
+            self.show_previous();
+            remaining -= 1;
+        }
+
+        if remaining < frames {
+            let Some(position) = self.current.as_ref().map(|frame| frame.position)
+            else {
+                return Ok(());
+            };
+            let mut state = shared.lock();
+            state.clock.anchor(position, Instant::now());
+            state.feed.move_to(position);
+            drop(state);
+            shared.notify();
+        }
+
+        if remaining == 0 {
+            return Ok(());
+        }
+
         let shown = self
             .current
             .as_ref()
             .map(|frame| frame.position)
             .unwrap_or(shared.lock().clock.floor);
         let from = self.step_back_target.unwrap_or(shown);
-        let target = (from - info.frame_duration * f64::from(frames)).max(0.);
+        let target = (from - info.frame_duration * f64::from(remaining)).max(0.);
 
-        self.steps_forward = 0;
         self.seek(target)?;
         self.step_back_target = Some(target);
+        self.backfill = true;
 
         Ok(())
+    }
+
+    /// Swaps in the frame shown before the current one, keeping the current and next
+    /// frames for stepping forward again
+    fn show_previous(&mut self) {
+        let Some(previous) = self.history.previous() else {
+            return;
+        };
+
+        if let Some(pending) = self.pending.take() {
+            self.history.push_ahead(pending);
+        }
+        if let Some(current) = self.current.replace(previous) {
+            self.history.push_ahead(current);
+        }
+
+        self.frame_serial += 1;
     }
 
     pub fn seek(&mut self, seconds: f64) -> Result<()> {
@@ -276,6 +329,7 @@ impl Engine {
         // Keep current and its displayed texture until the requested frame replaces it
         shared.notify();
         self.step_back_target = None;
+        self.backfill = false;
         Ok(())
     }
 
@@ -438,6 +492,7 @@ impl Engine {
             preference,
         ));
         self.pending = None;
+        self.history.clear();
         Ok(())
     }
 
@@ -582,6 +637,7 @@ impl Engine {
                 decoder.flush();
             }
             self.pending = None;
+            self.history.clear();
             self.last_pts = state.clock.floor - stream.info.frame_duration;
             self.applied_generation = state.flushed_generation;
         }
@@ -595,6 +651,10 @@ impl Engine {
         };
 
         for _ in 0..MAX_FRAMES_PER_POLL {
+            if self.pending.is_none() {
+                self.pending = self.history.next();
+            }
+
             if self.pending.is_none() {
                 let Some(decoder) = &mut self.decoder else {
                     return Ok(());
@@ -627,7 +687,12 @@ impl Engine {
             let stepping = !starting && state.paused && self.steps_forward > 0;
 
             if pending.position + info.frame_duration * 0.5 < state.clock.floor {
-                self.pending = None;
+                // A backward step's seek keeps what it decodes before its target
+                if let Some(early) = self.pending.take()
+                    && self.backfill
+                {
+                    self.history.remember(early);
+                }
                 continue;
             }
             if !starting
@@ -638,8 +703,15 @@ impl Engine {
             }
 
             let position = pending.position;
-            self.current = self.pending.take();
+            let previous = std::mem::replace(&mut self.current, self.pending.take());
             self.frame_serial += 1;
+
+            // The frame shown before a seek belongs elsewhere in the video
+            if let Some(previous) = previous
+                && !starting
+            {
+                self.history.remember(previous);
+            }
             if stepping {
                 self.steps_forward -= 1;
                 state.clock.anchor(position, Instant::now());
@@ -649,6 +721,7 @@ impl Engine {
             }
             if starting {
                 self.step_back_target = None;
+                self.backfill = false;
                 let position = position.max(state.clock.floor);
                 state.clock.anchor(position, Instant::now());
                 state.started = true;
@@ -684,6 +757,7 @@ impl Engine {
             decoder.fall_back(&error)?;
         }
         self.pending = None;
+        self.history.clear();
 
         Ok(())
     }
@@ -987,6 +1061,62 @@ mod tests {
             (heard - resumed.video.position).abs() < 0.1,
             "Audio resumed at {heard}, away from the picture"
         );
+
+        engine.stop();
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "Requires Vulkan and ffmpeg with libx264"]
+    fn stepping_back_reuses_kept_frames_without_decoding_again() -> Result<()> {
+        let folder = tempfile::tempdir()?;
+        let clip = clip_with_audio(folder.path(), 10)?;
+        let mut engine = audible_engine(&clip)?;
+        pump(&mut engine, |state| state.video.position > 3.)?;
+
+        engine.toggle_pause()?;
+        let start = shown(&engine)?;
+
+        // Frames shown while playing come back on the very next poll
+        for step in 1..=10 {
+            engine.step(-1)?;
+            let state = engine.poll();
+            let expected = start - f64::from(step) * 0.1;
+            ensure!(
+                near(&engine, expected) && !state.video.seeking,
+                "Step back {step} was not instant: showing {:?}",
+                shown(&engine).ok()
+            );
+        }
+
+        // Stepping forward again replays them in order
+        for step in 1..=3 {
+            engine.step(1)?;
+            let expected = start - f64::from(10 - step) * 0.1;
+            pump_engine(&mut engine, |engine, _| near(engine, expected))?;
+        }
+
+        // A step that has to seek keeps what it decodes, so the next ones are instant
+        engine.seek(5.95)?;
+        pump_engine(&mut engine, |engine, state| {
+            near(engine, 5.9) || near(engine, 6.) && !state.video.seeking
+        })?;
+        let landed = shown(&engine)?;
+        engine.step(-1)?;
+        pump_engine(&mut engine, |engine, state| {
+            near(engine, landed - 0.1) && !state.video.seeking
+        })?;
+
+        for step in 2..=6 {
+            engine.step(-1)?;
+            engine.poll();
+            let expected = landed - f64::from(step) * 0.1;
+            ensure!(
+                near(&engine, expected),
+                "Step back {step} after a seek was not instant: showing {:?}",
+                shown(&engine).ok()
+            );
+        }
 
         engine.stop();
         Ok(())
