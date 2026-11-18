@@ -178,9 +178,13 @@ impl Engine {
         state.paused = paused;
         let restart = state.ended && !paused;
 
-        // Resuming before the audio still kept, as after stepping back, reads it again
+        // After steps the audio is realigned to the picture, and resuming before the
+        // audio still kept, as after stepping far back, reads it again
         let audible = state.audio.is_some() && state.audio_info.is_some();
-        let realign = !paused && audible && !state.feed.move_to(position);
+        let (heard, _) = state.heard()?;
+        let in_step = heard.is_some_and(|heard| (heard - position).abs() < 0.02);
+        let realign =
+            !paused && audible && !in_step && !state.realign_audio(position)?;
         if let Some(audio) = &state.audio {
             audio.pause(paused || !state.started)?;
         }
@@ -251,7 +255,7 @@ impl Engine {
             };
             let mut state = shared.lock();
             state.clock.anchor(position, Instant::now());
-            state.feed.move_to(position);
+            state.realign_audio(position)?;
             drop(state);
             shared.notify();
         }
@@ -717,7 +721,7 @@ impl Engine {
                 state.clock.anchor(position, Instant::now());
 
                 // Audio before the stepped frame is skipped, so resuming continues here
-                state.feed.move_to(position);
+                state.realign_audio(position)?;
             }
             if starting {
                 self.step_back_target = None;
@@ -1182,6 +1186,83 @@ mod tests {
             moving > still.position + 0.35,
             "Playback did not resume from zero"
         );
+
+        engine.stop();
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "Requires Vulkan and ffmpeg with libx264"]
+    fn toggling_pause_quickly_at_low_speed_neither_rewinds_nor_freezes() -> Result<()> {
+        let folder = tempfile::tempdir()?;
+        let clip = clip_with_audio(folder.path(), 30)?;
+        let mut engine = audible_engine(&clip)?;
+        pump(&mut engine, |state| state.video.position > 0.5)?;
+
+        for pitch in [SpeedPitch::Keep, SpeedPitch::Follow] {
+            engine.set_pitch(pitch)?;
+            engine.set_rate(0.25)?;
+            let before = follow_smoothly(&mut engine, 0.6)?.video.position;
+
+            for _ in 0..12 {
+                engine.toggle_pause()?;
+                follow_smoothly(&mut engine, 0.03)?;
+            }
+            let after = engine.poll().video;
+            ensure!(
+                !after.paused,
+                "An even number of toggles left playback paused"
+            );
+            ensure!(
+                after.position > before - 0.02,
+                "{pitch:?}: toggling moved the playhead back from {before} to {}",
+                after.position
+            );
+
+            let serial = engine.poll().frame_serial;
+            let state = follow_smoothly(&mut engine, 0.6)?;
+            ensure!(
+                state.frame_serial >= serial + 3,
+                "{pitch:?}: the picture froze after resuming"
+            );
+
+            let lag = state.video.position - shown(&engine)?;
+            ensure!(
+                lag < 0.1,
+                "{pitch:?}: the picture fell {lag} seconds behind"
+            );
+            engine.set_rate(1.)?;
+        }
+
+        engine.stop();
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "Requires Vulkan and ffmpeg with libx264"]
+    fn audible_video_pauses_at_its_end_at_any_pitch_setting() -> Result<()> {
+        let folder = tempfile::tempdir()?;
+        let clip = clip_with_audio(folder.path(), 30)?;
+        let mut engine = audible_engine(&clip)?;
+
+        for pitch in [SpeedPitch::Keep, SpeedPitch::Follow] {
+            engine.set_pitch(pitch)?;
+            engine.set_rate(1.5)?;
+            let duration = pump(&mut engine, |state| state.video.duration > 0.)?
+                .video
+                .duration;
+
+            engine.seek(duration - 1.)?;
+            let ended = pump(&mut engine, |state| state.video.paused)?.video;
+            ensure!(
+                (ended.position - duration).abs() < 0.05,
+                "{pitch:?}: paused at {} instead of the end",
+                ended.position
+            );
+
+            // Playing again from the end starts over
+            engine.toggle_pause()?;
+        }
 
         engine.stop();
         Ok(())

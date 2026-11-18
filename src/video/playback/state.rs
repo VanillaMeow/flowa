@@ -92,16 +92,32 @@ impl PlaybackState {
         }
     }
 
-    pub fn position(&mut self, now: Instant) -> Result<f64> {
-        let mut queued = 0;
-        let heard = match &self.audio {
-            Some(audio) => {
-                queued = audio.queued_bytes()?;
-                self.feed.heard_position(queued, audio.latency)
-            }
-            None => None,
+    /// The position of the audio being heard and the bytes SDL still holds
+    pub fn heard(&self) -> Result<(Option<f64>, usize)> {
+        let Some(audio) = &self.audio else {
+            return Ok((None, 0));
         };
-        let drained = self.eof && queued == 0 && self.feed.ahead() <= 0.;
+        let queued = audio.queued_bytes()?;
+
+        Ok((self.feed.heard_position(queued, audio.latency), queued))
+    }
+
+    /// Makes the audio heard next start at `position`, dropping what SDL holds;
+    /// returns false when that audio is no longer kept and must be read again
+    pub fn realign_audio(&mut self, position: f64) -> Result<bool> {
+        let latency = self.audio.as_ref().map_or(0., |audio| audio.latency);
+
+        if let Some(audio) = &self.audio {
+            audio.clear()?;
+        }
+
+        Ok(self.feed.move_to(position, latency))
+    }
+
+    pub fn position(&mut self, now: Instant) -> Result<f64> {
+        // SDL may keep a few bytes queued, so an empty feed at the end counts as drained
+        let (heard, _) = self.heard()?;
+        let drained = self.eof && self.feed.ahead() <= 0.;
 
         Ok(self
             .clock
@@ -117,11 +133,22 @@ impl PlaybackState {
         self.apply_ratio()
     }
 
+    /// Switches between stretching and resampling, keeping the heard position
     pub fn set_pitch(&mut self, pitch: SpeedPitch) -> Result<()> {
+        let (heard, _) = self.heard()?;
         self.pitch = pitch;
         self.feed.set_pitch(pitch);
+        self.apply_ratio()?;
 
-        self.apply_ratio()
+        if let Some(heard) = heard {
+            self.realign_audio(heard)?;
+
+            if let Some(audio) = &self.audio {
+                audio.pause(self.paused || !self.started)?;
+            }
+        }
+
+        Ok(())
     }
 
     /// SDL resamples by the rate only when pitch follows speed

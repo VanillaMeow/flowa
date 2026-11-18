@@ -96,8 +96,12 @@ impl AudioFeed {
     ///
     /// Positions past the end drop everything queued and wait for later samples;
     /// positions before the kept history fail, and the caller seeks instead
-    pub fn move_to(&self, position: f64) -> bool {
-        self.lock().move_to(position)
+    ///
+    /// Reading resumes far enough past `position` that, after the stretcher's delay and
+    /// `latency`, the sample heard first is the one at `position`; the caller first
+    /// drops what SDL still holds
+    pub fn move_to(&self, position: f64, latency: f64) -> bool {
+        self.lock().move_to(position, latency)
     }
 
     pub fn set_rate(&self, rate: f64) {
@@ -119,20 +123,8 @@ impl AudioFeed {
         let state = self.lock();
         let next = state.start? + state.read as f64 / RATE as f64;
         let queued = queued_bytes as f64 / BYTES_PER_SECOND as f64;
-        let rate = state.rate;
 
-        // SDL holds unconverted samples at media speed when it resamples, and
-        // already stretched output otherwise, which the stretcher delays further
-        let delay = match state.pitch {
-            SpeedPitch::Follow => queued + latency * rate,
-            SpeedPitch::Keep => {
-                let input = state.stretch.input_latency() as f64 / RATE as f64;
-                let output = state.stretch.output_latency() as f64 / RATE as f64;
-                input + (output + queued + latency) * rate
-            }
-        };
-
-        Some(next - delay)
+        Some(next - state.delay(queued, latency))
     }
 
     /// Produces up to `frames` frames of output for SDL and passes them to `put`
@@ -189,7 +181,24 @@ impl FeedState {
         self.samples.extend(samples);
     }
 
-    fn move_to(&mut self, position: f64) -> bool {
+    /// Media seconds between the next sample read and the sample being heard
+    ///
+    /// SDL holds unconverted samples at media speed when it resamples, and already
+    /// stretched output otherwise, which the stretcher delays further
+    fn delay(&self, queued: f64, latency: f64) -> f64 {
+        let rate = self.rate;
+
+        match self.pitch {
+            SpeedPitch::Follow => queued + latency * rate,
+            SpeedPitch::Keep => {
+                let input = self.stretch.input_latency() as f64 / RATE as f64;
+                let output = self.stretch.output_latency() as f64 / RATE as f64;
+                input + (output + queued + latency) * rate
+            }
+        }
+    }
+
+    fn move_to(&mut self, position: f64, latency: f64) -> bool {
         let (Some(start), Some(end)) = (self.start, self.end()) else {
             return false;
         };
@@ -198,16 +207,35 @@ impl FeedState {
             return false;
         }
 
-        if position >= end {
+        let read_at = position + self.delay(0., latency);
+
+        if read_at >= end {
             self.samples.clear();
-            self.start = Some(position);
+            self.start = Some(read_at);
             self.read = 0;
         } else {
-            self.read = ((position - start) * RATE as f64).round() as usize;
+            self.read = ((read_at - start) * RATE as f64).round() as usize;
         }
 
         self.restart_stretch();
+        self.preroll();
         true
+    }
+
+    /// Gives the stretcher the audio just before the read position, so its output
+    /// starts there at full level instead of fading in
+    fn preroll(&mut self) {
+        if self.pitch != SpeedPitch::Keep {
+            return;
+        }
+
+        let frames = self.read.min(self.stretch.input_latency() * 2);
+        let first = (self.read - frames) * CHANNELS;
+
+        self.input.clear();
+        self.input
+            .extend(self.samples.range(first..self.read * CHANNELS));
+        self.stretch.seek(&self.input, self.rate.max(SILENT_RATE));
     }
 
     fn restart_stretch(&mut self) {
@@ -245,16 +273,23 @@ impl FeedState {
     }
 
     /// Stretches `frames × rate` input frames into `frames` output frames
+    ///
+    /// When less input is queued, as at the end of the file, the rest is stretched
+    /// into proportionally fewer frames and followed by silence
     fn stretch_out(&mut self, frames: usize) {
         let wanted = frames as f64 * self.rate + self.carry;
-        let needed = wanted.floor() as usize;
+        let available = self.unplayed_frames();
+        let (needed, produced) = if available as f64 >= wanted.floor() {
+            (wanted.floor() as usize, frames)
+        } else {
+            (available, (available as f64 / self.rate) as usize)
+        };
 
-        if self.unplayed_frames() < needed {
-            self.output.resize(frames * CHANNELS, 0.);
-            return;
-        }
-
-        self.carry = wanted - needed as f64;
+        self.carry = if produced == frames {
+            wanted - needed as f64
+        } else {
+            0.
+        };
 
         let first = self.read * CHANNELS;
         self.input.clear();
@@ -262,8 +297,11 @@ impl FeedState {
             .extend(self.samples.range(first..first + needed * CHANNELS));
         self.read += needed;
 
+        self.output.resize(produced * CHANNELS, 0.);
+        if produced > 0 {
+            self.stretch.process(&self.input, &mut self.output);
+        }
         self.output.resize(frames * CHANNELS, 0.);
-        self.stretch.process(&self.input, &mut self.output);
     }
 
     fn forget_history(&mut self) {
@@ -361,6 +399,33 @@ mod tests {
     }
 
     #[test]
+    fn moving_lands_the_heard_position_exactly_despite_the_stretcher_delay() {
+        let feed = AudioFeed::new(0.25, SpeedPitch::Keep);
+        feed.push(&tone(5.), 0.);
+        pull(&feed, RATE * 2);
+
+        // Repeated moves to where playback is heard must not creep backward
+        for _ in 0..20 {
+            let heard = feed.heard_position(0, 0.02).expect("A position");
+            assert!(feed.move_to(heard, 0.02));
+            let moved = feed.heard_position(0, 0.02).expect("A position");
+            assert!((moved - heard).abs() < 1e-3, "{heard} became {moved}");
+        }
+    }
+
+    #[test]
+    fn keeping_pitch_plays_out_the_last_partial_block() {
+        let feed = AudioFeed::new(1.5, SpeedPitch::Keep);
+        feed.push(&tone(0.1), 0.);
+
+        for _ in 0..10 {
+            pull(&feed, 1024);
+        }
+
+        assert_eq!(feed.ahead(), 0., "The end of the audio was never played");
+    }
+
+    #[test]
     fn zero_rate_is_silent_and_holds_the_position() {
         let feed = AudioFeed::new(0., SpeedPitch::Keep);
         feed.push(&tone(1.), 0.);
@@ -376,11 +441,14 @@ mod tests {
         feed.push(&tone(5.), 0.);
         pull(&feed, RATE * 4);
 
-        assert!(feed.move_to(2.5));
+        assert!(feed.move_to(2.5, 0.));
         assert!((feed.ahead() - 2.5).abs() < 0.01);
-        assert!(!feed.move_to(0.5), "Audio older than the history was kept");
         assert!(
-            feed.move_to(8.),
+            !feed.move_to(0.5, 0.),
+            "Audio older than the history was kept"
+        );
+        assert!(
+            feed.move_to(8., 0.),
             "Moving past the end should wait for later audio"
         );
         assert_eq!(feed.end(), Some(8.));
