@@ -7,7 +7,7 @@ use egui::{Align, Id, Layout, Response, RichText, style::HandleShape, vec2};
 use crate::{
     app::{Command, PlaybackCommand},
     utils::format::media_time,
-    video::{PLAYBACK_RATES, VideoState},
+    video::{MAX_RATE, PLAYBACK_RATES, VideoState},
 };
 
 use super::{
@@ -22,7 +22,10 @@ const TIMELINE_HEIGHT: f32 = 22.;
 const ROW_SPACING: f32 = space::XS;
 const INLINE_VOLUME_WIDTH: f32 = 104.;
 const INLINE_VOLUME_BREAKPOINT: f32 = 420.;
-const SPEED_WIDTH: f32 = 54.;
+const SPEED_WIDTH: f32 = 58.;
+const SPEED_SLIDER_WIDTH: f32 = 112.;
+/// The part of the speed slider around its middle that snaps to normal speed
+const SPEED_SNAP: f64 = 0.025;
 /// Narrower compact rows leave speed to its shortcuts and the context menu
 const COMPACT_SPEED_BREAKPOINT: f32 = 480.;
 const SEEK_ACKNOWLEDGEMENT_TIMEOUT: Duration = Duration::from_secs(1);
@@ -52,6 +55,14 @@ struct SeekPreview {
 struct SliderFocus {
     timeline: Option<Id>,
     volume: Option<Id>,
+    speed: Option<Id>,
+}
+
+#[derive(Clone, Copy)]
+enum SliderKind {
+    Timeline,
+    Volume,
+    Speed,
 }
 
 impl VideoControls {
@@ -177,7 +188,7 @@ impl VideoControls {
         response.widget_info(|| {
             egui::WidgetInfo::slider(enabled, position, "Playback position")
         });
-        remember_slider(ui.ctx(), response.id, true);
+        remember_slider(ui.ctx(), response.id, SliderKind::Timeline);
 
         if response.changed() {
             self.seek = Some(SeekPreview {
@@ -248,7 +259,13 @@ impl VideoControls {
 
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             self.volume_controls(ui, state, volume_menu, commands);
-            ui.add_enabled_ui(state.ready(), |ui| speed_menu(ui, state.rate, commands));
+            ui.add_enabled_ui(state.ready(), |ui| {
+                if volume_menu {
+                    speed_menu(ui, state.rate, commands);
+                } else {
+                    speed_slider(ui, state.rate, commands);
+                }
+            });
 
             if tracks::available(state) {
                 ui.add_enabled_ui(state.ready(), |ui| {
@@ -380,9 +397,79 @@ pub fn speed_options(ui: &mut egui::Ui, rate: f64, commands: &mut Vec<Command>) 
     }
 }
 
+/// A slider from a standstill to the fastest speed, with normal speed in the middle,
+/// and the speed beside it; double-clicking returns to normal speed
+fn speed_slider(ui: &mut egui::Ui, rate: f64, commands: &mut Vec<Command>) {
+    let width = SPEED_SLIDER_WIDTH + SPEED_WIDTH + ui.spacing().item_spacing.x;
+
+    // The right-to-left parent would reverse the slider and its reading
+    ui.allocate_ui_with_layout(
+        vec2(width, size::CONTROL),
+        Layout::left_to_right(Align::Center),
+        |ui| speed_slider_contents(ui, rate, commands),
+    );
+}
+
+fn speed_slider_contents(ui: &mut egui::Ui, rate: f64, commands: &mut Vec<Command>) {
+    ui.spacing_mut().slider_width = SPEED_SLIDER_WIDTH;
+    ui.spacing_mut().interact_size.y = 22.;
+
+    let mut position = rate_to_slider(rate);
+    let response = ui.add(
+        egui::Slider::new(&mut position, 0.0..=1.0)
+            .show_value(false)
+            .handle_shape(HandleShape::Circle),
+    );
+    response.widget_info(|| egui::WidgetInfo::slider(true, rate, "Playback speed"));
+    remember_slider(ui.ctx(), response.id, SliderKind::Speed);
+
+    let reading = RichText::new(format!("{rate:.2}×")).monospace();
+    ui.add_sized([SPEED_WIDTH, 22.], egui::Label::new(reading));
+
+    let shortcuts = format!(
+        "Playback speed · {} / {} · double-click for normal speed",
+        actions::SLOWER.shortcut_text(ui.ctx()),
+        actions::FASTER.shortcut_text(ui.ctx())
+    );
+    let response = response.on_hover_text(shortcuts);
+
+    if response.double_clicked() {
+        commands.push(PlaybackCommand::SetRate(1.).into());
+    } else if response.changed() {
+        commands.push(PlaybackCommand::SetRate(slider_to_rate(position)).into());
+    }
+}
+
+/// The left half of the slider covers a standstill to normal speed, the right half
+/// normal to the fastest, so normal speed sits in the middle
+fn slider_to_rate(position: f64) -> f64 {
+    if (position - 0.5).abs() < SPEED_SNAP {
+        return 1.;
+    }
+
+    let rate = if position <= 0.5 {
+        position * 2.
+    } else {
+        1. + (position - 0.5) * 2. * (MAX_RATE - 1.)
+    };
+
+    (rate * 20.).round() / 20.
+}
+
+fn rate_to_slider(rate: f64) -> f64 {
+    if rate <= 1. {
+        rate / 2.
+    } else {
+        0.5 + (rate - 1.) / (MAX_RATE - 1.) / 2.
+    }
+}
+
 /// Reads as `1×`, `1.5×`, or `0.25×`
 fn rate_label(rate: f64) -> String {
-    format!("{rate}×")
+    let rounded = format!("{rate:.2}");
+    let trimmed = rounded.trim_end_matches('0').trim_end_matches('.');
+
+    format!("{trimmed}×")
 }
 
 fn volume_slider(
@@ -399,7 +486,7 @@ fn volume_slider(
             .handle_shape(HandleShape::Circle),
     );
     response.widget_info(|| egui::WidgetInfo::slider(true, volume, "Volume"));
-    remember_slider(ui.ctx(), response.id, false);
+    remember_slider(ui.ctx(), response.id, SliderKind::Volume);
 
     if response.changed() {
         commands.push(PlaybackCommand::SetVolume(volume).into());
@@ -448,14 +535,15 @@ fn slider_focus_id() -> Id {
     Id::unique("video-slider-focus")
 }
 
-fn remember_slider(ctx: &egui::Context, id: Id, timeline: bool) {
+fn remember_slider(ctx: &egui::Context, id: Id, kind: SliderKind) {
     ctx.data_mut(|data| {
         let focus = data.get_temp_mut_or_default::<SliderFocus>(slider_focus_id());
-        if timeline {
-            focus.timeline = Some(id);
-        } else {
-            focus.volume = Some(id);
-        }
+        let slot = match kind {
+            SliderKind::Timeline => &mut focus.timeline,
+            SliderKind::Volume => &mut focus.volume,
+            SliderKind::Speed => &mut focus.speed,
+        };
+        *slot = Some(id);
     });
 }
 
@@ -468,7 +556,8 @@ pub fn wants_keyboard_input(ctx: &egui::Context) -> bool {
     ctx.data(|data| {
         data.get_temp::<SliderFocus>(slider_focus_id())
             .is_some_and(|sliders| {
-                sliders.timeline == Some(focused) || sliders.volume == Some(focused)
+                [sliders.timeline, sliders.volume, sliders.speed]
+                    .contains(&Some(focused))
             })
     })
 }
@@ -686,5 +775,31 @@ mod tests {
             }],
         );
         assert!(commands.contains(&Command::Playback(PlaybackCommand::TogglePlay)));
+    }
+}
+
+#[cfg(test)]
+mod speed_tests {
+    use super::{rate_label, rate_to_slider, slider_to_rate};
+
+    #[test]
+    fn the_speed_slider_puts_normal_speed_in_the_middle_and_snaps_to_it() {
+        assert_eq!(slider_to_rate(0.), 0.);
+        assert_eq!(slider_to_rate(0.5), 1.);
+        assert_eq!(slider_to_rate(1.), 4.);
+        assert_eq!(slider_to_rate(0.51), 1.);
+        assert_eq!(slider_to_rate(0.25), 0.5);
+
+        for rate in [0., 0.25, 1., 1.5, 4.] {
+            assert!((slider_to_rate(rate_to_slider(rate)) - rate).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn speed_labels_stay_short() {
+        assert_eq!(rate_label(1.), "1×");
+        assert_eq!(rate_label(1.5), "1.5×");
+        assert_eq!(rate_label(0.25), "0.25×");
+        assert_eq!(rate_label(1.350_000_000_1), "1.35×");
     }
 }

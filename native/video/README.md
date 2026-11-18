@@ -67,7 +67,9 @@ through a stream callback. The clock is the position of the sample being heard:
 the feed's read position minus what SDL holds, the device latency, and the
 stretcher's delay.
 
-Playback speed runs from 0 to 4×. At other speeds the feed either stretches audio
+Playback speed runs from 0 to 4×: a slider in the expanded controls, with normal
+speed in the middle and a double-click to return to it, a button in the compact
+controls and the context menu, and `[`, `]`, and Backspace. At other speeds the feed either stretches audio
 with [Signalsmith Stretch](https://github.com/Signalsmith-Audio/signalsmith-stretch)
 so voices keep their pitch, or hands it to SDL to resample by the speed, so pitch
 follows it; Preferences → Viewing chooses. Either way a new speed applies to the
