@@ -470,3 +470,69 @@ mod subtitles {
         );
     }
 }
+
+mod adjustments {
+    use egui::{Event, Key, Modifiers, Pos2, Rect, vec2};
+
+    use crate::{
+        app::{Command, ViewCommand},
+        settings::{Accent, Theme},
+        ui::{adjustments, theme},
+        viewer::adjustments::Adjustments,
+    };
+
+    fn key(key: Key) -> Event {
+        Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        }
+    }
+
+    fn frame(
+        ctx: &egui::Context,
+        current: Adjustments,
+        events: Vec<Event>,
+    ) -> Vec<Command> {
+        let colors = theme::colors(Theme::Charcoal, Accent::Theme, true);
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(400., 400.))),
+            events,
+            ..Default::default()
+        };
+        let mut commands = Vec::new();
+        let mut output = ctx.run_ui(input, |ui| {
+            adjustments::controls(ui, current, colors, &mut commands);
+        });
+        output.textures_delta.clear();
+
+        commands
+    }
+
+    #[test]
+    fn delete_on_a_focused_slider_resets_only_that_value() {
+        let ctx = egui::Context::default();
+        let current = Adjustments {
+            brightness: 0.2,
+            gamma: 1.5,
+            ..Adjustments::NEUTRAL
+        };
+
+        assert!(frame(&ctx, current, Vec::new()).is_empty());
+
+        // The brightness reset button comes first, then its slider
+        frame(&ctx, current, vec![key(Key::Tab)]);
+        frame(&ctx, current, vec![key(Key::Tab)]);
+        let commands = frame(&ctx, current, vec![key(Key::Delete)]);
+
+        assert_eq!(
+            commands,
+            vec![Command::View(ViewCommand::Adjust(Adjustments {
+                brightness: 0.,
+                ..current
+            }))]
+        );
+    }
+}

@@ -71,6 +71,7 @@ fn toolbar_contents(
     app_menu(ui, state, commands);
 
     actions::OPEN_FOLDER.button(ui, Icon::Open, false, commands);
+    actions::PREFERENCES.button(ui, Icon::Settings, state.preferences_open, commands);
 
     ui.separator();
     ui.add_enabled_ui(state.browser.entries().len() > 1, |ui| {
@@ -117,9 +118,6 @@ fn compact_view_menu(
     ] {
         action.menu_label(ui, action.label, true, selected, commands);
     }
-
-    ui.separator();
-    actions::PREFERENCES.menu(ui, true, commands);
 }
 
 fn adjustments_menu(
@@ -234,11 +232,6 @@ fn window_buttons(
 ) {
     for (action, icon, selected) in [
         (&actions::FULLSCREEN, Icon::Fullscreen, state.fullscreen),
-        (
-            &actions::PREFERENCES,
-            Icon::Settings,
-            state.preferences_open,
-        ),
         (&actions::INSPECTOR, Icon::Info, state.inspector_open),
         (
             &actions::FILMSTRIP,
