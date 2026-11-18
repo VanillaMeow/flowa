@@ -37,6 +37,7 @@ pub enum Icon {
     Tracks,
     Captions,
     Reset,
+    Speed,
     /// The flower from the desktop icon, without its backdrop
     Logo,
 }
@@ -73,6 +74,7 @@ impl Icon {
             Self::Tracks => include_str!("../../assets/icons/lucide/audio-lines.svg"),
             Self::Captions => include_str!("../../assets/icons/lucide/captions.svg"),
             Self::Reset => include_str!("../../assets/icons/lucide/rotate-ccw.svg"),
+            Self::Speed => include_str!("../../assets/icons/lucide/gauge.svg"),
             Self::Logo => include_str!("../../assets/flowa-mark.svg"),
         }
     }

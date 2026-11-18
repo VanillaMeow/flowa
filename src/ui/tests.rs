@@ -536,3 +536,251 @@ mod adjustments {
         );
     }
 }
+
+/// Renders UI pieces offscreen to PNG files, to look at layouts without the app
+///
+/// Run with `FLOWA_SCREENSHOTS=<folder> cargo test screenshots -- --ignored`
+#[cfg(video_playback)]
+mod screenshots {
+    use std::{path::PathBuf, sync::mpsc, time::Duration};
+
+    use anyhow::{Context, Result};
+    use eframe::{
+        egui_wgpu::{
+            RenderState, RendererOptions, ScreenDescriptor, WgpuConfiguration,
+            WgpuSetup,
+        },
+        wgpu,
+    };
+    use egui::{Pos2, Rect, vec2};
+
+    use crate::{
+        settings::{Accent, Theme},
+        ui::{adjustments, theme, video_controls},
+        video::VideoState,
+        viewer::adjustments::Adjustments,
+    };
+
+    const SCALE: f32 = 1.5;
+
+    fn graphics() -> Result<RenderState> {
+        let setup = WgpuSetup::without_display_handle();
+        let instance = pollster::block_on(setup.new_instance());
+        let config = WgpuConfiguration {
+            wgpu_setup: setup,
+            ..Default::default()
+        };
+
+        Ok(pollster::block_on(RenderState::create(
+            &config,
+            &instance,
+            None,
+            RendererOptions::default(),
+        ))?)
+    }
+
+    /// Draws `contents` in a window-sized pass and saves what egui painted
+    fn screenshot(
+        graphics: &RenderState,
+        name: &str,
+        size: [u32; 2],
+        mut contents: impl FnMut(&mut egui::Ui),
+    ) -> Result<()> {
+        let Some(folder) = std::env::var_os("FLOWA_SCREENSHOTS") else {
+            return Ok(());
+        };
+        let ctx = egui::Context::default();
+        let colors = theme::colors(Theme::Charcoal, Accent::Theme, true);
+        theme::apply(&ctx, colors);
+
+        let points = vec2(size[0] as f32, size[1] as f32) / SCALE;
+        let mut input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, points)),
+            ..Default::default()
+        };
+        input
+            .viewports
+            .entry(egui::ViewportId::ROOT)
+            .or_default()
+            .native_pixels_per_point = Some(SCALE);
+
+        // The second pass lays out with sizes measured in the first
+        let mut output = ctx.run_ui(input.clone(), |ui| contents(ui));
+        let first = std::mem::take(&mut output.textures_delta);
+        output = ctx.run_ui(input, |ui| contents(ui));
+        let primitives = ctx.tessellate(output.shapes, SCALE);
+
+        let device = &graphics.device;
+        let mut renderer = graphics.renderer.write();
+        for (id, deltas) in first.set.iter().chain(&output.textures_delta.set) {
+            for delta in deltas {
+                renderer.update_texture(device, &graphics.queue, *id, delta);
+            }
+        }
+
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("screenshot"),
+            size: wgpu::Extent3d {
+                width: size[0],
+                height: size[1],
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: graphics.target_format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+        let screen = ScreenDescriptor {
+            size_in_pixels: size,
+            pixels_per_point: SCALE,
+        };
+        let background = colors.canvas;
+
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let mut buffers = renderer.update_buffers(
+            device,
+            &graphics.queue,
+            &mut encoder,
+            &primitives,
+            &screen,
+        );
+        {
+            let [r, g, b, _] = background.to_normalized_gamma_f32();
+            let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("screenshot"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: f64::from(r),
+                            g: f64::from(g),
+                            b: f64::from(b),
+                            a: 1.,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                ..Default::default()
+            });
+            renderer.render(&mut pass.forget_lifetime(), &primitives, &screen);
+        }
+        drop(renderer);
+
+        let mut first = first;
+        first.clear();
+        output.textures_delta.clear();
+
+        let row_bytes = (size[0] * 4).div_ceil(256) * 256;
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("screenshot-readback"),
+            size: u64::from(row_bytes * size[1]),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        encoder.copy_texture_to_buffer(
+            target.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row_bytes),
+                    rows_per_image: Some(size[1]),
+                },
+            },
+            target.size(),
+        );
+        buffers.push(encoder.finish());
+        graphics.queue.submit(buffers);
+
+        let (sender, receiver) = mpsc::channel();
+        readback
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                let _ = sender.send(result);
+            });
+        device.poll(wgpu::PollType::wait_indefinitely())?;
+        receiver.recv_timeout(Duration::from_secs(5))??;
+
+        let bytes = readback.slice(..).get_mapped_range()?;
+        let bgra = matches!(
+            graphics.target_format,
+            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+        );
+        let mut pixels = Vec::with_capacity((size[0] * size[1] * 4) as usize);
+        for row in bytes.chunks(row_bytes as usize) {
+            for pixel in row[..(size[0] * 4) as usize].chunks(4) {
+                let [a, b, c, d] = [pixel[0], pixel[1], pixel[2], pixel[3]];
+                pixels.extend(if bgra { [c, b, a, d] } else { [a, b, c, d] });
+            }
+        }
+
+        let image = image::RgbaImage::from_raw(size[0], size[1], pixels)
+            .context("Wrong screenshot size")?;
+        let path = PathBuf::from(folder).join(format!("{name}.png"));
+        image.save(&path)?;
+
+        Ok(())
+    }
+
+    fn popup(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
+        egui::Area::new(egui::Id::unique("popup"))
+            .fixed_pos(Pos2::new(12., 12.))
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style()).show(ui, contents);
+            });
+    }
+
+    fn playing() -> VideoState {
+        VideoState {
+            active: true,
+            position: 70.,
+            duration: 7200.,
+            rate: 1.5,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    #[ignore = "Requires a GPU and FLOWA_SCREENSHOTS"]
+    fn screenshots() -> Result<()> {
+        let graphics = graphics()?;
+        let colors = theme::colors(Theme::Charcoal, Accent::Theme, true);
+        let changed = Adjustments {
+            brightness: 0.1,
+            gamma: 1.4,
+            ..Adjustments::NEUTRAL
+        };
+
+        screenshot(&graphics, "adjustments", [720, 420], |ui| {
+            popup(ui, |ui| {
+                adjustments::controls(ui, changed, colors, &mut Vec::new())
+            });
+        })?;
+        screenshot(&graphics, "speed-popup", [480, 220], |ui| {
+            popup(ui, |ui| {
+                video_controls::speed_options(ui, 1.5, &mut Vec::new())
+            });
+        })?;
+
+        for (name, compact, width) in [
+            ("controls-compact", true, 1200),
+            ("controls-compact-narrow", true, 640),
+            ("controls-expanded", false, 1200),
+            ("controls-expanded-narrow", false, 560),
+        ] {
+            let mut controls = video_controls::VideoControls::default();
+            let state = playing();
+            screenshot(&graphics, name, [width, 200], |ui| {
+                controls.show(ui, &state, colors, compact, &mut Vec::new());
+            })?;
+        }
+
+        Ok(())
+    }
+}

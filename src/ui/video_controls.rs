@@ -7,7 +7,7 @@ use egui::{Align, Id, Layout, Response, RichText, style::HandleShape, vec2};
 use crate::{
     app::{Command, PlaybackCommand},
     utils::format::media_time,
-    video::{MAX_RATE, PLAYBACK_RATES, VideoState},
+    video::{MAX_RATE, VideoState},
 };
 
 use super::{
@@ -24,10 +24,14 @@ const INLINE_VOLUME_WIDTH: f32 = 104.;
 const INLINE_VOLUME_BREAKPOINT: f32 = 420.;
 const SPEED_WIDTH: f32 = 58.;
 const SPEED_SLIDER_WIDTH: f32 = 112.;
+/// Speeds one click away in the speed popup
+const SPEED_PRESETS: &[f64] = &[0.25, 0.5, 1., 1.5, 2.];
 /// The part of the speed slider around its middle that snaps to normal speed
 const SPEED_SNAP: f64 = 0.025;
 /// Narrower compact rows leave speed to its shortcuts and the context menu
-const COMPACT_SPEED_BREAKPOINT: f32 = 480.;
+const COMPACT_SPEED_BREAKPOINT: f32 = 400.;
+/// The speed popup's slider row and preset row share this width
+const SPEED_POPUP_WIDTH: f32 = 250.;
 const SEEK_ACKNOWLEDGEMENT_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Keeps a scrub preview stable while FFmpeg seeks to the new frame
@@ -385,14 +389,28 @@ fn speed_menu(ui: &mut egui::Ui, rate: f64, commands: &mut Vec<Command>) {
     response.on_hover_text(shortcuts);
 }
 
-/// The offered speeds as selectable rows, for the speed button and context menus
+/// The speed slider and buttons for common speeds, for the speed button and context
+/// menus
 pub fn speed_options(ui: &mut egui::Ui, rate: f64, commands: &mut Vec<Command>) {
-    for &option in PLAYBACK_RATES.iter().rev() {
-        let selected = (option - rate).abs() < 1e-6;
+    ui.spacing_mut().slider_rail_height = 3.;
+    ui.set_width(SPEED_POPUP_WIDTH);
 
-        if ui.selectable_label(selected, rate_label(option)).clicked() {
+    let slider_width = SPEED_POPUP_WIDTH - SPEED_WIDTH - ui.spacing().item_spacing.x;
+    ui.horizontal(|ui| speed_slider_contents(ui, rate, slider_width, commands));
+    ui.horizontal(|ui| speed_presets(ui, rate, commands));
+}
+
+fn speed_presets(ui: &mut egui::Ui, rate: f64, commands: &mut Vec<Command>) {
+    ui.spacing_mut().item_spacing.x = space::XS;
+    let gaps = ui.spacing().item_spacing.x * (SPEED_PRESETS.len() - 1) as f32;
+    let width = (SPEED_POPUP_WIDTH - gaps) / SPEED_PRESETS.len() as f32;
+
+    for &option in SPEED_PRESETS {
+        let selected = (option - rate).abs() < 1e-6;
+        let button = egui::Button::selectable(selected, rate_label(option));
+
+        if ui.add_sized([width, 24.], button).clicked() {
             commands.push(PlaybackCommand::SetRate(option).into());
-            ui.close();
         }
     }
 }
@@ -400,18 +418,36 @@ pub fn speed_options(ui: &mut egui::Ui, rate: f64, commands: &mut Vec<Command>) 
 /// A slider from a standstill to the fastest speed, with normal speed in the middle,
 /// and the speed beside it; double-clicking returns to normal speed
 fn speed_slider(ui: &mut egui::Ui, rate: f64, commands: &mut Vec<Command>) {
-    let width = SPEED_SLIDER_WIDTH + SPEED_WIDTH + ui.spacing().item_spacing.x;
+    let spacing = ui.spacing().item_spacing.x;
+    let width = size::ICON + SPEED_SLIDER_WIDTH + SPEED_WIDTH + spacing * 2.;
 
     // The right-to-left parent would reverse the slider and its reading
     ui.allocate_ui_with_layout(
         vec2(width, size::CONTROL),
         Layout::left_to_right(Align::Center),
-        |ui| speed_slider_contents(ui, rate, commands),
+        |ui| {
+            speed_icon(ui);
+            speed_slider_contents(ui, rate, SPEED_SLIDER_WIDTH, commands);
+        },
     );
 }
 
-fn speed_slider_contents(ui: &mut egui::Ui, rate: f64, commands: &mut Vec<Command>) {
-    ui.spacing_mut().slider_width = SPEED_SLIDER_WIDTH;
+/// Marks the inline slider as speed, beside the similar volume slider
+fn speed_icon(ui: &mut egui::Ui) {
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(size::ICON, size::ICON), egui::Sense::hover());
+    let color = ui.visuals().weak_text_color();
+    icons::paint(ui.painter(), Icon::Speed, rect.center(), size::ICON, color);
+    response.on_hover_text("Playback speed");
+}
+
+fn speed_slider_contents(
+    ui: &mut egui::Ui,
+    rate: f64,
+    width: f32,
+    commands: &mut Vec<Command>,
+) {
+    ui.spacing_mut().slider_width = width;
     ui.spacing_mut().interact_size.y = 22.;
 
     let mut position = rate_to_slider(rate);

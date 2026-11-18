@@ -2,7 +2,7 @@
 
 use std::ops::RangeInclusive;
 
-use egui::{RichText, Vec2, style::HandleShape};
+use egui::{RichText, Vec2, vec2};
 
 use crate::{
     app::{Command, ViewCommand},
@@ -15,7 +15,10 @@ use super::{
     theme::Colors,
 };
 
-const SLIDER_WIDTH: f32 = 180.;
+const SLIDER_WIDTH: f32 = 150.;
+const ROW_HEIGHT: f32 = 20.;
+/// Every number field gets the width of the widest reading, such as `200%`
+const VALUE_WIDTH: f32 = 60.;
 
 /// One slider: its label, the field it edits, and the units it shows
 struct Control {
@@ -108,14 +111,9 @@ pub fn controls(
 ) {
     let mut edited = current;
 
-    ui.spacing_mut().slider_width = SLIDER_WIDTH;
-    ui.spacing_mut().item_spacing.y = space::XS;
+    ui.scope(|ui| rows(ui, &mut edited, colors));
 
-    for control in &CONTROLS {
-        control_row(ui, control, &mut edited, colors);
-    }
-
-    ui.add_space(space::SM);
+    ui.add_space(space::XS);
     let reset = ui.add_enabled(!edited.is_neutral(), egui::Button::new("Reset all"));
 
     if reset.clicked() {
@@ -125,6 +123,25 @@ pub fn controls(
     if edited != current {
         commands.push(ViewCommand::Adjust(edited).into());
     }
+}
+
+/// One row per value: label, slider and number field, then its reset button
+fn rows(ui: &mut egui::Ui, edited: &mut Adjustments, colors: Colors) {
+    let spacing = ui.spacing_mut();
+    spacing.slider_width = SLIDER_WIDTH;
+    spacing.slider_rail_height = 3.;
+    spacing.interact_size = vec2(VALUE_WIDTH, ROW_HEIGHT);
+    spacing.button_padding = vec2(space::XS, 1.);
+
+    egui::Grid::new("color-adjustments")
+        .num_columns(3)
+        .spacing(vec2(space::SM, space::XS))
+        .show(ui, |ui| {
+            for control in &CONTROLS {
+                control_row(ui, control, edited, colors);
+                ui.end_row();
+            }
+        });
 }
 
 fn control_row(
@@ -138,32 +155,30 @@ fn control_row(
     let value = (control.field)(edited);
     let changed = (*value - neutral).abs() > f32::EPSILON;
 
-    let reset_clicked = ui
-        .horizontal(|ui| heading(ui, control.label, changed, colors))
-        .inner;
+    ui.label(
+        RichText::new(control.label)
+            .size(text::LABEL)
+            .color(colors.text),
+    );
     let slider_reset = slider(ui, control, value);
+    let reset_clicked = reset_button(ui, control.label, changed);
 
     if reset_clicked || slider_reset {
         *value = neutral;
     }
 }
 
-/// The label, and a reset button that appears once the value differs from neutral
-fn heading(ui: &mut egui::Ui, label: &str, changed: bool, colors: Colors) -> bool {
-    ui.label(RichText::new(label).size(text::LABEL).color(colors.text));
+/// A reset button that appears once the value differs from neutral
+fn reset_button(ui: &mut egui::Ui, label: &str, changed: bool) -> bool {
+    let hint = format!("Reset {}", label.to_lowercase());
 
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        let hint = format!("Reset {}", label.to_lowercase());
+    // A hidden button keeps its space, so the rows never shift while editing
+    ui.scope(|ui| {
+        if !changed {
+            ui.set_invisible();
+        }
 
-        // Hidden buttons keep their space, so the rows never shift while editing
-        ui.scope(|ui| {
-            if !changed {
-                ui.set_invisible();
-            }
-
-            icons::small_button(ui, Icon::Reset, &hint).clicked()
-        })
-        .inner
+        icons::small_button(ui, Icon::Reset, &hint).clicked()
     })
     .inner
 }
@@ -175,8 +190,7 @@ fn slider(ui: &mut egui::Ui, control: &Control, value: &mut f32) -> bool {
         egui::Slider::new(&mut shown, control.range.clone())
             .logarithmic(control.logarithmic)
             .step_by(control.step)
-            .suffix(control.suffix)
-            .handle_shape(HandleShape::Circle),
+            .suffix(control.suffix),
     );
 
     if response.changed() {
