@@ -22,7 +22,9 @@ const TIMELINE_HEIGHT: f32 = 22.;
 const ROW_SPACING: f32 = space::XS;
 const INLINE_VOLUME_WIDTH: f32 = 104.;
 const INLINE_VOLUME_BREAKPOINT: f32 = 420.;
-const SPEED_WIDTH: f32 = 58.;
+/// Every speed reading is at most this wide in the monospace font, so speed controls
+/// keep one width and nothing beside them moves while the speed changes
+const WIDEST_RATE: &str = "0.00×";
 const SPEED_SLIDER_WIDTH: f32 = 112.;
 /// Speeds one click away in the speed popup
 const SPEED_PRESETS: &[f64] = &[0.25, 0.5, 1., 1.5, 2.];
@@ -231,7 +233,7 @@ impl VideoControls {
             size::CONTROL + INLINE_VOLUME_WIDTH + spacing
         };
         let speed_width = if show_speed {
-            SPEED_WIDTH + spacing
+            speed_width(ui) + spacing
         } else {
             0.
         };
@@ -375,7 +377,8 @@ fn play_button(ui: &mut egui::Ui, paused: bool, commands: &mut Vec<Command>) {
 /// A button showing the current speed that opens the list of offered speeds
 fn speed_menu(ui: &mut egui::Ui, rate: f64, commands: &mut Vec<Command>) {
     let label = RichText::new(rate_label(rate)).monospace();
-    let button = egui::Button::new(label).min_size(vec2(SPEED_WIDTH, size::CONTROL));
+    let button =
+        egui::Button::new(label).min_size(vec2(speed_width(ui), size::CONTROL));
     let (response, _) = egui::containers::menu::MenuButton::from_button(button)
         .config(widgets::adjusting_menu())
         .ui(ui, |ui| speed_options(ui, rate, commands));
@@ -397,7 +400,8 @@ pub fn speed_options(ui: &mut egui::Ui, rate: f64, commands: &mut Vec<Command>) 
     ui.spacing_mut().slider_rail_height = 3.;
     ui.set_width(SPEED_POPUP_WIDTH);
 
-    let slider_width = SPEED_POPUP_WIDTH - SPEED_WIDTH - ui.spacing().item_spacing.x;
+    let slider_width =
+        SPEED_POPUP_WIDTH - speed_width(ui) - ui.spacing().item_spacing.x;
     ui.horizontal(|ui| speed_slider_contents(ui, rate, slider_width, commands));
     ui.horizontal(|ui| speed_presets(ui, rate, commands));
 }
@@ -421,7 +425,7 @@ fn speed_presets(ui: &mut egui::Ui, rate: f64, commands: &mut Vec<Command>) {
 /// and the speed beside it; double-clicking returns to normal speed
 fn speed_slider(ui: &mut egui::Ui, rate: f64, commands: &mut Vec<Command>) {
     let spacing = ui.spacing().item_spacing.x;
-    let width = size::ICON + SPEED_SLIDER_WIDTH + SPEED_WIDTH + spacing * 2.;
+    let width = size::ICON + SPEED_SLIDER_WIDTH + speed_width(ui) + spacing * 2.;
 
     // The right-to-left parent would reverse the slider and its reading
     ui.allocate_ui_with_layout(
@@ -461,8 +465,7 @@ fn speed_slider_contents(
     response.widget_info(|| egui::WidgetInfo::slider(true, rate, "Playback speed"));
     remember_slider(ui.ctx(), response.id, SliderKind::Speed);
 
-    let reading = RichText::new(format!("{rate:.2}×")).monospace();
-    ui.add_sized([SPEED_WIDTH, 22.], egui::Label::new(reading));
+    speed_reading(ui, rate);
 
     let shortcuts = format!(
         "Playback speed · {} / {} · double-click for normal speed",
@@ -476,6 +479,27 @@ fn speed_slider_contents(
     } else if response.changed() {
         commands.push(PlaybackCommand::SetRate(slider_to_rate(position)).into());
     }
+}
+
+/// The speed beside its slider, painted into a fixed width so dragging the slider never
+/// moves it
+fn speed_reading(ui: &mut egui::Ui, rate: f64) {
+    let (rect, _) =
+        ui.allocate_exact_size(vec2(speed_width(ui), 22.), egui::Sense::hover());
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        format!("{rate:.2}×"),
+        egui::TextStyle::Monospace.resolve(ui.style()),
+        ui.visuals().text_color(),
+    );
+}
+
+/// The width of the speed button and the reading beside the speed slider
+fn speed_width(ui: &egui::Ui) -> f32 {
+    let padding = ui.spacing().button_padding.x * 2.;
+
+    (text_width(ui, WIDEST_RATE) + padding).ceil()
 }
 
 /// The left half of the slider covers a standstill to normal speed, the right half
@@ -606,7 +630,9 @@ mod tests {
     use crate::{
         app::{BrowseCommand, Command, PlaybackCommand},
         settings::{Accent, Theme},
+        ui::style::{size, space},
         ui::{keyboard, theme},
+        video::MAX_RATE,
         video::VideoState,
     };
     use egui::{Event, Modifiers, PointerButton, Pos2, Rect, vec2};
@@ -627,18 +653,30 @@ mod tests {
         compact: bool,
         events: Vec<Event>,
     ) -> (Vec<Command>, egui::Response) {
-        let input = egui::RawInput {
-            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(width, 600.))),
-            events,
-            ..Default::default()
-        };
-        let colors = theme::colors(Theme::Charcoal, Accent::Theme, true);
         let state = VideoState {
             active: true,
             position: 70.,
             duration: 7200.,
             ..Default::default()
         };
+
+        frame_with_state(ctx, controls, width, compact, &state, events)
+    }
+
+    fn frame_with_state(
+        ctx: &egui::Context,
+        controls: &mut VideoControls,
+        width: f32,
+        compact: bool,
+        state: &VideoState,
+        events: Vec<Event>,
+    ) -> (Vec<Command>, egui::Response) {
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(width, 600.))),
+            events,
+            ..Default::default()
+        };
+        let colors = theme::colors(Theme::Charcoal, Accent::Theme, true);
         theme::apply(ctx, colors);
 
         let mut commands = Vec::new();
@@ -655,7 +693,7 @@ mod tests {
             );
             strip_top = strip.response.rect.top();
 
-            controls.show(root, &state, colors, compact, &mut commands);
+            controls.show(root, state, colors, compact, &mut commands);
             controls_top = root.available_rect_before_wrap().bottom();
         });
         output.textures_delta.clear();
@@ -725,6 +763,146 @@ mod tests {
                 timeline.rect
             );
         }
+    }
+
+    /// Rects of the timeline, speed, and volume sliders, whichever are shown
+    fn slider_rects(ctx: &egui::Context) -> Vec<Option<Rect>> {
+        let sliders = ctx
+            .data(|data| data.get_temp::<SliderFocus>(slider_focus_id()))
+            .unwrap_or_default();
+
+        [sliders.timeline, sliders.speed, sliders.volume]
+            .into_iter()
+            .map(|id| {
+                id.and_then(|id| ctx.read_response(id))
+                    .map(|response| response.rect)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn changing_speed_never_moves_the_controls() {
+        let ctx = egui::Context::default();
+        let mut controls = VideoControls::default();
+
+        for (width, compact) in [
+            (420., true),
+            (800., true),
+            (1200., true),
+            (600., false),
+            (1200., false),
+        ] {
+            let mut expected = None;
+
+            for rate in [1., 0., 0.05, 0.25, 0.5, 0.95, 1.35, 2., 2.55, 4.] {
+                let state = VideoState {
+                    active: true,
+                    position: 70.,
+                    duration: 7200.,
+                    rate,
+                    ..Default::default()
+                };
+                ctx.data_mut(|data| data.remove_temp::<SliderFocus>(slider_focus_id()));
+                frame_with_state(
+                    &ctx,
+                    &mut controls,
+                    width,
+                    compact,
+                    &state,
+                    Vec::new(),
+                );
+                frame_with_state(
+                    &ctx,
+                    &mut controls,
+                    width,
+                    compact,
+                    &state,
+                    Vec::new(),
+                );
+                let rects = slider_rects(&ctx);
+
+                let expected = expected.get_or_insert_with(|| rects.clone());
+                assert_eq!(
+                    *expected, rects,
+                    "Width {width}, compact {compact}, rate {rate}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn dragging_the_speed_popup_slider_keeps_it_under_the_pointer() {
+        let ctx = egui::Context::default();
+        let mut controls = VideoControls::default();
+        let mut state = VideoState {
+            active: true,
+            position: 70.,
+            duration: 7200.,
+            ..Default::default()
+        };
+        let pointer = |pos, pressed| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        let show =
+            |controls: &mut VideoControls, state: &mut VideoState, events| {
+                let (commands, _) =
+                    frame_with_state(&ctx, controls, 800., true, state, events);
+
+                for command in commands {
+                    if let Command::Playback(PlaybackCommand::SetRate(rate)) = command {
+                        state.rate = rate;
+                    }
+                }
+
+                slider_rects(&ctx)
+            };
+
+        // The speed button sits just before the mute button and volume slider
+        let volume = show(&mut controls, &mut state, Vec::new())[2].expect("Volume");
+        let button =
+            volume.left_center() - vec2(space::MD * 2. + size::CONTROL + 10., 0.);
+        show(
+            &mut controls,
+            &mut state,
+            vec![Event::PointerMoved(button), pointer(button, true)],
+        );
+        show(&mut controls, &mut state, vec![pointer(button, false)]);
+
+        // Popups settle where they fit after measuring themselves for a frame
+        show(&mut controls, &mut state, Vec::new());
+        let slider =
+            show(&mut controls, &mut state, Vec::new())[1].expect("Popup slider");
+
+        let start = slider.left_center();
+        show(
+            &mut controls,
+            &mut state,
+            vec![Event::PointerMoved(start), pointer(start, true)],
+        );
+
+        let mut previous = state.rate;
+        for step in 1..=40 {
+            let x = start.x + slider.width() * step as f32 / 40.;
+            let rects = show(
+                &mut controls,
+                &mut state,
+                vec![Event::PointerMoved(Pos2::new(x, start.y))],
+            );
+
+            assert_eq!(
+                rects[1],
+                Some(slider),
+                "Slider moved at speed {}",
+                state.rate
+            );
+            assert!(state.rate >= previous, "Speed fell to {}", state.rate);
+            previous = state.rate;
+        }
+
+        assert_eq!(state.rate, MAX_RATE);
     }
 
     #[test]
