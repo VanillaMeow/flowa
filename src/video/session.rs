@@ -5,7 +5,10 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 
 use super::{PlayerCommand, VideoState, playback};
-use crate::{settings::VideoDecoder, viewer::adjustments::Adjustments};
+use crate::{
+    settings::{SpeedPitch, VideoDecoder},
+    viewer::adjustments::Adjustments,
+};
 
 /// Coordinates playback state and the texture displayed by the image canvas
 #[derive(Default)]
@@ -182,6 +185,11 @@ impl VideoSession {
         self.command(PlayerCommand::AudioTrack(index))
     }
 
+    /// Chooses whether audio keeps its pitch at other speeds
+    pub fn set_pitch(&mut self, pitch: SpeedPitch) -> Result<()> {
+        self.command(PlayerCommand::Pitch(pitch))
+    }
+
     /// Shows this subtitle track, or none; turning them off carries over to later videos
     pub fn set_subtitles(&mut self, track: Option<usize>) -> Result<()> {
         self.command(PlayerCommand::Subtitles(track))
@@ -189,9 +197,7 @@ impl VideoSession {
 
     /// Sets playback speed, kept for later videos, with the pitch of audio unchanged
     pub fn set_rate(&mut self, rate: f64) -> Result<()> {
-        let slowest = super::PLAYBACK_RATES[0];
-        let fastest = super::PLAYBACK_RATES[super::PLAYBACK_RATES.len() - 1];
-        let rate = rate.clamp(slowest, fastest);
+        let rate = rate.clamp(0., super::MAX_RATE);
 
         self.command(PlayerCommand::Rate(rate))?;
         self.state.rate = rate;

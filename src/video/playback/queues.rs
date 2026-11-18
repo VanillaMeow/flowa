@@ -16,6 +16,10 @@ pub(super) struct PacketQueue {
 }
 
 impl PacketQueue {
+    pub fn is_empty(&self) -> bool {
+        self.packets.is_empty()
+    }
+
     pub fn has_capacity(&self) -> bool {
         self.packets.len() < PACKET_LIMIT && self.bytes < BYTE_LIMIT
     }

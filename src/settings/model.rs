@@ -163,6 +163,29 @@ pub enum VideoDecoder {
     Software,
 }
 
+/// What happens to the pitch of audio when a video plays faster or slower
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    AsRefStr,
+    VariantArray,
+)]
+pub enum SpeedPitch {
+    /// Voices keep their pitch, as audio is stretched in time
+    #[default]
+    #[strum(to_string = "Keep pitch")]
+    Keep,
+    /// Pitch rises and falls with speed, like a tape played faster or slower
+    #[strum(to_string = "Change pitch with speed")]
+    Follow,
+}
+
 // Bounds shared by validation and the preference controls
 pub const UI_SCALE: RangeInclusive<f32> = 0.75..=2.0;
 pub const MEMORY_MB: RangeInclusive<u64> = 128..=4096;
@@ -198,6 +221,7 @@ pub struct Settings {
     pub nearest: bool,
     pub renderer: RendererPreference,
     pub video_decoder: VideoDecoder,
+    pub speed_pitch: SpeedPitch,
     pub memory_mb: u64,
 
     /// Files and folders opened explicitly, newest first
@@ -230,6 +254,7 @@ impl Default for Settings {
             nearest: false,
             renderer: RendererPreference::Auto,
             video_decoder: VideoDecoder::Auto,
+            speed_pitch: SpeedPitch::Keep,
             memory_mb: 1024,
             recent: Vec::new(),
             last_viewed: None,

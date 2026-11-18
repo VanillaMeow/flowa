@@ -38,7 +38,8 @@ use anyhow::Result;
 pub(crate) use session::VideoSession;
 
 use crate::{
-    services::worker::Generation, settings::VideoDecoder,
+    services::worker::Generation,
+    settings::{SpeedPitch, VideoDecoder},
     viewer::adjustments::Adjustments,
 };
 
@@ -90,9 +91,11 @@ impl Tracks {
     }
 }
 
-/// Playback speeds offered by the controls, slowest first
+/// Playback speeds offered by menus and shortcuts, slowest first
 pub const PLAYBACK_RATES: &[f64] =
     &[0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 3.0, 4.0];
+/// The fastest speed; the slider goes down to a standstill at zero
+pub const MAX_RATE: f64 = 4.0;
 
 /// The offered speed `steps` places faster or slower than `rate`, stopping at the ends
 pub fn step_rate(rate: f64, steps: i32) -> f64 {
@@ -232,6 +235,8 @@ pub(super) enum PlayerCommand {
     Volume(f64),
     /// Playback speed, which also applies to later videos
     Rate(f64),
+    /// Whether audio keeps its pitch at other speeds, also for later videos
+    Pitch(SpeedPitch),
     Decoder(VideoDecoder),
     /// Brightness, contrast, saturation, and gamma for every later frame
     Adjust(Adjustments),

@@ -57,6 +57,7 @@ impl Requests {
                 command,
                 PlayerCommand::Volume(_)
                     | PlayerCommand::Rate(_)
+                    | PlayerCommand::Pitch(_)
                     | PlayerCommand::Decoder(_)
                     | PlayerCommand::Adjust(_)
             )

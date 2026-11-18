@@ -58,16 +58,27 @@ wanted track and seeks to the current position; the demux worker opens its
 decoder while applying that seek, so the new track's packets are read from
 there.
 
-Playback speed runs from 0.25× to 4×, from the speed button, the context menu, or
-`[`, `]`, and Backspace. FFmpeg's `atempo` filter stretches audio so voices keep
-their pitch, and the clock counts each second of queued audio or wall time as
-`rate` media seconds. Changing speed drops the audio queued for the old rate, so
-sound pauses for a moment while video continues.
+## Audio and speed
 
-Period and comma step one frame forward or back, pausing first. A forward step
-shows the next decoded frame and moves the clock to it. Audio queued before the
-step no longer matches, so the demux worker drops new samples until playback
-resumes, which seeks to the shown frame to refill it. A backward step seeks one
+The demux worker decodes audio about a second ahead into an `AudioFeed` at media
+speed, or up to five seconds while the video decoder waits for packets, since
+decoders with frame threads hold several frames back. SDL pulls from the feed
+through a stream callback. The clock is the position of the sample being heard:
+the feed's read position minus what SDL holds, the device latency, and the
+stretcher's delay.
+
+Playback speed runs from 0 to 4×. At other speeds the feed either stretches audio
+with [Signalsmith Stretch](https://github.com/Signalsmith-Audio/signalsmith-stretch)
+so voices keep their pitch, or hands it to SDL to resample by the speed, so pitch
+follows it; Preferences → Viewing chooses. Either way a new speed applies to the
+next request, so changes are smooth and nothing queued is dropped. At zero the
+output is silent and the clock stands still. Debug builds still optimize the
+stretcher, which cannot keep up unoptimized.
+
+The feed keeps about three seconds of played audio. Period and comma step one
+frame forward or back, pausing first. A forward step shows the next decoded frame
+and moves the clock and the feed to it. Resuming within the kept audio continues
+without reading the file again; resuming earlier seeks. A backward step seeks one
 frame duration back; seeking is frame-accurate, so it decodes from the previous
 keyframe.
 

@@ -8,7 +8,6 @@ use std::{
 };
 
 const MEDIA_LIBRARIES: &[(&str, &str)] = &[
-    ("libavfilter", "12"),
     ("libavformat", "63"),
     ("libavcodec", "63"),
     ("libavutil", "61"),
@@ -32,9 +31,9 @@ const SDL_FUNCTIONS: &[&str] = &[
     "SDL_PauseAudioStreamDevice",
     "SDL_ResumeAudioStreamDevice",
     "SDL_ClearAudioStream",
-    "SDL_FlushAudioStream",
     "SDL_GetAudioStreamQueued",
     "SDL_PutAudioStreamData",
+    "SDL_SetAudioStreamFrequencyRatio",
 ];
 
 /// Libplacebo functions called by the Rust renderer; the shim covers the rest

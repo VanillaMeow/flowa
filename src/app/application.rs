@@ -92,11 +92,16 @@ impl Flowa {
         if video_device {
             app.video = VideoSession::new(cc);
 
-            if app.video.available()
-                && let Err(error) =
-                    app.video.set_decoder(app.settings.values.video_decoder)
-            {
-                app.ui.dialogs.notify(format!("{error:#}"), true);
+            if app.video.available() {
+                let values = &app.settings.values;
+                let result = app
+                    .video
+                    .set_decoder(values.video_decoder)
+                    .and_then(|()| app.video.set_pitch(values.speed_pitch));
+
+                if let Err(error) = result {
+                    app.ui.dialogs.notify(format!("{error:#}"), true);
+                }
             }
         }
 
@@ -501,6 +506,14 @@ impl Flowa {
         let decoder = self.settings.values.video_decoder;
         if decoder != previous.video_decoder
             && let Err(error) = self.video.set_decoder(decoder)
+        {
+            self.notify_error(&error);
+        }
+
+        let pitch = self.settings.values.speed_pitch;
+        if pitch != previous.speed_pitch
+            && self.video.available()
+            && let Err(error) = self.video.set_pitch(pitch)
         {
             self.notify_error(&error);
         }

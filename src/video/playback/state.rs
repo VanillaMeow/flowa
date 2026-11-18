@@ -1,4 +1,4 @@
-//! One consistency boundary for packet generations, controls, and the SDL audio clock
+//! One consistency boundary for packet generations, controls, and the audio clock
 
 use std::{
     sync::{Arc, Condvar, Mutex, MutexGuard, atomic::Ordering},
@@ -7,13 +7,11 @@ use std::{
 
 use anyhow::Result;
 
-use super::{
-    clock::{AudioTiming, Clock},
-    queues::PacketQueue,
-};
+use super::{clock::Clock, queues::PacketQueue};
+use crate::settings::SpeedPitch;
 use crate::video::{
     AudioInfo, Tracks,
-    audio::{AudioOutput, BYTES_PER_SECOND},
+    audio::{AudioFeed, AudioOutput},
     decoding::{PacketSource, SourcePacket},
     demux::InterruptFlags,
     ffmpeg::Stream,
@@ -47,25 +45,22 @@ pub(super) struct PlaybackState {
     pub seeking: bool,
     pub generation: u64,
     pub flushed_generation: u64,
-    /// Increments when the playback rate changes, so audio stretched for the old rate
-    /// is dropped
-    pub rate_epoch: u64,
     pub started: bool,
     pub paused: bool,
     pub ended: bool,
     pub clock: Clock,
+    /// Decoded audio the output pulls from, which outlives any one output device
+    pub feed: Arc<AudioFeed>,
     pub audio: Option<AudioOutput>,
     /// Set when no output device could be opened; playback then continues silently
     pub audio_disabled: bool,
-    /// Set after stepping forward while paused, when queued audio no longer matches the
-    /// frame; new samples are dropped until a seek realigns them
-    pub holding_audio: bool,
+    pub pitch: SpeedPitch,
     pub volume: f64,
     pub error: Option<String>,
 }
 
 impl PlaybackState {
-    pub fn new(volume: f64, rate: f64) -> Self {
+    pub fn new(volume: f64, rate: f64, pitch: SpeedPitch) -> Self {
         let mut clock = Clock::default();
         clock.set_rate(rate, 0.0, Instant::now());
 
@@ -84,33 +79,61 @@ impl PlaybackState {
             seeking: false,
             generation: 0,
             flushed_generation: 0,
-            rate_epoch: 0,
             started: false,
             paused: false,
             ended: false,
             clock,
+            feed: Arc::new(AudioFeed::new(rate, pitch)),
             audio: None,
             audio_disabled: false,
-            holding_audio: false,
+            pitch,
             volume,
             error: None,
         }
     }
 
     pub fn position(&mut self, now: Instant) -> Result<f64> {
-        let timing = self
-            .audio
-            .as_ref()
-            .map(|audio| {
-                Ok::<_, anyhow::Error>(AudioTiming {
-                    queued: audio.queued_bytes()? as f64 / BYTES_PER_SECOND as f64,
-                    latency: audio.latency,
-                })
-            })
-            .transpose()?;
+        let mut queued = 0;
+        let heard = match &self.audio {
+            Some(audio) => {
+                queued = audio.queued_bytes()?;
+                self.feed.heard_position(queued, audio.latency)
+            }
+            None => None,
+        };
+        let drained = self.eof && queued == 0 && self.feed.ahead() <= 0.;
+
         Ok(self
             .clock
-            .position(now, self.started && !self.paused, timing, self.eof))
+            .position(now, self.started && !self.paused, heard, drained))
+    }
+
+    /// Applies the speed to the clock, the feed, and SDL's resampling ratio
+    pub fn set_rate(&mut self, rate: f64, now: Instant) -> Result<()> {
+        let position = self.position(now)?;
+        self.clock.set_rate(rate, position, now);
+        self.feed.set_rate(rate);
+
+        self.apply_ratio()
+    }
+
+    pub fn set_pitch(&mut self, pitch: SpeedPitch) -> Result<()> {
+        self.pitch = pitch;
+        self.feed.set_pitch(pitch);
+
+        self.apply_ratio()
+    }
+
+    /// SDL resamples by the rate only when pitch follows speed
+    pub fn apply_ratio(&self) -> Result<()> {
+        let Some(audio) = &self.audio else {
+            return Ok(());
+        };
+
+        match self.pitch {
+            SpeedPitch::Follow => audio.set_ratio(self.clock.rate()),
+            SpeedPitch::Keep => audio.set_ratio(1.),
+        }
     }
 }
 
@@ -122,9 +145,9 @@ pub(super) struct Shared {
 }
 
 impl Shared {
-    pub fn new(ctx: egui::Context, volume: f64, rate: f64) -> Self {
+    pub fn new(ctx: egui::Context, volume: f64, rate: f64, pitch: SpeedPitch) -> Self {
         Self {
-            state: Mutex::new(PlaybackState::new(volume, rate)),
+            state: Mutex::new(PlaybackState::new(volume, rate, pitch)),
             changed: Condvar::new(),
             interrupt: Arc::new(InterruptFlags::default()),
             ctx,

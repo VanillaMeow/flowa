@@ -6,7 +6,7 @@ use strum::{AsRefStr, VariantArray};
 use crate::{
     settings::{
         Accent, CHECKER_CONTRAST, CHECKER_SIZE, Canvas, MEMORY_MB, RendererPreference,
-        SLIDESHOW_SECONDS, Settings, Theme, UI_SCALE, VideoDecoder,
+        SLIDESHOW_SECONDS, Settings, SpeedPitch, Theme, UI_SCALE, VideoDecoder,
     },
     video::VideoSession,
 };
@@ -145,6 +145,21 @@ fn viewing(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors) {
             &mut settings.compact_video_controls,
             "Compact video controls",
         );
+    });
+
+    section(ui, "Video speed", colors, |ui| {
+        let options = SpeedPitch::VARIANTS
+            .iter()
+            .map(|pitch| (*pitch, pitch.as_ref()));
+        widgets::segmented(ui, &mut settings.speed_pitch, options, colors);
+
+        let hint = match settings.speed_pitch {
+            SpeedPitch::Keep => "Voices sound the same at any speed",
+            SpeedPitch::Follow => {
+                "Slower sounds deeper and faster higher, like a record"
+            }
+        };
+        widgets::hint(ui, hint, colors);
     });
 
     section(ui, "Slideshow", colors, |ui| {

@@ -13,10 +13,10 @@ use super::{
     state::{PlaybackState, Seek, Shared},
     worker,
 };
-use crate::settings::VideoDecoder;
+use crate::settings::{SpeedPitch, VideoDecoder};
 use crate::video::{
-    PLAYBACK_RATES, VideoState,
-    audio::AudioOutput,
+    MAX_RATE, VideoState,
+    audio::{AudioOutput, SILENT_RATE},
     decoding::{DecodedFrame, DecoderSelection},
     ffmpeg::{self, Stream, StreamInfo},
     gpu::NativeGpu,
@@ -77,6 +77,7 @@ pub(super) struct Engine {
     last_pts: f64,
     volume: f64,
     rate: f64,
+    pitch: SpeedPitch,
     /// Whether newly opened videos pick subtitles, cleared when the user turns them off
     subtitles_wanted: bool,
     /// Frames still to show while paused, one per forward step
@@ -103,6 +104,7 @@ impl Engine {
             last_pts: 0.0,
             volume: 100.0,
             rate: 1.0,
+            pitch: SpeedPitch::default(),
             subtitles_wanted: true,
             steps_forward: 0,
             step_back_target: None,
@@ -111,7 +113,12 @@ impl Engine {
 
     pub fn open(&mut self, path: &Path) -> Result<()> {
         self.stop();
-        let shared = Arc::new(Shared::new(self.ctx.clone(), self.volume, self.rate));
+        let shared = Arc::new(Shared::new(
+            self.ctx.clone(),
+            self.volume,
+            self.rate,
+            self.pitch,
+        ));
         shared.lock().subtitles_wanted = self.subtitles_wanted;
         let worker = worker::spawn(path.to_owned(), Arc::clone(&shared))?;
         self.shared = Some(shared);
@@ -165,7 +172,10 @@ impl Engine {
         state.clock.anchor(position, now);
         state.paused = paused;
         let restart = state.ended && !paused;
-        let realign = state.holding_audio && !paused;
+
+        // Resuming before the audio still kept, as after stepping back, reads it again
+        let audible = state.audio.is_some() && state.audio_info.is_some();
+        let realign = !paused && audible && !state.feed.move_to(position);
         if let Some(audio) = &state.audio {
             audio.pause(paused || !state.started)?;
         }
@@ -176,7 +186,6 @@ impl Engine {
         if restart {
             self.seek(0.0)?;
         } else if realign {
-            // Queued audio belongs to where stepping started, so refill it from here
             self.seek(position)?;
         }
         Ok(())
@@ -197,14 +206,11 @@ impl Engine {
             return self.step_back(&shared, info, frames.unsigned_abs());
         }
 
-        let mut state = shared.lock();
-        if state.ended {
+        if shared.lock().ended {
             return Ok(());
         }
 
-        state.holding_audio = true;
         self.steps_forward = (self.steps_forward + frames as u32).min(MAX_QUEUED_STEPS);
-        drop(state);
         shared.notify();
 
         Ok(())
@@ -258,9 +264,9 @@ impl Engine {
         state.started = false;
         state.ended = false;
         state.eof = false;
-        state.holding_audio = false;
         state.clock.seek(target, floor, Instant::now());
         state.packets.clear();
+        state.feed.clear();
         shared.interrupt.seeking.store(true, Ordering::SeqCst);
         if let Some(audio) = &state.audio {
             audio.clear()?;
@@ -286,18 +292,13 @@ impl Engine {
         Ok(())
     }
 
-    /// Changes playback speed from the current position, keeping the pitch of audio
+    /// Changes playback speed from the current position, down to a standstill at zero
     ///
-    /// Audio already queued was stretched for the old rate, so it is dropped and the
-    /// worker refills the queue; the rate also applies to later videos
+    /// The audio output stretches or resamples by the new rate from its next request,
+    /// so nothing queued is dropped; the rate also applies to later videos
     pub fn set_rate(&mut self, rate: f64) -> Result<()> {
-        ensure!(
-            rate.is_finite() && rate > 0.0,
-            "Playback rate must be positive"
-        );
-        let slowest = PLAYBACK_RATES[0];
-        let fastest = PLAYBACK_RATES[PLAYBACK_RATES.len() - 1];
-        self.rate = rate.clamp(slowest, fastest);
+        ensure!(rate.is_finite(), "Playback rate must be finite");
+        self.rate = rate.clamp(0.0, MAX_RATE);
 
         let Some(shared) = &self.shared else {
             return Ok(());
@@ -307,23 +308,22 @@ impl Engine {
             return Ok(());
         }
 
-        let now = Instant::now();
-        let position = state.position(now)?;
-        state.clock.set_rate(self.rate, position, now);
-        state.rate_epoch += 1;
-
-        if let Some(audio) = &state.audio {
-            audio.clear()?;
-            audio.pause(state.paused || !state.started)?;
-
-            if state.clock.audio_end.is_some() {
-                state.clock.audio_end = Some(position);
-            }
-        }
+        state.set_rate(self.rate, Instant::now())?;
         drop(state);
         shared.notify();
 
         Ok(())
+    }
+
+    /// Chooses whether audio keeps its pitch or follows the playback speed
+    pub fn set_pitch(&mut self, pitch: SpeedPitch) -> Result<()> {
+        self.pitch = pitch;
+
+        let Some(shared) = &self.shared else {
+            return Ok(());
+        };
+
+        shared.lock().set_pitch(pitch)
     }
 
     /// Plays another audio stream, seeking to the current position so its packets are
@@ -643,6 +643,9 @@ impl Engine {
             if stepping {
                 self.steps_forward -= 1;
                 state.clock.anchor(position, Instant::now());
+
+                // Audio before the stepped frame is skipped, so resuming continues here
+                state.feed.move_to(position);
             }
             if starting {
                 self.step_back_target = None;
@@ -741,10 +744,12 @@ impl Engine {
         }
 
         let rate = state.clock.rate();
-        let next_frame_delay = self
-            .pending
-            .as_ref()
-            .map_or(0.005, |frame| (frame.position - position).max(0.0) / rate);
+        let next_frame_delay = match &self.pending {
+            // A stopped clock never reaches the next frame
+            Some(_) if rate < SILENT_RATE => 0.1,
+            Some(frame) => (frame.position - position).max(0.0) / rate,
+            None => 0.005,
+        };
         let size = self.current.as_ref().map_or([0; 2], |frame| {
             frame
                 .frame
@@ -804,8 +809,14 @@ fn stream_info(state: &PlaybackState) -> Option<StreamInfo> {
 
 /// Opens the output device, or falls back to silent playback on the wall clock
 fn open_audio(state: &mut PlaybackState) {
-    match AudioOutput::open(state.volume) {
-        Ok(audio) => state.audio = Some(audio),
+    match AudioOutput::open(state.volume, Arc::clone(&state.feed)) {
+        Ok(audio) => {
+            state.audio = Some(audio);
+
+            if let Err(error) = state.apply_ratio() {
+                log::warn!("Cannot apply the playback speed to audio: {error:#}");
+            }
+        }
         Err(error) => {
             log::warn!("Playing without sound: {error:#}");
             state.audio_disabled = true;
@@ -971,7 +982,11 @@ mod tests {
             resumed.video.position < start + 3.,
             "Playback did not resume from the stepped frame"
         );
-        ensure!(!holding_audio(&engine), "Resuming kept dropping audio");
+        let heard = heard(&engine).context("No audio after resuming")?;
+        ensure!(
+            (heard - resumed.video.position).abs() < 0.1,
+            "Audio resumed at {heard}, away from the picture"
+        );
 
         engine.stop();
         Ok(())
@@ -979,44 +994,106 @@ mod tests {
 
     #[test]
     #[ignore = "Requires Vulkan and ffmpeg with libx264"]
-    fn playback_rate_scales_the_clock_while_audio_keeps_playing() -> Result<()> {
+    fn playback_rate_changes_smoothly_and_audio_drives_the_clock() -> Result<()> {
         let folder = tempfile::tempdir()?;
         let clip = clip_with_audio(folder.path(), 30)?;
         let mut engine = audible_engine(&clip)?;
         pump(&mut engine, |state| state.video.position > 0.3)?;
 
-        for (rate, wall) in [(2.0, 1.5), (0.5, 2.0)] {
-            engine.set_rate(rate)?;
+        for pitch in [SpeedPitch::Keep, SpeedPitch::Follow] {
+            engine.set_pitch(pitch)?;
 
-            // Let the worker refill the audio queue that the change dropped
-            let settled = Instant::now() + Duration::from_millis(300);
-            pump_engine(&mut engine, |_, _| Instant::now() > settled)?;
+            for (rate, wall) in [(2.0, 1.2), (0.5, 1.6), (1.0, 0.6)] {
+                let before = engine.poll();
+                engine.set_rate(rate)?;
+                let after = follow_smoothly(&mut engine, wall)?;
+                let advanced = after.video.position - before.video.position;
 
-            let before = engine.poll();
-            let serial = before.frame_serial;
-            let until = Instant::now() + Duration::from_secs_f64(wall);
-            let after = pump_engine(&mut engine, |_, _| Instant::now() > until)?;
-            let advanced = after.video.position - before.video.position;
+                ensure!(
+                    after.video.rate == rate,
+                    "The snapshot reported another rate"
+                );
+                ensure!(
+                    (advanced - wall * rate).abs() < 0.2,
+                    "{pitch:?} at {rate}× moved {advanced} seconds in {wall}"
+                );
+                ensure!(
+                    after.frame_serial
+                        > before.frame_serial + (wall * 30. * rate * 0.8) as u64,
+                    "Too few video frames at {rate}×"
+                );
 
-            ensure!(
-                after.video.rate == rate,
-                "The snapshot reported another rate"
-            );
-            ensure!(
-                (advanced - wall * rate).abs() < 0.25,
-                "At {rate}× the clock moved {advanced} seconds in {wall}"
-            );
-            ensure!(
-                after.frame_serial > serial + (wall * 30. * rate * 0.8) as u64,
-                "Too few video frames at {rate}×"
-            );
-            let lag = after.video.position - shown(&engine)?;
-            ensure!(lag < 0.15, "Video fell {lag} seconds behind at {rate}×");
-            ensure!(audio_queued(&engine), "Audio stopped at {rate}×");
+                let lag = after.video.position - shown(&engine)?;
+                ensure!(lag < 0.15, "Video fell {lag} seconds behind at {rate}×");
+
+                let heard =
+                    heard(&engine).context("Audio was not driving the clock")?;
+                ensure!(
+                    (heard - after.video.position).abs() < 0.05,
+                    "{pitch:?} at {rate}× heard {heard} while showing {}",
+                    after.video.position
+                );
+            }
         }
+
+        // A speed of zero holds the picture and the clock without pausing
+        engine.set_rate(0.)?;
+        let stopped = follow_smoothly(&mut engine, 0.3)?.video.position;
+        let still = follow_smoothly(&mut engine, 0.5)?.video;
+        ensure!(!still.paused, "A speed of zero paused playback");
+        ensure!(
+            (still.position - stopped).abs() < 0.01,
+            "The clock moved at zero speed"
+        );
+
+        engine.set_rate(1.)?;
+        let moving = follow_smoothly(&mut engine, 0.5)?.video.position;
+        ensure!(
+            moving > still.position + 0.35,
+            "Playback did not resume from zero"
+        );
 
         engine.stop();
         Ok(())
+    }
+
+    #[test]
+    #[ignore = "Requires Vulkan and ffmpeg with libx264"]
+    fn low_frame_rate_video_keeps_up_with_its_audio() -> Result<()> {
+        let folder = tempfile::tempdir()?;
+        let clip = clip_with_audio(folder.path(), 10)?;
+        let mut engine = audible_engine(&clip)?;
+        pump(&mut engine, |state| state.video.position > 1.)?;
+
+        let state = follow_smoothly(&mut engine, 1.5)?.video;
+        let lag = state.position - shown(&engine)?;
+        ensure!(lag < 0.15, "A 10 fps video fell {lag} seconds behind");
+
+        engine.stop();
+        Ok(())
+    }
+
+    /// Polls for `seconds` and fails if the clock ever jumps or runs backward
+    fn follow_smoothly(engine: &mut Engine, seconds: f64) -> Result<Snapshot> {
+        let until = Instant::now() + Duration::from_secs_f64(seconds);
+        let mut previous = engine.poll();
+
+        loop {
+            std::thread::sleep(Duration::from_millis(5));
+            let state = engine.poll();
+            let step = state.video.position - previous.video.position;
+            ensure!(
+                (-0.01..0.08).contains(&step),
+                "The clock jumped by {step} at {}",
+                state.video.position
+            );
+            ensure!(state.video.error.is_none(), "{:?}", state.video.error);
+
+            if Instant::now() > until {
+                return Ok(state);
+            }
+            previous = state;
+        }
     }
 
     #[test]
@@ -1104,7 +1181,7 @@ mod tests {
 
         let later = switched.position + 0.5;
         pump(&mut engine, |state| state.video.position > later)?;
-        ensure!(audio_queued(&engine), "The new track did not play");
+        ensure!(heard(&engine).is_some(), "The new track did not play");
 
         engine.stop();
         Ok(())
@@ -1294,21 +1371,15 @@ mod tests {
         Ok(engine)
     }
 
-    fn holding_audio(engine: &Engine) -> bool {
-        engine
-            .shared
-            .as_ref()
-            .is_some_and(|shared| shared.lock().holding_audio)
-    }
+    /// The position of the audio being heard, which drives the clock
+    fn heard(engine: &Engine) -> Option<f64> {
+        let shared = engine.shared.as_ref()?;
+        let state = shared.lock();
+        let audio = state.audio.as_ref()?;
 
-    fn audio_queued(engine: &Engine) -> bool {
-        engine.shared.as_ref().is_some_and(|shared| {
-            let state = shared.lock();
-            state
-                .audio
-                .as_ref()
-                .is_some_and(|audio| audio.queued_bytes().is_ok_and(|bytes| bytes > 0))
-        })
+        state
+            .feed
+            .heard_position(audio.queued_bytes().ok()?, audio.latency)
     }
 
     fn test_graphics() -> Result<RenderState> {

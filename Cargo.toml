@@ -9,7 +9,7 @@ description = "A quiet, GPU-powered image viewer for everyday use"
 default = ["avif", "heif", "video", "bundled-ffmpeg"]
 avif = ["image/avif-native"]
 heif = ["dep:libheif-rs"]
-video = ["dep:ash", "dep:pollster"]
+video = ["dep:ash", "dep:pollster", "dep:signalsmith-stretch"]
 static-video = ["video"]
 # Link a patched static FFmpeg built on first use instead of the system's (Linux)
 bundled-ffmpeg = ["video"]
@@ -41,6 +41,7 @@ fast_image_resize = { version = "6", default-features = false, features = ["imag
 [target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
 ash = { version = "0.38", optional = true }
 pollster = { version = "1", optional = true }
+signalsmith-stretch = { version = "0.1", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
@@ -63,6 +64,10 @@ pkg-config = "0.3"
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 zbus = { version = "5", features = ["p2p"] }
+
+# The audio stretcher runs on SDL's audio thread and cannot keep up unoptimized
+[profile.dev.package.signalsmith-stretch]
+opt-level = 3
 
 [profile.release]
 opt-level = 3

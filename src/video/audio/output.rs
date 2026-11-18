@@ -1,13 +1,10 @@
-//! SDL3 audio output, with queue operations controlled by the playback state
+//! SDL3 audio output that pulls samples from the playback's audio feed
 
-use std::{
-    ffi::CStr,
-    ptr::{self, NonNull},
-};
+use std::{ffi::CStr, ptr::NonNull, sync::Arc};
 
 use anyhow::{Result, ensure};
 
-use super::{CHANNELS, RATE};
+use super::{CHANNELS, RATE, feed::AudioFeed};
 use crate::video::ffi::native::{self as native, sdl_error};
 
 /// Keeps SDL subsystem initialization and shutdown on the UI thread
@@ -32,35 +29,42 @@ impl Drop for AudioRuntime {
     }
 }
 
-/// Owned by playback; queue operations are serialized by Shared
+/// An SDL device stream that pulls its samples from an `AudioFeed`
 pub(in crate::video) struct AudioOutput {
     stream: NonNull<native::SDL_AudioStream>,
+    /// The callback's reference to the feed, released after the stream is destroyed
+    feed: *const AudioFeed,
     pub latency: f64,
     pub name: String,
 }
 
-// SAFETY: SDL3 queue/control functions are thread-safe and every access holds the playback mutex
-// SDL subsystem initialization and shutdown belong to the UI's AudioRuntime
+// SAFETY: SDL3 stream functions are thread-safe; the feed pointer is an `Arc` that is
+// only read by SDL's callback and released once in Drop
 unsafe impl Send for AudioOutput {}
 
 impl AudioOutput {
-    pub fn open(volume: f64) -> Result<Self> {
+    /// Opens the default device, paused, playing whatever `feed` provides
+    pub fn open(volume: f64, feed: Arc<AudioFeed>) -> Result<Self> {
         let requested = native::SDL_AudioSpec {
             format: native::SDL_AUDIO_F32,
             channels: CHANNELS as i32,
             freq: RATE as i32,
         };
+        let feed = Arc::into_raw(feed);
 
-        // SAFETY: SDL copies the requested format and owns the returned stream until destroyed
+        // SAFETY: SDL copies the format, and the callback's feed lives until Drop
+        // destroys the stream
         let stream = unsafe {
             native::SDL_OpenAudioDeviceStream(
                 native::SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
                 &requested,
-                None,
-                ptr::null_mut(),
+                Some(pull),
+                feed.cast_mut().cast(),
             )
         };
         let Some(stream) = NonNull::new(stream) else {
+            // SAFETY: SDL never received the reference, so it is released here
+            drop(unsafe { Arc::from_raw(feed) });
             anyhow::bail!("Cannot open SDL3 audio: {}", sdl_error());
         };
 
@@ -68,6 +72,7 @@ impl AudioOutput {
             latency: device_latency(stream),
             name: driver_name(),
             stream,
+            feed,
         };
         output.volume(volume)?;
 
@@ -75,7 +80,7 @@ impl AudioOutput {
     }
 
     pub fn volume(&self, volume: f64) -> Result<()> {
-        // SAFETY: The stream remains alive and queue/control calls are mutex-serialized
+        // SAFETY: The stream remains alive and SDL serializes stream changes
         let success = unsafe {
             native::SDL_SetAudioStreamGain(
                 self.stream.as_ptr(),
@@ -85,8 +90,19 @@ impl AudioOutput {
         check(success, "Cannot set audio volume")
     }
 
+    /// Plays samples faster or slower, which also raises or lowers their pitch
+    pub fn set_ratio(&self, ratio: f64) -> Result<()> {
+        let ratio = ratio.clamp(0.01, 100.) as f32;
+
+        // SAFETY: The stream remains alive and SDL serializes stream changes
+        let success = unsafe {
+            native::SDL_SetAudioStreamFrequencyRatio(self.stream.as_ptr(), ratio)
+        };
+        check(success, "Cannot change the audio speed")
+    }
+
     pub fn pause(&self, paused: bool) -> Result<()> {
-        // SAFETY: The stream remains alive and queue/control calls are mutex-serialized
+        // SAFETY: The stream remains alive and SDL serializes stream changes
         let success = unsafe {
             if paused {
                 native::SDL_PauseAudioStreamDevice(self.stream.as_ptr())
@@ -97,16 +113,18 @@ impl AudioOutput {
         check(success, "Cannot change audio pause state")
     }
 
+    /// Pauses and drops what SDL took from the feed but has not played
     pub fn clear(&self) -> Result<()> {
         self.pause(true)?;
 
-        // SAFETY: The stream remains alive and queue/control calls are mutex-serialized
+        // SAFETY: The stream remains alive and SDL serializes stream changes
         let success = unsafe { native::SDL_ClearAudioStream(self.stream.as_ptr()) };
         check(success, "Cannot clear queued audio")
     }
 
+    /// Bytes SDL took from the feed that the device has not played yet
     pub fn queued_bytes(&self) -> Result<usize> {
-        // SAFETY: The stream remains alive and queue/control calls are mutex-serialized
+        // SAFETY: The stream remains alive and SDL serializes stream changes
         let bytes = unsafe { native::SDL_GetAudioStreamQueued(self.stream.as_ptr()) };
         ensure!(
             bytes >= 0,
@@ -116,32 +134,48 @@ impl AudioOutput {
 
         Ok(bytes as usize)
     }
+}
 
-    pub fn put(&self, samples: &[f32]) -> Result<()> {
-        let bytes = i32::try_from(size_of_val(samples))?;
+/// SDL's request for more samples, answered from the feed
+unsafe extern "C" fn pull(
+    feed: *mut std::ffi::c_void,
+    stream: *mut native::SDL_AudioStream,
+    additional: std::ffi::c_int,
+    _total: std::ffi::c_int,
+) {
+    let frames =
+        usize::try_from(additional).unwrap_or(0) / (CHANNELS * size_of::<f32>());
 
-        // SAFETY: SDL copies the borrowed PCM data before returning
-        let success = unsafe {
-            native::SDL_PutAudioStreamData(
-                self.stream.as_ptr(),
-                samples.as_ptr().cast(),
-                bytes,
-            )
-        };
-        check(success, "Cannot queue SDL3 audio")
+    if frames == 0 {
+        return;
     }
 
-    pub fn flush(&self) -> Result<()> {
-        // SAFETY: The stream remains alive and queue/control calls are mutex-serialized
-        let success = unsafe { native::SDL_FlushAudioStream(self.stream.as_ptr()) };
-        check(success, "Cannot flush SDL3 audio")
-    }
+    // SAFETY: The output keeps this feed alive until the stream is destroyed
+    let feed = unsafe { &*feed.cast_const().cast::<AudioFeed>() };
+
+    // A panic must not unwind into SDL's audio thread
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        feed.fill(frames, |samples| {
+            let Ok(bytes) = i32::try_from(size_of_val(samples)) else {
+                return;
+            };
+
+            // SAFETY: SDL copies the samples before returning
+            unsafe {
+                native::SDL_PutAudioStreamData(stream, samples.as_ptr().cast(), bytes);
+            }
+        });
+    }));
 }
 
 impl Drop for AudioOutput {
     fn drop(&mut self) {
-        // SAFETY: The engine has joined the media worker before releasing its stream
-        unsafe { native::SDL_DestroyAudioStream(self.stream.as_ptr()) };
+        // SAFETY: Destroying the stream waits for a running callback, so the feed's
+        // reference can be released afterward
+        unsafe {
+            native::SDL_DestroyAudioStream(self.stream.as_ptr());
+            drop(Arc::from_raw(self.feed));
+        }
     }
 }
 
