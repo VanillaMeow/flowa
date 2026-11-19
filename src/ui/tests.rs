@@ -566,6 +566,75 @@ mod adjustments {
         );
     }
 
+    /// Screen rects of the sliders, top to bottom, from the accessibility tree
+    fn slider_rects(ctx: &egui::Context, current: Adjustments) -> Vec<Rect> {
+        ctx.enable_accesskit();
+        let colors = theme::colors(Theme::Charcoal, Accent::Theme, true);
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(400., 400.))),
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            adjustments::controls(ui, current, colors, &mut Vec::new());
+        });
+        output.textures_delta.clear();
+
+        let update = output
+            .platform_output
+            .accesskit_update
+            .expect("Tree update");
+        let mut rects: Vec<Rect> = update
+            .nodes
+            .iter()
+            .filter(|(_, node)| node.role() == egui::accesskit::Role::Slider)
+            .filter_map(|(_, node)| node.bounds())
+            .map(|bounds| {
+                Rect::from_min_max(
+                    Pos2::new(bounds.x0 as f32, bounds.y0 as f32),
+                    Pos2::new(bounds.x1 as f32, bounds.y1 as f32),
+                )
+            })
+            .collect();
+        rects.sort_by(|a, b| a.top().total_cmp(&b.top()));
+
+        rects
+    }
+
+    fn double_click(pos: Pos2) -> Vec<Event> {
+        let mut events = vec![Event::PointerMoved(pos)];
+        events.extend(click(pos));
+        events.extend(click(pos));
+
+        events
+    }
+
+    #[test]
+    fn double_clicking_a_slider_resets_only_that_value() {
+        let ctx = egui::Context::default();
+        let current = Adjustments {
+            contrast: 1.4,
+            gamma: 1.5,
+            ..Adjustments::NEUTRAL
+        };
+        let sliders = slider_rects(&ctx, current);
+        assert_eq!(sliders.len(), 4);
+
+        // Contrast is the second row; clicking left of center first moves its value
+        let commands = frame(
+            &ctx,
+            current,
+            double_click(sliders[1].left_center() + vec2(20., 0.)),
+        );
+
+        assert_eq!(
+            commands.last(),
+            Some(&Command::View(ViewCommand::Adjust(Adjustments {
+                contrast: 1.,
+                ..current
+            })))
+        );
+    }
+
     #[test]
     fn delete_on_a_focused_slider_resets_only_that_value() {
         let ctx = egui::Context::default();
@@ -577,8 +646,7 @@ mod adjustments {
 
         assert!(frame(&ctx, current, Vec::new()).is_empty());
 
-        // The brightness reset button comes first, then its slider
-        frame(&ctx, current, vec![key(Key::Tab)]);
+        // The brightness slider takes focus first
         frame(&ctx, current, vec![key(Key::Tab)]);
         let commands = frame(&ctx, current, vec![key(Key::Delete)]);
 

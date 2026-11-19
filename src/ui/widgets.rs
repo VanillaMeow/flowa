@@ -40,6 +40,17 @@ pub fn adjusting_menu() -> egui::containers::menu::MenuConfig {
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
 }
 
+/// Whether a slider was double-clicked, since egui sliders sense drags and never report
+/// clicks of their own
+pub fn double_clicked(ui: &Ui, slider: &egui::Response) -> bool {
+    slider.contains_pointer()
+        && ui.input(|input| {
+            input
+                .pointer
+                .button_double_clicked(egui::PointerButton::Primary)
+        })
+}
+
 /// A submenu that stays open while its sliders and fields are used
 pub fn adjusting_submenu<R>(
     ui: &mut Ui,

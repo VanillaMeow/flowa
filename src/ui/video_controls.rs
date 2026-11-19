@@ -474,7 +474,7 @@ fn speed_slider_contents(
     );
     let response = response.on_hover_text(shortcuts);
 
-    if response.double_clicked() {
+    if widgets::double_clicked(ui, &response) {
         commands.push(PlaybackCommand::SetRate(1.).into());
     } else if response.changed() {
         commands.push(PlaybackCommand::SetRate(slider_to_rate(position)).into());
@@ -846,19 +846,18 @@ mod tests {
             pressed,
             modifiers: Modifiers::NONE,
         };
-        let show =
-            |controls: &mut VideoControls, state: &mut VideoState, events| {
-                let (commands, _) =
-                    frame_with_state(&ctx, controls, 800., true, state, events);
+        let show = |controls: &mut VideoControls, state: &mut VideoState, events| {
+            let (commands, _) =
+                frame_with_state(&ctx, controls, 800., true, state, events);
 
-                for command in commands {
-                    if let Command::Playback(PlaybackCommand::SetRate(rate)) = command {
-                        state.rate = rate;
-                    }
+            for command in commands {
+                if let Command::Playback(PlaybackCommand::SetRate(rate)) = command {
+                    state.rate = rate;
                 }
+            }
 
-                slider_rects(&ctx)
-            };
+            slider_rects(&ctx)
+        };
 
         // The speed button sits just before the mute button and volume slider
         let volume = show(&mut controls, &mut state, Vec::new())[2].expect("Volume");
@@ -903,6 +902,39 @@ mod tests {
         }
 
         assert_eq!(state.rate, MAX_RATE);
+    }
+
+    #[test]
+    fn double_clicking_the_speed_slider_returns_to_normal_speed() {
+        let ctx = egui::Context::default();
+        let mut controls = VideoControls::default();
+        let state = VideoState {
+            active: true,
+            position: 70.,
+            duration: 7200.,
+            rate: 2.,
+            ..Default::default()
+        };
+        frame_with_state(&ctx, &mut controls, 1200., false, &state, Vec::new());
+        let slider = slider_rects(&ctx)[1].expect("Speed slider");
+
+        let pos = slider.left_center() + vec2(10., 0.);
+        let mut events = vec![Event::PointerMoved(pos)];
+        for pressed in [true, false, true, false] {
+            events.push(Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            });
+        }
+        let (commands, _) =
+            frame_with_state(&ctx, &mut controls, 1200., false, &state, events);
+
+        assert_eq!(
+            commands.last(),
+            Some(&Command::Playback(PlaybackCommand::SetRate(1.)))
+        );
     }
 
     #[test]

@@ -186,28 +186,52 @@ fn reset_button(ui: &mut egui::Ui, label: &str, changed: bool) -> bool {
 }
 
 /// The slider with its number field; returns whether the user asked to reset it
+///
+/// The field is separate from the slider, so double-clicking the slider resets it
+/// while the field stays free for typing
 fn slider(ui: &mut egui::Ui, control: &Control, value: &mut f32) -> bool {
     let mut shown = *value * control.scale;
-    let response = ui.add(
+    let slider = ui.add(
         egui::Slider::new(&mut shown, control.range.clone())
             .logarithmic(control.logarithmic)
             .step_by(control.step)
+            .show_value(false),
+    );
+    let field = ui.add(
+        egui::DragValue::new(&mut shown)
+            .range(control.range.clone())
+            .speed(control.step)
+            .fixed_decimals(decimals(control.step))
             .suffix(control.suffix),
     );
 
-    if response.changed() {
+    if slider.changed() || field.changed() {
         *value = shown / control.scale;
     }
 
-    let keyboard_reset = response.has_focus()
+    let keyboard_reset = slider.has_focus()
         && ui.input_mut(|input| {
             input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
                 || input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
         });
 
-    let response = response.on_hover_text("Double-click or press Delete to reset");
+    let double_clicked = widgets::double_clicked(ui, &slider);
+    slider.on_hover_text("Double-click or press Delete to reset");
 
-    response.double_clicked() || keyboard_reset
+    double_clicked || keyboard_reset
+}
+
+/// Decimal places that show every value a step can reach, such as 2 for 0.01
+fn decimals(step: f64) -> usize {
+    let mut places = 0;
+    let mut scaled = step;
+
+    while scaled.fract().abs() > 1e-9 && places < 6 {
+        scaled *= 10.;
+        places += 1;
+    }
+
+    places
 }
 
 fn icon_color(ui: &egui::Ui) -> egui::Color32 {
