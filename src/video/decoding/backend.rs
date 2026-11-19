@@ -14,7 +14,10 @@ use super::{
 };
 use crate::{
     settings::VideoDecoder,
-    video::{ffmpeg::Stream, gpu::NativeGpu},
+    video::{
+        ffmpeg::{HwDevice, Stream},
+        gpu::NativeGpu,
+    },
 };
 
 /// The decoders to try for a preference, in order
@@ -56,11 +59,12 @@ pub(super) fn detect(decoder: VideoDecoder, gpu: &NativeGpu) -> bool {
         .is_some_and(|api| api.available() && api.create_device(gpu).is_ok())
 }
 
-/// Opens a decoder for a stream
+/// Opens a decoder for a stream, on `device` when it shares another decoder's
 pub(super) fn open(
     decoder: VideoDecoder,
     gpu: &Arc<NativeGpu>,
     stream: &Arc<Stream>,
+    device: Option<HwDevice>,
 ) -> Result<Box<dyn Decoder>> {
     ensure!(
         decoder != VideoDecoder::Auto,
@@ -71,7 +75,7 @@ pub(super) fn open(
         return Ok(Box::new(SoftwareDecoder::new(Arc::clone(stream))?));
     };
 
-    Ok(Box::new(HardwareDecoder::open(api, gpu, stream)?))
+    Ok(Box::new(HardwareDecoder::open(api, gpu, stream, device)?))
 }
 
 #[cfg(test)]

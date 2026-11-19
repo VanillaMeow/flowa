@@ -428,7 +428,7 @@ mod tests {
         let (started, ready) = mpsc::channel();
         let (release, gate) = mpsc::channel();
         let thread = std::thread::spawn(move || {
-            assert!(requests.take().tick.is_some());
+            assert!(requests.take(true).tick.is_some());
             started
                 .send(())
                 .expect("The UI should still own its startup receiver");
@@ -467,7 +467,7 @@ mod tests {
                 Err(mpsc::TryRecvError::Empty)
             ));
         }
-        let queued = worker.mailbox.take();
+        let queued = worker.mailbox.take(true);
         assert!(matches!(queued.source, Some((999, _))));
         assert_eq!(queued.commands.len(), 3);
         assert!(

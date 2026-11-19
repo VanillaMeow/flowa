@@ -16,6 +16,8 @@ pub(super) struct HardwareFormat {
     // FFmpeg reads this through the context's opaque pointer during get_format
     format: ffi::AVPixelFormat,
     device: Option<HwDevice>,
+    /// Whether the device's surface pool cannot grow, as with VA-API
+    fixed_pool: bool,
 }
 
 impl HardwareFormat {
@@ -53,6 +55,7 @@ impl HardwareFormat {
                             decoder,
                             format: (*configuration).pix_fmt,
                             device: Some(device),
+                            fixed_pool: device_type == ffi::AV_HWDEVICE_TYPE_VAAPI,
                         });
                     }
 
@@ -83,10 +86,14 @@ impl CodecSetup for HardwareFormat {
         context.thread_count = 1;
         context.thread_type = 0;
 
-        // Frames playback keeps for stepping back must not exhaust the surface pool
-        context.extra_hw_frames = (crate::video::decoding::RETAINED_HARDWARE_FRAMES
-            + super::super::HELD_HARDWARE_FRAMES)
-            as i32;
+        // Frames playback keeps for stepping back must not exhaust a pool that cannot
+        // grow. NVDEC copies frames out of its surfaces and Vulkan allocates frames as
+        // needed, where extra frames would only take memory up front
+        if self.fixed_pool {
+            let retained = super::super::retained_frames(context.width, context.height);
+            context.extra_hw_frames =
+                (retained + super::super::HELD_HARDWARE_FRAMES) as i32;
+        }
     }
 }
 

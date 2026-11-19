@@ -133,6 +133,52 @@ impl Media {
         self.audio_index.map(|index| self.input.stream(index))
     }
 
+    /// Skips every stream but the video, for a reader that only decodes pictures
+    pub fn read_only_video(&mut self) {
+        self.audio_index = None;
+        self.subtitle_index = None;
+
+        for index in 0..self.stream_count() {
+            if index == self.video_index {
+                continue;
+            }
+
+            // SAFETY: The input owns its streams, and only this reader uses it
+            unsafe {
+                let stream = *(*self.input.raw()).streams.add(index);
+                (*stream).discard = ffi::AVDISCARD_ALL;
+            }
+        }
+    }
+
+    /// Where the last indexed video keyframe at or before `seconds` sits, when the file
+    /// has an index
+    pub fn keyframe_at_or_before(&self, seconds: f64) -> Option<f64> {
+        let stream = ptr::from_ref(self.input.stream(self.video_index)).cast_mut();
+        let time_base = self.info.video_time_base;
+        if time_base <= 0. {
+            return None;
+        }
+
+        let timestamp = ((seconds + self.info.origin) / time_base).floor() as i64;
+
+        // SAFETY: The input owns the stream and its index, which only this reader uses
+        let entry = unsafe {
+            let index = ffi::av_index_search_timestamp(
+                stream,
+                timestamp,
+                ffi::AVSEEK_FLAG_BACKWARD as i32,
+            );
+            if index < 0 {
+                return None;
+            }
+
+            ffi::avformat_index_get_entry(stream, index).as_ref()?
+        };
+
+        Some(entry.timestamp as f64 * time_base - self.info.origin)
+    }
+
     pub fn read(&mut self) -> Result<Option<Packet>> {
         let Some(mut packet) = self.input.read()? else {
             return Ok(None);

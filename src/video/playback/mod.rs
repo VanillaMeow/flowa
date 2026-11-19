@@ -7,6 +7,7 @@ mod frame_history;
 mod mailbox;
 mod pipeline;
 mod playback_thread;
+mod prefetch;
 mod queues;
 mod service;
 mod state;

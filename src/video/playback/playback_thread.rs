@@ -11,6 +11,9 @@ use eframe::egui_wgpu::RenderState;
 use super::{engine::Snapshot, mailbox::Mailbox, pipeline::Pipeline};
 use crate::video::{PlayerCommand, gpu::NativeGpu, presentation::Target};
 
+/// The longest background decoding runs before requests are checked again
+const BACKGROUND_SLICE: Duration = Duration::from_millis(3);
+
 /// One finished playback step, sent back to the UI
 pub(super) struct Completed {
     pub generation: u64,
@@ -74,8 +77,16 @@ struct PlaybackThread {
 impl PlaybackThread {
     /// Handles requests until shutdown, returning the targets the UI must free
     fn run(mut self, requests: &Mailbox) -> Vec<Target> {
+        let mut background = false;
+
         loop {
-            let work = requests.take();
+            let work = requests.take(!background);
+
+            // Background decoding runs in short slices so requests never wait long
+            if work.is_empty() {
+                background = self.background_work();
+                continue;
+            }
 
             if work.shutdown {
                 break;
@@ -98,9 +109,23 @@ impl PlaybackThread {
             if !self.tick(size, changed) {
                 break;
             }
+
+            background = true;
         }
 
         self.finish()
+    }
+
+    /// Decodes in the background for a moment; returns whether work remains
+    fn background_work(&mut self) -> bool {
+        let deadline = std::time::Instant::now() + BACKGROUND_SLICE;
+        let (busy, shown) = self.playback.background_work(deadline);
+
+        if shown {
+            self.ctx.request_repaint();
+        }
+
+        busy
     }
 
     fn replace_source(&mut self, generation: u64, path: Option<PathBuf>) {

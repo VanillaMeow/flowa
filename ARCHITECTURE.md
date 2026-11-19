@@ -129,7 +129,7 @@ after GPU completion.
 `native/video/placebo.c` is the only C: frame import, which libplacebo implements
 in a header, and the libplacebo macros and exported data Rust cannot link.
 
-`video/playback/` schedules frames and runs the demux and audio worker.
+`video/playback/` schedules frames, runs the demux and audio worker, and decodes earlier frames in the background while the user steps backward.
 `pipeline.rs` couples the engine with the presenter and has the presenter release
 its frames before the engine drops the decoder that made them. `service.rs` is the
 UI-facing `Player`. When the device has a second graphics queue, it hands requests

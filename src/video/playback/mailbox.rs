@@ -33,14 +33,11 @@ impl Mailbox {
     }
 
     /// Waits for at least one request and takes everything queued
-    pub fn take(&self) -> Requests {
+    /// Takes the pending requests, waiting for some unless the caller has other work
+    pub fn take(&self, wait: bool) -> Requests {
         let mut requests = self.requests.lock().unwrap_or_else(|e| e.into_inner());
 
-        while requests.source.is_none()
-            && requests.commands.is_empty()
-            && requests.tick.is_none()
-            && !requests.shutdown
-        {
+        while wait && requests.is_empty() {
             requests = self.wake.wait(requests).unwrap_or_else(|e| e.into_inner());
         }
 
@@ -49,6 +46,13 @@ impl Mailbox {
 }
 
 impl Requests {
+    pub fn is_empty(&self) -> bool {
+        self.source.is_none()
+            && self.commands.is_empty()
+            && self.tick.is_none()
+            && !self.shutdown
+    }
+
     pub fn replace_source(&mut self, generation: u64, path: Option<PathBuf>) {
         self.source = Some((generation, path));
         self.tick = self.tick.map(|_| None);

@@ -75,6 +75,18 @@ impl Pipeline {
         }
     }
 
+    /// Decodes in the background until `deadline`; reports whether work remains and
+    /// whether a new frame needs drawing
+    pub fn background_work(&mut self, deadline: std::time::Instant) -> (bool, bool) {
+        let work = self.engine.background_work(deadline);
+
+        if work.shown {
+            self.poll();
+        }
+
+        (work.busy, work.shown)
+    }
+
     pub fn poll(&mut self) {
         let status = self.engine.poll();
         self.needs_redraw |= status.frame_serial != self.status.frame_serial;

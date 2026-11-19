@@ -126,6 +126,17 @@ impl DecoderSelection {
         self.active
     }
 
+    /// Another decoder of the kind that produced frames, on the same device, so its
+    /// frames draw the same way
+    pub fn open_sibling(&self) -> Result<Box<dyn Decoder>> {
+        let kind = self
+            .selected
+            .context("No decoder has produced frames yet")?;
+        let device = self.decoder.as_ref().and_then(|decoder| decoder.device());
+
+        backend::open(kind, &self.gpu, &self.stream, device)
+    }
+
     /// Replaces the active decoder with the next candidate after it failed
     ///
     /// The caller seeks afterwards so the new decoder starts from a keyframe
@@ -263,7 +274,7 @@ impl DecoderSelection {
                 continue;
             }
 
-            match backend::open(candidate, &self.gpu, &self.stream) {
+            match backend::open(candidate, &self.gpu, &self.stream, None) {
                 Ok(decoder) => {
                     self.decoder = Some(decoder);
                     self.active = Some(candidate);

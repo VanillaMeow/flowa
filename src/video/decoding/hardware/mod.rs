@@ -61,14 +61,19 @@ pub(super) struct HardwareDecoder {
 }
 
 impl HardwareDecoder {
+    /// Opens a decoder on `device`, or on a new device for the API
     pub fn open(
         api: &dyn HardwareApi,
         gpu: &Arc<NativeGpu>,
         stream: &Stream,
+        device: Option<HwDevice>,
     ) -> Result<Self> {
-        let device = api
-            .create_device(gpu)
-            .map_err(|error| error.context(DecoderUnavailable))?;
+        let device = match device {
+            Some(device) => device,
+            None => api
+                .create_device(gpu)
+                .map_err(|error| error.context(DecoderUnavailable))?,
+        };
         let setup = HardwareFormat::negotiate(stream.data(), device)?;
         let format = setup.format();
         let codec = CodecContext::open(stream.data(), setup)?;
@@ -89,6 +94,13 @@ impl Decoder for HardwareDecoder {
 
     fn send(&mut self, packet: Option<&Packet>) -> Result<Sent> {
         with_reason(logging::first_error(|| self.codec.send(packet)))
+    }
+
+    fn device(&self) -> Option<HwDevice> {
+        let device = self.codec.data().hw_device_ctx;
+
+        // SAFETY: The open codec holds its device reference for as long as it lives
+        unsafe { HwDevice::from_raw(ffi::av_buffer_ref(device)) }.ok()
     }
 
     fn receive(&mut self) -> Result<Receive<DecodedFrame>> {
