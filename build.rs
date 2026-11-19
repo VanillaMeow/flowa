@@ -20,6 +20,7 @@ const MEDIA_LIBRARIES: &[(&str, &str)] = &[
 /// SDL3 audio functions called by the playback engine
 const SDL_FUNCTIONS: &[&str] = &[
     "SDL_InitSubSystem",
+    "SDL_SetHint",
     "SDL_QuitSubSystem",
     "SDL_GetError",
     "SDL_GetCurrentAudioDriver",

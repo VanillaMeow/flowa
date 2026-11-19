@@ -14,6 +14,14 @@ pub(in crate::video) struct AudioRuntime {
 
 impl AudioRuntime {
     pub fn new() -> Result<Self> {
+        // Tests play generated tones, which must never reach real speakers; an
+        // explicit SDL_AUDIO_DRIVER still wins over this hint
+        #[cfg(test)]
+        // SAFETY: Both strings are NUL-terminated constants
+        unsafe {
+            native::SDL_SetHint(c"SDL_AUDIO_DRIVER".as_ptr(), c"dummy".as_ptr());
+        }
+
         // SAFETY: Initialization takes plain flags and is balanced by Drop
         let initialized = unsafe { native::SDL_InitSubSystem(native::SDL_INIT_AUDIO) };
         ensure!(initialized, "Cannot initialize SDL3 audio: {}", sdl_error());
@@ -218,4 +226,20 @@ fn check(success: bool, message: &str) -> Result<()> {
     ensure!(success, "{message}: {}", sdl_error());
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AudioRuntime, driver_name};
+
+    #[test]
+    fn tests_play_through_the_silent_driver_unless_one_is_named() {
+        let named = std::env::var("SDL_AUDIO_DRIVER").ok();
+        let Ok(_runtime) = AudioRuntime::new() else {
+            return;
+        };
+
+        let expected = format!("sdl3/{}", named.as_deref().unwrap_or("dummy"));
+        assert_eq!(driver_name(), expected);
+    }
 }
