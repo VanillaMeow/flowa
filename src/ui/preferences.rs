@@ -147,18 +147,13 @@ fn viewing(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors) {
         );
     });
 
-    section(ui, "Video speed", colors, |ui| {
+    section(ui, "Pitch at other speeds", colors, |ui| {
         let options = SpeedPitch::VARIANTS
             .iter()
             .map(|pitch| (*pitch, pitch.as_ref()));
         widgets::segmented(ui, &mut settings.speed_pitch, options, colors);
 
-        let hint = match settings.speed_pitch {
-            SpeedPitch::Keep => "Voices sound the same at any speed",
-            SpeedPitch::Follow => {
-                "Slower sounds deeper and faster higher, like a record"
-            }
-        };
+        let hint = settings.speed_pitch.description();
         widgets::hint(ui, hint, colors);
     });
 

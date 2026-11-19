@@ -843,6 +843,7 @@ impl Engine {
             duration,
             volume: state.volume,
             rate,
+            pitch: self.pitch,
             size,
             decoder: self.decoder.as_ref().and_then(|decoder| decoder.selected),
             fallback: self.decoder.as_ref().and_then(|decoder| decoder.fallback),
@@ -1134,7 +1135,7 @@ mod tests {
         let mut engine = audible_engine(&clip)?;
         pump(&mut engine, |state| state.video.position > 0.3)?;
 
-        for pitch in [SpeedPitch::Keep, SpeedPitch::Follow] {
+        for pitch in [SpeedPitch::Keep, SpeedPitch::Follow, SpeedPitch::Lower] {
             engine.set_pitch(pitch)?;
 
             for (rate, wall) in [(2.0, 1.2), (0.5, 1.6), (1.0, 0.6)] {
@@ -1199,7 +1200,7 @@ mod tests {
         let mut engine = audible_engine(&clip)?;
         pump(&mut engine, |state| state.video.position > 0.5)?;
 
-        for pitch in [SpeedPitch::Keep, SpeedPitch::Follow] {
+        for pitch in [SpeedPitch::Keep, SpeedPitch::Follow, SpeedPitch::Lower] {
             engine.set_pitch(pitch)?;
             engine.set_rate(0.25)?;
             let before = follow_smoothly(&mut engine, 0.6)?.video.position;
@@ -1245,7 +1246,7 @@ mod tests {
         let clip = clip_with_audio(folder.path(), 30)?;
         let mut engine = audible_engine(&clip)?;
 
-        for pitch in [SpeedPitch::Keep, SpeedPitch::Follow] {
+        for pitch in [SpeedPitch::Keep, SpeedPitch::Follow, SpeedPitch::Lower] {
             engine.set_pitch(pitch)?;
             engine.set_rate(1.5)?;
             let duration = pump(&mut engine, |state| state.video.duration > 0.)?
@@ -1540,7 +1541,7 @@ mod tests {
                 "-i",
                 "sine=frequency=440:sample_rate=48000",
                 "-t",
-                "12",
+                "20",
                 "-c:v",
                 "libx264",
                 "-g",

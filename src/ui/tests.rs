@@ -885,9 +885,14 @@ mod screenshots {
                 adjustments::controls(ui, changed, colors, &mut Vec::new())
             });
         })?;
-        screenshot(&graphics, "speed-popup", [480, 220], |ui| {
+        screenshot(&graphics, "speed-popup", [480, 280], |ui| {
             popup(ui, |ui| {
-                video_controls::speed_options(ui, 1.5, &mut Vec::new())
+                video_controls::speed_options(
+                    ui,
+                    1.5,
+                    crate::settings::SpeedPitch::Lower,
+                    &mut Vec::new(),
+                )
             });
         })?;
 

@@ -52,6 +52,7 @@ impl VideoSession {
             loading: true,
             volume: self.state.volume,
             rate: self.state.rate,
+            pitch: self.state.pitch,
             ..Default::default()
         };
 
@@ -82,6 +83,7 @@ impl VideoSession {
         self.state = VideoState {
             volume: self.state.volume,
             rate: self.state.rate,
+            pitch: self.state.pitch,
             ..Default::default()
         };
         self.texture = None;
@@ -187,6 +189,7 @@ impl VideoSession {
 
     /// Chooses whether audio keeps its pitch at other speeds
     pub fn set_pitch(&mut self, pitch: SpeedPitch) -> Result<()> {
+        self.state.pitch = pitch;
         self.command(PlayerCommand::Pitch(pitch))
     }
 

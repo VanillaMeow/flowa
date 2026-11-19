@@ -5,6 +5,9 @@
 //! or stretches them with Signalsmith Stretch, so pitch stays. Rate changes apply to
 //! the next request, so nothing queued has to be dropped
 //!
+//! When a speed change moves from one way to the other, as lowering pitch only below
+//! normal speed does at 1×, the old way plays on briefly and fades into the new one
+//!
 //! Played samples stay for a few seconds, so playback can resume a little earlier
 //! after stepping back without reading the file again
 
@@ -21,6 +24,8 @@ const HISTORY_SECONDS: f64 = 3.;
 const MAX_GAP_SECONDS: f64 = 30.;
 /// Below this rate the output is silent and nothing is consumed
 pub(in crate::video) const SILENT_RATE: f64 = 0.01;
+/// How long the old way of producing audio fades into the new one
+const FADE_SECONDS: f64 = 0.03;
 
 pub(in crate::video) struct AudioFeed {
     state: Mutex<FeedState>,
@@ -35,11 +40,27 @@ struct FeedState {
     read: usize,
     rate: f64,
     pitch: SpeedPitch,
+    /// Whether audio is stretched at the current rate, rather than resampled by SDL
+    stretching: bool,
     stretch: Stretch,
     /// Fractional input frames owed to the stretcher between requests
     carry: f64,
+    /// The previous way of producing audio, still fading out
+    fade: Option<Fade>,
     input: Vec<f32>,
     output: Vec<f32>,
+    fading: Vec<f32>,
+}
+
+/// Audio from before a switch between stretching and resampling, which plays on at
+/// media speed under the new audio until it has faded out
+struct Fade {
+    /// Next frame of the old audio
+    read: usize,
+    /// Whether the old audio came from the stretcher, which keeps running for it
+    stretched: bool,
+    /// Frames already faded
+    done: usize,
 }
 
 impl AudioFeed {
@@ -51,10 +72,13 @@ impl AudioFeed {
                 read: 0,
                 rate,
                 pitch,
+                stretching: pitch.stretches(rate),
                 stretch: Stretch::preset_default(CHANNELS as u32, RATE as u32),
                 carry: 0.,
+                fade: None,
                 input: Vec::new(),
                 output: Vec::new(),
+                fading: Vec::new(),
             }),
         }
     }
@@ -89,6 +113,7 @@ impl AudioFeed {
         state.samples.clear();
         state.start = None;
         state.read = 0;
+        state.fade = None;
         state.restart_stretch();
     }
 
@@ -104,27 +129,40 @@ impl AudioFeed {
         self.lock().move_to(position, latency)
     }
 
-    pub fn set_rate(&self, rate: f64) {
-        self.lock().rate = rate;
+    /// Changes speed from the next request on; `queued_bytes` and `latency` describe
+    /// what SDL holds, so a switch between stretching and resampling keeps the heard
+    /// position
+    pub fn set_rate(&self, rate: f64, queued_bytes: usize, latency: f64) {
+        let queued = queued_bytes as f64 / BYTES_PER_SECOND as f64;
+
+        self.lock().set_rate(rate, queued, latency);
     }
 
+    /// Changes how speed affects pitch; the caller then moves to the heard position,
+    /// since what SDL holds was produced the old way
     pub fn set_pitch(&self, pitch: SpeedPitch) {
         let mut state = self.lock();
+        state.pitch = pitch;
 
-        if state.pitch != pitch {
-            state.pitch = pitch;
+        let stretching = pitch.stretches(state.rate);
+        if state.stretching != stretching {
+            state.stretching = stretching;
+            state.fade = None;
             state.restart_stretch();
         }
+    }
+
+    /// Whether audio is stretched at the current rate, so SDL must not resample it
+    pub fn stretching(&self) -> bool {
+        self.lock().stretching
     }
 
     /// Media time of the sample being heard, given what SDL still holds and the
     /// device latency
     pub fn heard_position(&self, queued_bytes: usize, latency: f64) -> Option<f64> {
-        let state = self.lock();
-        let next = state.start? + state.read as f64 / RATE as f64;
         let queued = queued_bytes as f64 / BYTES_PER_SECOND as f64;
 
-        Some(next - state.delay(queued, latency))
+        self.lock().heard(queued, latency)
     }
 
     /// Produces up to `frames` frames of output for SDL and passes them to `put`
@@ -148,6 +186,59 @@ impl FeedState {
 
     fn end(&self) -> Option<f64> {
         Some(self.start? + self.frames() as f64 / RATE as f64)
+    }
+
+    fn heard(&self, queued: f64, latency: f64) -> Option<f64> {
+        let next = self.start? + self.read as f64 / RATE as f64;
+
+        Some(next - self.delay(queued, latency))
+    }
+
+    fn set_rate(&mut self, rate: f64, queued: f64, latency: f64) {
+        let heard = self.heard(queued, latency);
+        self.rate = rate;
+
+        let stretching = self.pitch.stretches(rate);
+        if stretching == self.stretching {
+            return;
+        }
+
+        self.switch(stretching, heard, queued, latency);
+    }
+
+    /// Starts producing audio the other way from where it is heard, fading the old way
+    /// out underneath
+    fn switch(
+        &mut self,
+        stretching: bool,
+        heard: Option<f64>,
+        queued: f64,
+        latency: f64,
+    ) {
+        let old_read = self.read;
+        self.stretching = stretching;
+        self.fade = None;
+
+        let (Some(heard), Some(start)) = (heard, self.start) else {
+            self.restart_stretch();
+            return;
+        };
+
+        // The new way reads far enough ahead that its first audio heard continues on
+        let read_at = heard + self.delay(queued, latency);
+        let read = ((read_at - start) * RATE as f64).round().max(0.) as usize;
+        self.read = read.min(self.frames());
+
+        if stretching {
+            self.restart_stretch();
+            self.preroll();
+        }
+
+        self.fade = Some(Fade {
+            read: old_read,
+            stretched: !stretching,
+            done: 0,
+        });
     }
 
     fn push(&mut self, samples: &[f32], position: f64) {
@@ -188,14 +279,13 @@ impl FeedState {
     fn delay(&self, queued: f64, latency: f64) -> f64 {
         let rate = self.rate;
 
-        match self.pitch {
-            SpeedPitch::Follow => queued + latency * rate,
-            SpeedPitch::Keep => {
-                let input = self.stretch.input_latency() as f64 / RATE as f64;
-                let output = self.stretch.output_latency() as f64 / RATE as f64;
-                input + (output + queued + latency) * rate
-            }
+        if !self.stretching {
+            return queued + latency * rate;
         }
+
+        let input = self.stretch.input_latency() as f64 / RATE as f64;
+        let output = self.stretch.output_latency() as f64 / RATE as f64;
+        input + (output + queued + latency) * rate
     }
 
     fn move_to(&mut self, position: f64, latency: f64) -> bool {
@@ -217,6 +307,7 @@ impl FeedState {
             self.read = ((read_at - start) * RATE as f64).round() as usize;
         }
 
+        self.fade = None;
         self.restart_stretch();
         self.preroll();
         true
@@ -225,7 +316,7 @@ impl FeedState {
     /// Gives the stretcher the audio just before the read position, so its output
     /// starts there at full level instead of fading in
     fn preroll(&mut self) {
-        if self.pitch != SpeedPitch::Keep {
+        if !self.stretching {
             return;
         }
 
@@ -251,16 +342,64 @@ impl FeedState {
         self.output.clear();
 
         if self.start.is_none() || self.rate < SILENT_RATE {
+            self.fade = None;
             self.output.resize(frames * CHANNELS, 0.);
             return;
         }
 
-        match self.pitch {
-            SpeedPitch::Follow => self.copy_out(frames),
-            SpeedPitch::Keep => self.stretch_out(frames),
+        if self.stretching {
+            self.stretch_out(frames);
+        } else {
+            self.copy_out(frames);
+        }
+
+        if let Some(fade) = self.fade.take() {
+            self.fade_out(fade, frames);
         }
 
         self.forget_history();
+    }
+
+    /// Mixes the old audio, fading out, into the output, whose new audio fades in
+    fn fade_out(&mut self, mut fade: Fade, frames: usize) {
+        let length = (FADE_SECONDS * RATE as f64) as usize;
+        let count = frames.min(length - fade.done);
+        let first = fade.read * CHANNELS;
+        let available = self.frames().saturating_sub(fade.read).min(count);
+
+        self.input.clear();
+        self.input
+            .extend(self.samples.range(first..first + available * CHANNELS));
+        self.input.resize(count * CHANNELS, 0.);
+        fade.read += count;
+
+        // The old audio plays at media speed, which is close to the speed at a switch
+        self.fading.clear();
+        if fade.stretched {
+            self.fading.resize(count * CHANNELS, 0.);
+            self.stretch.process(&self.input, &mut self.fading);
+        } else {
+            self.fading.extend_from_slice(&self.input);
+        }
+
+        for index in 0..frames {
+            let progress = ((fade.done + index) as f64 / length as f64).min(1.);
+            let angle = progress * std::f64::consts::FRAC_PI_2;
+            let (fade_in, fade_out) = (angle.sin() as f32, angle.cos() as f32);
+
+            for channel in 0..CHANNELS {
+                let sample = index * CHANNELS + channel;
+                let old = self.fading.get(sample).copied().unwrap_or(0.);
+                self.output[sample] = self.output[sample] * fade_in + old * fade_out;
+            }
+        }
+
+        fade.done += count;
+        if fade.done < length {
+            self.fade = Some(fade);
+        } else if fade.stretched {
+            self.restart_stretch();
+        }
     }
 
     /// Hands over media-speed samples; SDL resamples them by the rate
@@ -321,6 +460,9 @@ impl FeedState {
 
         self.samples.drain(..drop * CHANNELS);
         self.read -= drop;
+        if let Some(fade) = &mut self.fade {
+            fade.read = fade.read.saturating_sub(drop);
+        }
         self.start = self.start.map(|start| start + drop as f64 / RATE as f64);
     }
 }
@@ -430,6 +572,49 @@ mod tests {
         }
 
         assert_eq!(feed.ahead(), 0., "The end of the audio was never played");
+    }
+
+    #[test]
+    fn lowering_only_resamples_below_normal_speed_and_stretches_above() {
+        let feed = AudioFeed::new(0.5, SpeedPitch::Lower);
+        assert!(!feed.stretching());
+
+        feed.set_rate(1.5, 0, 0.);
+        assert!(feed.stretching());
+
+        feed.set_rate(1., 0, 0.);
+        assert!(!feed.stretching());
+    }
+
+    /// The largest jump between neighboring left samples
+    fn largest_step(samples: &[f32]) -> f32 {
+        let left: Vec<f32> = samples.iter().step_by(CHANNELS).copied().collect();
+
+        left.windows(2)
+            .map(|pair| (pair[1] - pair[0]).abs())
+            .fold(0., f32::max)
+    }
+
+    #[test]
+    fn crossing_normal_speed_keeps_the_heard_position_and_fades_between_ways() {
+        for (from, to) in [(0.95, 1.05), (1.05, 0.95)] {
+            let feed = AudioFeed::new(from, SpeedPitch::Lower);
+            feed.push(&tone(4.), 0.);
+            pull(&feed, RATE);
+
+            let before = pull(&feed, 256);
+            let heard = feed.heard_position(0, 0.02).expect("A position");
+            feed.set_rate(to, 0, 0.02);
+            let moved = feed.heard_position(0, 0.02).expect("A position");
+            assert!((moved - heard).abs() < 1e-3, "{heard} became {moved}");
+
+            let after = pull(&feed, RATE / 10);
+            let joined: Vec<f32> = before.into_iter().chain(after).collect();
+
+            // A 440 Hz tone moves at most about 0.06 between samples
+            let step = largest_step(&joined);
+            assert!(step < 0.12, "{from}× to {to}× jumped by {step}");
+        }
     }
 
     #[test]

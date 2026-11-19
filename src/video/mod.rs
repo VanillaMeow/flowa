@@ -153,6 +153,8 @@ pub struct VideoState {
     pub duration: f64,
     pub volume: f64,
     pub rate: f64,
+    /// How speed changes affect pitch, from the preferences
+    pub pitch: SpeedPitch,
     pub size: [u32; 2],
     /// The decoder producing frames, or `None` while candidates are still being tried
     pub decoder: Option<VideoDecoder>,
@@ -210,6 +212,7 @@ impl Default for VideoState {
             duration: 0.,
             volume: 100.,
             rate: 1.,
+            pitch: SpeedPitch::default(),
             size: [0; 2],
             decoder: None,
             fallback: None,

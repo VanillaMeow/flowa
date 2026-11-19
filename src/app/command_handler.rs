@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use crate::{
     services::file_actions::{self, Task},
-    settings::SortOrder,
+    settings::{SortOrder, SpeedPitch},
     video,
     viewer::adjustments::Adjustments,
 };
@@ -126,6 +126,7 @@ impl Flowa {
             PlaybackCommand::StepRate(steps) => {
                 self.set_rate(video::step_rate(self.video.state.rate, steps));
             }
+            PlaybackCommand::SetPitch(pitch) => self.set_pitch(pitch),
             PlaybackCommand::SelectAudio(index) => {
                 let result = self.video.set_audio_track(index);
                 self.report(result);
@@ -284,6 +285,17 @@ impl Flowa {
         }
 
         let result = self.video.set_rate(rate);
+        self.report(result);
+    }
+
+    fn set_pitch(&mut self, pitch: SpeedPitch) {
+        self.settings.values.speed_pitch = pitch;
+
+        if !self.video.available() {
+            return;
+        }
+
+        let result = self.video.set_pitch(pitch);
         self.report(result);
     }
 

@@ -414,7 +414,12 @@ fn speed_menu(
     commands: &mut Vec<Command>,
 ) {
     widgets::adjusting_submenu(ui, "Speed", |ui| {
-        video_controls::speed_options(ui, state.video.rate, commands);
+        video_controls::speed_options(
+            ui,
+            state.video.rate,
+            state.video.pitch,
+            commands,
+        );
     });
 }
 

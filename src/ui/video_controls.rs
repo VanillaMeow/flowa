@@ -2,10 +2,13 @@
 
 use std::time::{Duration, Instant};
 
+use strum::VariantArray;
+
 use egui::{Align, Id, Layout, Response, RichText, style::HandleShape, vec2};
 
 use crate::{
     app::{Command, PlaybackCommand},
+    settings::SpeedPitch,
     utils::format::media_time,
     video::{MAX_RATE, VideoState},
 };
@@ -13,7 +16,7 @@ use crate::{
 use super::{
     actions,
     icons::{self, Icon},
-    style::{margin, size, space},
+    style::{margin, size, space, text},
     theme::Colors,
     tracks, widgets,
 };
@@ -247,7 +250,9 @@ impl VideoControls {
         );
 
         if show_speed {
-            ui.add_enabled_ui(state.ready(), |ui| speed_menu(ui, state.rate, commands));
+            ui.add_enabled_ui(state.ready(), |ui| {
+                speed_menu(ui, state.rate, state.pitch, commands)
+            });
         }
 
         self.volume_controls(ui, state, volume_menu, commands);
@@ -267,7 +272,7 @@ impl VideoControls {
             self.volume_controls(ui, state, volume_menu, commands);
             ui.add_enabled_ui(state.ready(), |ui| {
                 if volume_menu {
-                    speed_menu(ui, state.rate, commands);
+                    speed_menu(ui, state.rate, state.pitch, commands);
                 } else {
                     speed_slider(ui, state.rate, commands);
                 }
@@ -375,13 +380,18 @@ fn play_button(ui: &mut egui::Ui, paused: bool, commands: &mut Vec<Command>) {
 }
 
 /// A button showing the current speed that opens the list of offered speeds
-fn speed_menu(ui: &mut egui::Ui, rate: f64, commands: &mut Vec<Command>) {
+fn speed_menu(
+    ui: &mut egui::Ui,
+    rate: f64,
+    pitch: SpeedPitch,
+    commands: &mut Vec<Command>,
+) {
     let label = RichText::new(rate_label(rate)).monospace();
     let button =
         egui::Button::new(label).min_size(vec2(speed_width(ui), size::CONTROL));
     let (response, _) = egui::containers::menu::MenuButton::from_button(button)
         .config(widgets::adjusting_menu())
-        .ui(ui, |ui| speed_options(ui, rate, commands));
+        .ui(ui, |ui| speed_options(ui, rate, pitch, commands));
 
     let shortcuts = format!(
         "Playback speed · {} / {}",
@@ -394,9 +404,14 @@ fn speed_menu(ui: &mut egui::Ui, rate: f64, commands: &mut Vec<Command>) {
     response.on_hover_text(shortcuts);
 }
 
-/// The speed slider and buttons for common speeds, for the speed button and context
-/// menus
-pub fn speed_options(ui: &mut egui::Ui, rate: f64, commands: &mut Vec<Command>) {
+/// The speed slider, buttons for common speeds, and the pitch choice, for the speed
+/// button and context menus
+pub fn speed_options(
+    ui: &mut egui::Ui,
+    rate: f64,
+    pitch: SpeedPitch,
+    commands: &mut Vec<Command>,
+) {
     ui.spacing_mut().slider_rail_height = 3.;
     ui.set_width(SPEED_POPUP_WIDTH);
 
@@ -404,6 +419,30 @@ pub fn speed_options(ui: &mut egui::Ui, rate: f64, commands: &mut Vec<Command>) 
         SPEED_POPUP_WIDTH - speed_width(ui) - ui.spacing().item_spacing.x;
     ui.horizontal(|ui| speed_slider_contents(ui, rate, slider_width, commands));
     ui.horizontal(|ui| speed_presets(ui, rate, commands));
+    ui.horizontal(|ui| pitch_options(ui, pitch, commands));
+}
+
+/// How speed affects pitch, as a compact row of the choices in Preferences
+fn pitch_options(ui: &mut egui::Ui, pitch: SpeedPitch, commands: &mut Vec<Command>) {
+    ui.spacing_mut().item_spacing.x = space::XS;
+
+    // The label centers on the buttons only once the row is their height
+    ui.set_min_height(24.);
+
+    let label = ui.label(RichText::new("Pitch").size(text::LABEL).weak());
+    let gaps = ui.spacing().item_spacing.x * SpeedPitch::VARIANTS.len() as f32;
+    let width = (SPEED_POPUP_WIDTH - label.rect.width() - gaps)
+        / SpeedPitch::VARIANTS.len() as f32;
+
+    for &option in SpeedPitch::VARIANTS {
+        let button = egui::Button::selectable(option == pitch, option.short_label())
+            .min_size(vec2(width, 24.));
+        let response = ui.add(button).on_hover_text(option.description());
+
+        if response.clicked() && option != pitch {
+            commands.push(PlaybackCommand::SetPitch(option).into());
+        }
+    }
 }
 
 fn speed_presets(ui: &mut egui::Ui, rate: f64, commands: &mut Vec<Command>) {
@@ -413,9 +452,10 @@ fn speed_presets(ui: &mut egui::Ui, rate: f64, commands: &mut Vec<Command>) {
 
     for &option in SPEED_PRESETS {
         let selected = (option - rate).abs() < 1e-6;
-        let button = egui::Button::selectable(selected, rate_label(option));
+        let button = egui::Button::selectable(selected, rate_label(option))
+            .min_size(vec2(width, 24.));
 
-        if ui.add_sized([width, 24.], button).clicked() {
+        if ui.add(button).clicked() {
             commands.push(PlaybackCommand::SetRate(option).into());
         }
     }
@@ -870,8 +910,10 @@ mod tests {
         );
         show(&mut controls, &mut state, vec![pointer(button, false)]);
 
-        // Popups settle where they fit after measuring themselves for a frame
-        show(&mut controls, &mut state, Vec::new());
+        // Popups settle where they fit after measuring themselves for a few frames
+        for _ in 0..3 {
+            show(&mut controls, &mut state, Vec::new());
+        }
         let slider =
             show(&mut controls, &mut state, Vec::new())[1].expect("Popup slider");
 

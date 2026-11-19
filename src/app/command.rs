@@ -2,7 +2,10 @@
 
 use std::path::PathBuf;
 
-use crate::{settings::SortOrder, viewer::adjustments::Adjustments};
+use crate::{
+    settings::{SortOrder, SpeedPitch},
+    viewer::adjustments::Adjustments,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command {
@@ -72,6 +75,8 @@ pub enum PlaybackCommand {
     SetRate(f64),
     /// Moves to the next offered speed, faster for positive steps
     StepRate(i32),
+    /// Chooses how speed changes affect pitch, saved in the preferences
+    SetPitch(SpeedPitch),
     /// Plays the audio stream with this container index
     SelectAudio(usize),
     /// Shows this subtitle track, or none

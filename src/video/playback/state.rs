@@ -128,7 +128,12 @@ impl PlaybackState {
     pub fn set_rate(&mut self, rate: f64, now: Instant) -> Result<()> {
         let position = self.position(now)?;
         self.clock.set_rate(rate, position, now);
-        self.feed.set_rate(rate);
+
+        let (queued, latency) = match &self.audio {
+            Some(audio) => (audio.queued_bytes()?, audio.latency),
+            None => (0, 0.),
+        };
+        self.feed.set_rate(rate, queued, latency);
 
         self.apply_ratio()
     }
@@ -151,15 +156,16 @@ impl PlaybackState {
         Ok(())
     }
 
-    /// SDL resamples by the rate only when pitch follows speed
+    /// SDL resamples by the rate only while the feed is not stretching
     pub fn apply_ratio(&self) -> Result<()> {
         let Some(audio) = &self.audio else {
             return Ok(());
         };
 
-        match self.pitch {
-            SpeedPitch::Follow => audio.set_ratio(self.clock.rate()),
-            SpeedPitch::Keep => audio.set_ratio(1.),
+        if self.feed.stretching() {
+            audio.set_ratio(1.)
+        } else {
+            audio.set_ratio(self.clock.rate())
         }
     }
 }

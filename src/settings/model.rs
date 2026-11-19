@@ -178,12 +178,45 @@ pub enum VideoDecoder {
 )]
 pub enum SpeedPitch {
     /// Pitch rises and falls with speed, like a tape played faster or slower
-    #[default]
-    #[strum(to_string = "Change pitch with speed")]
+    #[strum(to_string = "Follow speed")]
     Follow,
+    /// Slower speeds lower the pitch, while faster ones keep it
+    #[default]
+    #[strum(to_string = "Lower only")]
+    Lower,
     /// Voices keep their pitch, as audio is stretched in time
-    #[strum(to_string = "Keep pitch")]
+    #[strum(to_string = "Keep")]
     Keep,
+}
+
+impl SpeedPitch {
+    /// Whether audio at this speed is stretched in time to keep its pitch, rather
+    /// than resampled
+    pub fn stretches(self, rate: f64) -> bool {
+        match self {
+            Self::Follow => false,
+            Self::Lower => rate > 1.,
+            Self::Keep => true,
+        }
+    }
+
+    /// A one-word name for tight spaces such as the speed popup
+    pub fn short_label(self) -> &'static str {
+        match self {
+            Self::Follow => "Follow",
+            Self::Lower => "Lower",
+            Self::Keep => "Keep",
+        }
+    }
+
+    /// One line on what the choice sounds like
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Follow => "Slower sounds deeper and faster higher, like a record",
+            Self::Lower => "Slower sounds deeper; faster keeps voices at their pitch",
+            Self::Keep => "Voices sound the same at any speed",
+        }
+    }
 }
 
 // Bounds shared by validation and the preference controls
@@ -254,7 +287,7 @@ impl Default for Settings {
             nearest: false,
             renderer: RendererPreference::Auto,
             video_decoder: VideoDecoder::Auto,
-            speed_pitch: SpeedPitch::Follow,
+            speed_pitch: SpeedPitch::Lower,
             memory_mb: 1024,
             recent: Vec::new(),
             last_viewed: None,
