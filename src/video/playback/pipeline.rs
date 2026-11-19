@@ -5,7 +5,7 @@ use std::{path::Path, sync::Arc};
 use anyhow::Result;
 use eframe::egui_wgpu::RenderState;
 
-use super::engine::{Engine, Snapshot};
+use super::engine::{Background, Engine, Snapshot};
 use crate::video::{
     PlayerCommand, gpu,
     presentation::{Presenter, RenderError, Target},
@@ -75,16 +75,9 @@ impl Pipeline {
         }
     }
 
-    /// Decodes in the background until `deadline`; reports whether work remains and
-    /// whether a new frame needs drawing
-    pub fn background_work(&mut self, deadline: std::time::Instant) -> (bool, bool) {
-        let work = self.engine.background_work(deadline);
-
-        if work.shown {
-            self.poll();
-        }
-
-        (work.busy, work.shown)
+    /// Decodes in the background until `deadline`
+    pub fn background_work(&mut self, deadline: std::time::Instant) -> Background {
+        self.engine.background_work(deadline)
     }
 
     pub fn poll(&mut self) {

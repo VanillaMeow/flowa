@@ -412,13 +412,14 @@ mod tests {
     use anyhow::{Context, Result, ensure};
     use ash::vk;
     use eframe::{
-        egui_wgpu::{RenderState, RendererOptions, WgpuConfiguration},
+        egui_wgpu::RenderState,
         wgpu::{self, hal},
     };
 
     use super::{Completed, Driver, Mailbox, PlaybackWorker, Player, Snapshot};
     use crate::settings::VideoDecoder;
-    use crate::video::{PlayerCommand, VideoState, gpu};
+    use crate::video::playback::test_support::{named_decoder, test_graphics};
+    use crate::video::{PlayerCommand, VideoState};
 
     #[test]
     fn a_stalled_worker_keeps_ui_requests_bounded_and_nonblocking() -> Result<()> {
@@ -428,7 +429,7 @@ mod tests {
         let (started, ready) = mpsc::channel();
         let (release, gate) = mpsc::channel();
         let thread = std::thread::spawn(move || {
-            assert!(requests.take(true).tick.is_some());
+            assert!(requests.take().tick.is_some());
             started
                 .send(())
                 .expect("The UI should still own its startup receiver");
@@ -467,7 +468,7 @@ mod tests {
                 Err(mpsc::TryRecvError::Empty)
             ));
         }
-        let queued = worker.mailbox.take(true);
+        let queued = worker.mailbox.take();
         assert!(matches!(queued.source, Some((999, _))));
         assert_eq!(queued.commands.len(), 3);
         assert!(
@@ -570,7 +571,8 @@ mod tests {
             "This test requires a separate UI graphics queue"
         );
         if let Ok(expected) = std::env::var("FLOWA_TEST_VIDEO_DECODER") {
-            let preference = hardware_preference(&expected)?;
+            let preference = named_decoder(&expected)
+                .with_context(|| format!("Unsupported decoder: {expected}"))?;
             ensure!(
                 wait_for_decoders(&player)?.contains(&preference),
                 "The selected decoder device is unavailable"
@@ -606,7 +608,9 @@ mod tests {
 
         if let Ok(expected) = std::env::var("FLOWA_TEST_VIDEO_DECODER") {
             ensure!(
-                hardware == hardware_preference(&expected)?,
+                hardware
+                    == named_decoder(&expected)
+                        .with_context(|| format!("Unsupported decoder: {expected}"))?,
                 "Expected {expected} hardware decoding, selected {hardware:?}"
             );
         }
@@ -760,31 +764,6 @@ mod tests {
         );
 
         Ok(())
-    }
-
-    fn hardware_preference(name: &str) -> Result<VideoDecoder> {
-        match name {
-            "nvdec" => Ok(VideoDecoder::Nvdec),
-            "vulkan" => Ok(VideoDecoder::Vulkan),
-            "vaapi" => Ok(VideoDecoder::Vaapi),
-            _ => anyhow::bail!("Unsupported hardware decoder: {name}"),
-        }
-    }
-
-    fn test_graphics() -> Result<RenderState> {
-        let setup = gpu::setup()?;
-        let instance = pollster::block_on(setup.new_instance());
-        let config = WgpuConfiguration {
-            wgpu_setup: setup,
-            ..Default::default()
-        };
-        let graphics = pollster::block_on(RenderState::create(
-            &config,
-            &instance,
-            None,
-            RendererOptions::default(),
-        ))?;
-        Ok(graphics)
     }
 
     #[test]

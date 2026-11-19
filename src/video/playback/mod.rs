@@ -11,6 +11,9 @@ mod prefetch;
 mod queues;
 mod service;
 mod state;
+mod stepping;
+#[cfg(test)]
+mod test_support;
 mod worker;
 
 pub(super) use service::Player;

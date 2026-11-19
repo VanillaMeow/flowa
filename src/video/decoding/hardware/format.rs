@@ -6,6 +6,7 @@ use std::{ffi::c_void, ptr};
 use anyhow::{Result, bail};
 
 use crate::video::{
+    decoding::{HELD_HARDWARE_FRAMES, kept_frames},
     ffi::ffmpeg as ffi,
     ffmpeg::{CodecSetup, HwDevice},
 };
@@ -79,20 +80,17 @@ impl CodecSetup for HardwareFormat {
         if let Some(device) = self.device.take() {
             context.hw_device_ctx = device.into_raw();
         }
-
         // The codec context keeps this setup boxed, so the format's address is stable
         context.get_format = Some(hardware_format);
         context.opaque = ptr::from_mut(&mut self.format).cast::<c_void>();
         context.thread_count = 1;
         context.thread_type = 0;
-
-        // Frames playback keeps for stepping back must not exhaust a pool that cannot
-        // grow. NVDEC copies frames out of its surfaces and Vulkan allocates frames as
-        // needed, where extra frames would only take memory up front
+        // Frames kept for stepping must not exhaust a pool that cannot grow. NVDEC copies
+        // frames out of its surfaces and Vulkan allocates frames as needed, where extra
+        // frames would only take memory up front
         if self.fixed_pool {
-            let retained = super::super::retained_frames(context.width, context.height);
-            context.extra_hw_frames =
-                (retained + super::super::HELD_HARDWARE_FRAMES) as i32;
+            let kept = kept_frames(context.width, context.height, true);
+            context.extra_hw_frames = (kept + HELD_HARDWARE_FRAMES) as i32;
         }
     }
 }

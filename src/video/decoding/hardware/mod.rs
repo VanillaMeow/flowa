@@ -77,7 +77,6 @@ impl HardwareDecoder {
         let setup = HardwareFormat::negotiate(stream.data(), device)?;
         let format = setup.format();
         let codec = CodecContext::open(stream.data(), setup)?;
-
         Ok(Self {
             codec,
             format,
@@ -98,7 +97,6 @@ impl Decoder for HardwareDecoder {
 
     fn device(&self) -> Option<HwDevice> {
         let device = self.codec.data().hw_device_ctx;
-
         // SAFETY: The open codec holds its device reference for as long as it lives
         unsafe { HwDevice::from_raw(ffi::av_buffer_ref(device)) }.ok()
     }

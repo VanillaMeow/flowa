@@ -76,56 +76,53 @@ struct PlaybackThread {
 
 impl PlaybackThread {
     /// Handles requests until shutdown, returning the targets the UI must free
+    ///
+    /// Between requests, background decoding runs in short slices so requests never
+    /// wait long for it
     fn run(mut self, requests: &Mailbox) -> Vec<Target> {
-        let mut background = false;
-
+        let mut background = true;
         loop {
-            let work = requests.take(!background);
-
-            // Background decoding runs in short slices so requests never wait long
+            let work = if background {
+                requests.try_take()
+            } else {
+                requests.take()
+            };
             if work.is_empty() {
                 background = self.background_work();
                 continue;
             }
-
             if work.shutdown {
                 break;
             }
-
+            // Any request may give background decoding something to do
+            background = true;
             if let Some((generation, path)) = work.source {
                 self.replace_source(generation, path);
             }
-
             let changed = !work.commands.is_empty();
             self.apply_commands(work.commands);
-
             let Some(size) = work.tick else {
                 if changed {
                     self.ctx.request_repaint();
                 }
                 continue;
             };
-
             if !self.tick(size, changed) {
                 break;
             }
-
-            background = true;
         }
-
         self.finish()
     }
 
     /// Decodes in the background for a moment; returns whether work remains
     fn background_work(&mut self) -> bool {
         let deadline = std::time::Instant::now() + BACKGROUND_SLICE;
-        let (busy, shown) = self.playback.background_work(deadline);
-
-        if shown {
+        let work = self.playback.background_work(deadline);
+        // Frames that changed show on the next tick
+        if work.changed {
             self.ctx.request_repaint();
         }
-
-        busy
+        work.busy
     }
 
     fn replace_source(&mut self, generation: u64, path: Option<PathBuf>) {

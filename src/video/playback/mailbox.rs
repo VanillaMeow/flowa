@@ -33,14 +33,18 @@ impl Mailbox {
     }
 
     /// Waits for at least one request and takes everything queued
-    /// Takes the pending requests, waiting for some unless the caller has other work
-    pub fn take(&self, wait: bool) -> Requests {
+    /// Waits for requests and takes them
+    pub fn take(&self) -> Requests {
         let mut requests = self.requests.lock().unwrap_or_else(|e| e.into_inner());
-
-        while wait && requests.is_empty() {
+        while requests.is_empty() {
             requests = self.wake.wait(requests).unwrap_or_else(|e| e.into_inner());
         }
+        std::mem::take(&mut *requests)
+    }
 
+    /// Takes whatever requests are pending, possibly none
+    pub fn try_take(&self) -> Requests {
+        let mut requests = self.requests.lock().unwrap_or_else(|e| e.into_inner());
         std::mem::take(&mut *requests)
     }
 }

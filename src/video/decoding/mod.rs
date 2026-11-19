@@ -18,23 +18,39 @@ mod software;
 
 pub(super) use capabilities::available_decoders;
 
-/// Memory decoded frames held for stepping back may take
-const RETAINED_BUDGET: usize = 256 * 1024 * 1024;
-const MIN_RETAINED_FRAMES: usize = 12;
-const MAX_RETAINED_FRAMES: usize = 32;
+/// Frames kept around the shown one while playing, so the first backward steps after
+/// pausing are instant, bounded by count and by memory
+const PLAYING_KEPT: KeptFrames = KeptFrames {
+    budget: 128 * 1024 * 1024,
+    frames: 4..=8,
+};
+/// Frames kept while stepping frame by frame, so background batches have room
+const STEPPING_KEPT: KeptFrames = KeptFrames {
+    budget: 256 * 1024 * 1024,
+    frames: 8..=24,
+};
 /// Further frames held at once: the shown frame, the next one, and frames the GPU is
 /// still reading
 const HELD_HARDWARE_FRAMES: usize = 4;
 
-/// How many decoded frames of this size playback may hold beyond what decoding needs,
-/// for stepping back without decoding again; decoders whose surface pool cannot grow
-/// add this many surfaces
-pub(super) fn retained_frames(width: i32, height: i32) -> usize {
-    let pixels = (width.max(1) as usize) * (height.max(1) as usize);
-
-    // Up to two bytes per pixel covers 4:2:0 video at ten or more bits
-    (RETAINED_BUDGET / (pixels * 2)).clamp(MIN_RETAINED_FRAMES, MAX_RETAINED_FRAMES)
+struct KeptFrames {
+    budget: usize,
+    frames: std::ops::RangeInclusive<usize>,
 }
+
+/// How many decoded frames of this size playback may keep around the shown one;
+/// decoders whose surface pool cannot grow add surfaces for the stepping count
+pub(super) fn kept_frames(width: i32, height: i32, stepping: bool) -> usize {
+    let kept = if stepping {
+        STEPPING_KEPT
+    } else {
+        PLAYING_KEPT
+    };
+    let pixels = (width.max(1) as usize) * (height.max(1) as usize);
+    // Up to two bytes per pixel covers 4:2:0 video at ten or more bits
+    (kept.budget / (pixels * 2)).clamp(*kept.frames.start(), *kept.frames.end())
+}
+
 pub(super) use frame::{DecodedFrame, HardwareFrame, HardwareStorage};
 pub(super) use selection::{DecoderSelection, PacketSource, SourcePacket};
 pub(super) use software::{SoftwareCodec, Threads};

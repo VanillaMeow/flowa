@@ -86,17 +86,18 @@ frame forward or back, pausing first. A forward step shows the next decoded fram
 and moves the clock and the feed to it. Resuming within the kept audio continues
 without reading the file again; resuming earlier seeks.
 
-Backward steps show frames kept from playback or earlier steps, up to 256 MiB of
-frames while playing and 512 MiB while stepping. Stepping forward again replays the
-frames stepped past. Earlier frames can only be decoded forward from a keyframe, so
-while the user steps back a second decoder on the same device, with its own reader,
-decodes the batch before the oldest kept frame in short slices on the playback
-thread. A batch starts at an indexed keyframe when one falls within it, so it decodes
-nothing it cannot keep. Room for it comes from the frames furthest ahead; a forward
-step past the remaining ones seeks back to them and keeps everything before. Steps
-that outrun the batch wait for it, and if the second decoder fails, steps seek and
-keep the frames decoded on the way, as before. Only VA-API, whose surface pool cannot
-grow, gets extra surfaces for the kept frames.
+Backward steps show frames kept from playback or earlier steps: up to 8 while playing
+and 24 while stepping, each capped by memory (128 MiB and 256 MiB). Stepping forward
+again replays the frames stepped past. Earlier frames can only be decoded forward
+from a keyframe, so a second decoder on the same device, with its own reader, opens
+when playback pauses and decodes the batch before the oldest kept frame in short
+slices on the playback thread (`playback/stepping.rs`, `playback/prefetch.rs`). A
+batch starts at an indexed keyframe when one falls within it, so it decodes nothing it
+cannot keep. Room comes from the frames furthest ahead; forward steps past the
+remaining ones take forward batches from the same decoder until playback resumes,
+which seeks. Steps that outrun a batch wait for it, and if the second decoder fails,
+backward steps seek and keep the frames decoded on the way. Only VA-API, whose surface
+pool cannot grow, gets extra surfaces for the kept frames.
 
 Not implemented yet: HDR output and full ASS styling.
 

@@ -21,11 +21,9 @@ impl AudioRuntime {
         unsafe {
             native::SDL_SetHint(c"SDL_AUDIO_DRIVER".as_ptr(), c"dummy".as_ptr());
         }
-
         // SAFETY: Initialization takes plain flags and is balanced by Drop
         let initialized = unsafe { native::SDL_InitSubSystem(native::SDL_INIT_AUDIO) };
         ensure!(initialized, "Cannot initialize SDL3 audio: {}", sdl_error());
-
         Ok(Self { _private: () })
     }
 }
@@ -238,7 +236,6 @@ mod tests {
         let Ok(_runtime) = AudioRuntime::new() else {
             return;
         };
-
         let expected = format!("sdl3/{}", named.as_deref().unwrap_or("dummy"));
         assert_eq!(driver_name(), expected);
     }

@@ -133,7 +133,6 @@ impl DecoderSelection {
             .selected
             .context("No decoder has produced frames yet")?;
         let device = self.decoder.as_ref().and_then(|decoder| decoder.device());
-
         backend::open(kind, &self.gpu, &self.stream, device)
     }
 
