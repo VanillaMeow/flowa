@@ -177,13 +177,13 @@ pub enum VideoDecoder {
     VariantArray,
 )]
 pub enum SpeedPitch {
-    /// Voices keep their pitch, as audio is stretched in time
-    #[default]
-    #[strum(to_string = "Keep pitch")]
-    Keep,
     /// Pitch rises and falls with speed, like a tape played faster or slower
+    #[default]
     #[strum(to_string = "Change pitch with speed")]
     Follow,
+    /// Voices keep their pitch, as audio is stretched in time
+    #[strum(to_string = "Keep pitch")]
+    Keep,
 }
 
 // Bounds shared by validation and the preference controls
@@ -254,7 +254,7 @@ impl Default for Settings {
             nearest: false,
             renderer: RendererPreference::Auto,
             video_decoder: VideoDecoder::Auto,
-            speed_pitch: SpeedPitch::Keep,
+            speed_pitch: SpeedPitch::Follow,
             memory_mb: 1024,
             recent: Vec::new(),
             last_viewed: None,

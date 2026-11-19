@@ -69,10 +69,10 @@ stretcher's delay.
 
 Playback speed runs from 0 to 4×: a slider in the expanded controls, with normal
 speed in the middle and a double-click to return to it, a button in the compact
-controls and the context menu, and `[`, `]`, and Backspace. At other speeds the feed either stretches audio
-with [Signalsmith Stretch](https://github.com/Signalsmith-Audio/signalsmith-stretch)
-so voices keep their pitch, or hands it to SDL to resample by the speed, so pitch
-follows it; Preferences → Viewing chooses. Either way a new speed applies to the
+controls and the context menu, and `[`, `]`, and Backspace. At other speeds the feed hands audio to SDL to
+resample by the speed, so pitch follows it, or, if Preferences → Viewing asks to keep
+pitch, stretches it with
+[Signalsmith Stretch](https://github.com/Signalsmith-Audio/signalsmith-stretch). Either way a new speed applies to the
 next request, so changes are smooth and nothing queued is dropped. At zero the
 output is silent and the clock stands still. Debug builds still optimize the
 stretcher, which cannot keep up unoptimized.
