@@ -6,8 +6,8 @@ use std::{
 };
 
 use egui::{
-    Color32, Pos2, Rect, RichText, Sense, Stroke, TextureHandle, TextureOptions, pos2,
-    vec2,
+    Color32, Margin, Pos2, Rect, RichText, Sense, Stroke, TextureHandle,
+    TextureOptions, pos2, vec2,
 };
 
 use crate::{
@@ -30,8 +30,9 @@ const MAX_CACHED_THUMBNAILS: usize = 128;
 const ITEM_STRIDE: f32 = 116.;
 const ITEM_WIDTH: f32 = 108.;
 const ITEM_HEIGHT: f32 = 86.;
-/// Items, panel margins, and room for the horizontal scroll bar
-const STRIP_HEIGHT: f32 = 116.;
+/// Items between equal top and bottom margins; the floating scroll bar draws in the
+/// bottom one
+const STRIP_HEIGHT: f32 = ITEM_HEIGHT + margin::BOTTOM_PANEL.sum().y;
 
 pub struct Filmstrip {
     worker: ThumbnailWorker,
@@ -129,9 +130,14 @@ impl Filmstrip {
             return;
         }
 
+        // The scroll area reaches into the bottom margin so its bar has room there
+        let frame_margin = Margin {
+            bottom: 0,
+            ..margin::BOTTOM_PANEL
+        };
         let frame = egui::Frame::new()
             .fill(colors.panel)
-            .inner_margin(margin::BOTTOM_PANEL);
+            .inner_margin(frame_margin);
 
         egui::Panel::bottom("filmstrip")
             .exact_size(STRIP_HEIGHT)
