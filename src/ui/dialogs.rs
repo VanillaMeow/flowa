@@ -190,7 +190,7 @@ fn rename_form(
     colors: Colors,
     commands: &mut Vec<Command>,
 ) -> bool {
-    ui.heading("Rename image");
+    ui.heading("Rename file");
     ui.add_space(space::MD);
     ui.label("New filename");
 
@@ -245,7 +245,7 @@ fn trash_confirmation(
     path: &std::path::Path,
     commands: &mut Vec<Command>,
 ) -> bool {
-    ui.heading("Move this image to trash?");
+    ui.heading("Move to trash?");
     ui.add_space(space::MD);
     ui.label(path.file_name().unwrap_or_default().to_string_lossy());
 
@@ -253,11 +253,16 @@ fn trash_confirmation(
     ui.horizontal(|ui| {
         let mut keep_open = true;
 
-        if ui.button("Keep image").clicked() {
+        if ui.button("Keep").clicked() {
             keep_open = false;
         }
 
-        if ui.button("Move to trash").clicked() {
+        let trash = RichText::new("Trash").color(Color32::WHITE);
+
+        if ui
+            .add(egui::Button::new(trash).fill(destructive_color()))
+            .clicked()
+        {
             commands.push(FileCommand::ConfirmTrash(path.to_path_buf()).into());
             keep_open = false;
         }
@@ -315,4 +320,9 @@ fn notice_row(ui: &mut egui::Ui, notice: &Notice) -> bool {
 
 fn error_color() -> Color32 {
     Color32::from_rgb(230, 125, 125)
+}
+
+/// Fill for buttons that delete, dark enough for white text on every theme
+fn destructive_color() -> Color32 {
+    Color32::from_rgb(192, 57, 57)
 }
