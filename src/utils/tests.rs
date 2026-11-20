@@ -1,7 +1,7 @@
 //! Unit tests for the utils area
 
 mod format {
-    use crate::utils::format::media_time;
+    use crate::utils::format::{media_time, precise_media_time};
 
     #[test]
     fn playback_times_preserve_hours_and_ignore_invalid_input() {
@@ -17,6 +17,20 @@ mod format {
             (f64::INFINITY, "0:00"),
         ] {
             assert_eq!(media_time(seconds), expected);
+        }
+    }
+
+    #[test]
+    fn precise_playback_times_round_down_to_tenths() {
+        for (seconds, expected) in [
+            (0., "0:00.0"),
+            (2.47, "0:02.4"),
+            (59.99, "0:59.9"),
+            (3675.5, "1:01:15.5"),
+            (-1., "0:00.0"),
+            (f64::NAN, "0:00.0"),
+        ] {
+            assert_eq!(precise_media_time(seconds), expected);
         }
     }
 }

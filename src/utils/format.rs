@@ -18,6 +18,20 @@ pub fn media_time(seconds: f64) -> String {
     format!("{minutes}:{:02}", seconds % 60)
 }
 
+/// Formats playback times to a tenth of a second, for pointing at a moment
+pub fn precise_media_time(seconds: f64) -> String {
+    let seconds = if seconds.is_finite() {
+        seconds.max(0.)
+    } else {
+        0.
+    };
+
+    // Round down, so a time never reads later than the moment it names
+    let tenths = (seconds * 10.).floor() as u64;
+
+    format!("{}.{}", media_time((tenths / 10) as f64), tenths % 10)
+}
+
 /// Formats sizes with binary (IEC) units, matching how the memory limit is measured
 pub fn file_size(bytes: u64) -> String {
     match bytes {

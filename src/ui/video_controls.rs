@@ -4,12 +4,15 @@ use std::time::{Duration, Instant};
 
 use strum::VariantArray;
 
-use egui::{Align, Id, Layout, Response, RichText, style::HandleShape, vec2};
+use egui::{
+    Align, Align2, Id, Layout, Order, Pos2, Rect, Response, RichText,
+    style::HandleShape, vec2,
+};
 
 use crate::{
     app::{Command, PlaybackCommand},
     settings::SpeedPitch,
-    utils::format::media_time,
+    utils::format::{media_time, precise_media_time},
     video::{MAX_RATE, VideoState},
 };
 
@@ -38,6 +41,8 @@ const COMPACT_SPEED_BREAKPOINT: f32 = 400.;
 /// The speed popup's slider row and preset row share this width
 const SPEED_POPUP_WIDTH: f32 = 250.;
 const SEEK_ACKNOWLEDGEMENT_TIMEOUT: Duration = Duration::from_secs(1);
+/// Space between the timeline and the time shown above the pointer
+const SEEK_HINT_GAP: f32 = space::XS;
 
 /// Keeps a scrub preview stable while FFmpeg seeks to the new frame
 pub struct VideoControls {
@@ -192,7 +197,9 @@ impl VideoControls {
             enabled,
             egui::Slider::new(&mut position, 0.0..=duration)
                 .show_value(false)
-                .handle_shape(HandleShape::Circle),
+                .handle_shape(HandleShape::Circle)
+                // Clicks land exactly on the time shown above the pointer
+                .smart_aim(false),
         );
         response.widget_info(|| {
             egui::WidgetInfo::slider(enabled, position, "Playback position")
@@ -215,7 +222,9 @@ impl VideoControls {
             commands.push(PlaybackCommand::Seek(position).into());
         }
 
-        response.on_hover_text(format!("Seek · {}", media_time(position)));
+        if enabled {
+            seek_hint(ui.ctx(), &response, duration);
+        }
     }
 
     fn compact_row(
@@ -615,6 +624,41 @@ fn paint_button_icon(ui: &egui::Ui, response: &Response, icon: Icon) {
     );
 }
 
+/// Shows the time under the pointer centered above it while the timeline is hovered
+/// or dragged
+fn seek_hint(ctx: &egui::Context, response: &Response, duration: f64) {
+    let Some(pointer) = response.hover_pos().or(response.interact_pointer_pos()) else {
+        return;
+    };
+
+    let (x, seconds) = seek_target(response.rect, pointer.x, duration);
+    let time = precise_media_time(seconds);
+
+    let anchor = Pos2::new(x, response.rect.top() - SEEK_HINT_GAP);
+    egui::Area::new(response.id.with("seek-hint"))
+        .order(Order::Tooltip)
+        .fixed_pos(anchor)
+        .pivot(Align2::CENTER_BOTTOM)
+        .interactable(false)
+        .show(ctx, |ui| {
+            egui::Frame::popup(ui.style())
+                .show(ui, |ui| ui.label(RichText::new(time).monospace()));
+        });
+}
+
+/// Where the timeline handle would sit for a pointer at `pointer_x`, and the time
+/// clicking there seeks to
+fn seek_target(rect: Rect, pointer_x: f32, duration: f64) -> (f32, f64) {
+    // Egui's slider insets the handle's center from the ends by its radius
+    let handle_radius = rect.height() / 2.5;
+    let rail = rect.x_range().shrink(handle_radius);
+
+    let x = pointer_x.clamp(rail.min, rail.max);
+    let fraction = f64::from((x - rail.min) / rail.span());
+
+    (x, fraction * duration)
+}
+
 fn text_width(ui: &egui::Ui, text: &str) -> f32 {
     ui.painter()
         .layout_no_wrap(
@@ -666,7 +710,7 @@ pub fn wants_keyboard_input(ctx: &egui::Context) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{SliderFocus, VideoControls, slider_focus_id};
+    use super::{SliderFocus, VideoControls, seek_target, slider_focus_id};
     use crate::{
         app::{BrowseCommand, Command, PlaybackCommand},
         settings::{Accent, Theme},
@@ -1021,6 +1065,39 @@ mod tests {
 
         controls.acknowledge_seek(preview);
         assert!(controls.seek.is_none());
+    }
+
+    #[test]
+    fn seek_hint_names_the_time_a_click_seeks_to() {
+        let ctx = egui::Context::default();
+        let mut controls = VideoControls::default();
+        let (_, timeline) = frame(&ctx, &mut controls, 800., Vec::new());
+
+        let left = timeline.rect.left_center() + vec2(2., 0.);
+        let middle = timeline.rect.center() + vec2(37.3, 0.);
+
+        for pos in [left, middle] {
+            let mut controls = VideoControls::default();
+            let button = |pressed| Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            };
+
+            // Mouse presses seek on release
+            let press = vec![Event::PointerMoved(pos), button(true)];
+            frame(&ctx, &mut controls, 800., press);
+            let (commands, _) = frame(&ctx, &mut controls, 800., vec![button(false)]);
+            let (_, expected) = seek_target(timeline.rect, pos.x, 7200.);
+
+            let Some(Command::Playback(PlaybackCommand::Seek(seconds))) =
+                commands.last()
+            else {
+                panic!("No seek in {commands:?}");
+            };
+            assert!((seconds - expected).abs() < 1e-3, "{seconds} != {expected}");
+        }
     }
 
     #[test]
