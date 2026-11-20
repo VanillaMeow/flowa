@@ -1,5 +1,7 @@
 //! File properties and photographic metadata
 
+use egui::Margin;
+
 use crate::{
     app::{Command, WindowCommand},
     utils::format,
@@ -27,21 +29,36 @@ pub fn show(
     colors: Colors,
     commands: &mut Vec<Command>,
 ) {
+    // The scroll bar sits in the panel's right margin instead of over the details
+    let panel_margin = Margin {
+        right: 0,
+        ..margin::SIDE_PANEL
+    };
+    let content_margin = Margin {
+        right: margin::SIDE_PANEL.right,
+        ..Margin::ZERO
+    };
+
     egui::Panel::right("inspector")
         .default_size(280.)
         .size_range(230.0..=420.0)
         .frame(
             egui::Frame::new()
                 .fill(colors.panel)
-                .inner_margin(margin::SIDE_PANEL),
+                .inner_margin(panel_margin),
         )
         .show(root, |ui| {
-            header(ui, commands);
+            egui::Frame::new()
+                .inner_margin(content_margin)
+                .show(ui, |ui| header(ui, commands));
             ui.add_space(space::LG);
 
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                details(ui, entry, decoded, video, colors, commands);
-            });
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, true])
+                .content_margin(content_margin)
+                .show(ui, |ui| {
+                    details(ui, entry, decoded, video, colors, commands)
+                });
         });
 }
 
