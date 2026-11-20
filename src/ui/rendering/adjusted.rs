@@ -64,9 +64,10 @@ impl AdjustPipeline {
         }
     }
 
-    /// Queues a quad's uniform, starting over when a new egui pass begins
+    /// Queues a quad's uniform, starting over when a new egui pass begins or the staged
+    /// quads were already uploaded, so slots always match the uploaded data
     fn stage(&mut self, key: usize, pass: u64, uniform: &[u8]) {
-        if self.pass != pass {
+        if self.pass != pass || self.staging.is_empty() {
             self.pass = pass;
             self.slots.clear();
             self.staging.clear();
