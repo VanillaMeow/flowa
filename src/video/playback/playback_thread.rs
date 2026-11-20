@@ -81,12 +81,15 @@ impl PlaybackThread {
     /// wait long for it
     fn run(mut self, requests: &Mailbox) -> Vec<Target> {
         let mut background = true;
+
         loop {
+            // Requests are only waited for once background decoding has run out
             let work = if background {
                 requests.try_take()
             } else {
                 requests.take()
             };
+
             if work.is_empty() {
                 background = self.background_work();
                 continue;
@@ -98,11 +101,14 @@ impl PlaybackThread {
 
             // Any request may give background decoding something to do
             background = true;
+
             if let Some((generation, path)) = work.source {
                 self.replace_source(generation, path);
             }
+
             let changed = !work.commands.is_empty();
             self.apply_commands(work.commands);
+
             let Some(size) = work.tick else {
                 if changed {
                     self.ctx.request_repaint();

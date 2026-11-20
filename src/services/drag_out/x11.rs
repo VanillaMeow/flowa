@@ -287,7 +287,8 @@ impl Session {
 
         self.send(target.window, self.atoms.drop, [self.source, 0, time, 0, 0])?;
 
-        // Version 2 targets never report finishing, so the selection is served until timeout
+        // Targets before version 2 never report finishing, so the selection is served
+        // until the timeout
         let deadline = Instant::now() + DROP_TIMEOUT;
 
         while Instant::now() < deadline {

@@ -74,9 +74,11 @@ impl HardwareDecoder {
                 .create_device(gpu)
                 .map_err(|error| error.context(DecoderUnavailable))?,
         };
+
         let setup = HardwareFormat::negotiate(stream.data(), device)?;
         let format = setup.format();
         let codec = CodecContext::open(stream.data(), setup)?;
+
         Ok(Self {
             codec,
             format,

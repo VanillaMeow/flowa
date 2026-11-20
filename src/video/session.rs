@@ -198,7 +198,8 @@ impl VideoSession {
         self.command(PlayerCommand::Subtitles(track))
     }
 
-    /// Sets playback speed, kept for later videos, with the pitch of audio unchanged
+    /// Sets playback speed, kept for later videos; the pitch setting decides how audio
+    /// follows it
     pub fn set_rate(&mut self, rate: f64) -> Result<()> {
         let rate = rate.clamp(0., super::MAX_RATE);
 

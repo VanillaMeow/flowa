@@ -192,6 +192,7 @@ pub enum SpeedPitch {
 impl SpeedPitch {
     /// Whether audio at this speed is stretched in time to keep its pitch, rather
     /// than resampled
+    #[cfg_attr(not(video_playback), allow(dead_code))]
     pub fn stretches(self, rate: f64) -> bool {
         match self {
             Self::Follow => false,
