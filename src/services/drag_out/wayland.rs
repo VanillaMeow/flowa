@@ -52,6 +52,12 @@ struct Events {
     ctx: egui::Context,
 }
 
+/// One drag's file list, and whether the window has heard that it ended
+struct Drag {
+    uris: Vec<u8>,
+    ended: AtomicBool,
+}
+
 struct State {
     events: Arc<Events>,
     pointer: Option<WlPointer>,
@@ -118,7 +124,11 @@ impl DragSource for WaylandSource {
         let serial = self.events.press_serial.load(Ordering::SeqCst);
         anyhow::ensure!(serial != 0, "No pointer press started this drag");
 
-        let source = self.manager.create_data_source(&self.queue, Arc::new(uris));
+        let drag = Arc::new(Drag {
+            uris,
+            ended: AtomicBool::new(false),
+        });
+        let source = self.manager.create_data_source(&self.queue, drag);
         source.offer(URI_LIST.into());
 
         if source.version() >= 3 {
@@ -134,7 +144,12 @@ impl DragSource for WaylandSource {
 }
 
 impl Events {
-    fn finish(&self) {
+    /// Tells the window once per drag that its button was released
+    fn finish(&self, drag: &Drag) {
+        if drag.ended.swap(true, Ordering::SeqCst) {
+            return;
+        }
+
         self.finished.store(true, Ordering::SeqCst);
         self.ctx.request_repaint();
     }
@@ -247,26 +262,33 @@ impl Dispatch<WlDataOffer, ()> for State {
     }
 }
 
-impl Dispatch<WlDataSource, Arc<Vec<u8>>> for State {
+impl Dispatch<WlDataSource, Arc<Drag>> for State {
     fn event(
         state: &mut Self,
         source: &WlDataSource,
         event: wl_data_source::Event,
-        uris: &Arc<Vec<u8>>,
+        drag: &Arc<Drag>,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
         match event {
             wl_data_source::Event::Send { mime_type, fd } if mime_type == URI_LIST => {
-                if let Err(error) = File::from(fd).write_all(uris) {
+                if let Err(error) = File::from(fd).write_all(&drag.uris) {
                     log::warn!("Cannot send dragged files: {error}");
                 }
+
+                // Sources before version 3 hear nothing after a drop, which is when
+                // targets read the files
+                if source.version() < 3 {
+                    state.events.finish(drag);
+                }
             }
-            wl_data_source::Event::Cancelled | wl_data_source::Event::DndFinished => {
+            wl_data_source::Event::DndDropPerformed => state.events.finish(drag),
+            wl_data_source::Event::Cancelled => {
                 source.destroy();
-                state.events.finish();
+                state.events.finish(drag);
             }
-            wl_data_source::Event::DndDropPerformed => state.events.finish(),
+            wl_data_source::Event::DndFinished => source.destroy(),
             _ => {}
         }
     }
