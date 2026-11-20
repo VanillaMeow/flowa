@@ -246,6 +246,10 @@ pub struct Settings {
     pub compact_video_controls: bool,
     pub ui_scale: f32,
     pub fit_small: bool,
+    /// Fitted images keep a margin from the canvas edges outside fullscreen
+    pub image_margin: bool,
+    /// Fitted videos keep a margin from the canvas edges outside fullscreen
+    pub video_margin: bool,
     pub remember_view: bool,
 
     pub sort: SortOrder,
@@ -280,6 +284,8 @@ impl Default for Settings {
             compact_video_controls: true,
             ui_scale: 1.0,
             fit_small: false,
+            image_margin: true,
+            video_margin: false,
             remember_view: false,
             sort: SortOrder::Name,
             reverse_sort: false,

@@ -139,6 +139,18 @@ fn viewing(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors) {
         );
     });
 
+    section(ui, "Margins", colors, |ui| {
+        ui.checkbox(
+            &mut settings.image_margin,
+            "Leave a margin around fitted images",
+        );
+        ui.checkbox(
+            &mut settings.video_margin,
+            "Leave a margin around fitted videos",
+        );
+        hint(ui, "Fullscreen always fills the screen", colors);
+    });
+
     section(ui, "Panels", colors, |ui| {
         ui.checkbox(&mut settings.filmstrip, "Show thumbnail strip");
         ui.checkbox(

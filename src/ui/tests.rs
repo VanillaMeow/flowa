@@ -156,23 +156,35 @@ mod canvas {
     };
 
     #[test]
-    fn fullscreen_content_reaches_the_viewport_edges() {
+    fn video_margin_applies_only_outside_fullscreen_when_enabled() {
         let ctx = egui::Context::default();
         let mut canvas = ImageCanvas::new(ctx.clone(), false);
         let colors = theme::colors(Theme::Charcoal, Accent::Theme, true);
         let image = ImageSession::new();
-        let settings = Settings::default();
         let mut video = VideoSession::default();
         video.state.active = true;
         video.state.size = [3840, 2160];
         video.texture = Some(TextureId::User(7));
 
-        for fullscreen in [false, true, false, true] {
+        let cases = [
+            (false, false),
+            (true, false),
+            (false, true),
+            (true, true),
+            (false, false),
+        ];
+
+        for (fullscreen, video_margin) in cases {
+            let settings = Settings {
+                video_margin,
+                ..Settings::default()
+            };
             let viewport = Rect::from_min_size(Pos2::ZERO, vec2(1280., 720.));
             let input = egui::RawInput {
                 screen_rect: Some(viewport),
                 ..Default::default()
             };
+
             let mut output = ctx.run_ui(input, |ui| {
                 canvas.show(
                     ui,
@@ -188,14 +200,15 @@ mod canvas {
                 );
             });
             output.textures_delta.clear();
-            let displayed = canvas.view.image_rect(vec2(3840., 2160.), canvas.rect);
 
+            let displayed = canvas.view.image_rect(vec2(3840., 2160.), canvas.rect);
             assert_eq!(canvas.rect, viewport);
-            if fullscreen {
+
+            if video_margin && !fullscreen {
+                assert!(displayed.height() < viewport.height() - 40.);
+            } else {
                 assert!((displayed.min - viewport.min).length() < 0.01);
                 assert!((displayed.max - viewport.max).length() < 0.01);
-            } else {
-                assert!(displayed.height() < viewport.height() - 40.);
             }
         }
     }

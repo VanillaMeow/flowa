@@ -28,6 +28,8 @@ use super::{
 
 const LOADING_DELAY: Duration = Duration::from_millis(150);
 const LOADING_FADE: Duration = Duration::from_millis(100);
+/// Space between a fitted file and the canvas edges, when its margin is on
+const FIT_MARGIN: f32 = 24.;
 
 pub struct CanvasContent<'a> {
     pub image: &'a ImageSession,
@@ -49,6 +51,22 @@ impl CanvasContent<'_> {
                 .is_some_and(|image| image.vector.is_some());
 
         self.settings.fit_small || vector
+    }
+
+    /// Fullscreen always fills the screen; otherwise each kind of file has its own
+    /// margin setting
+    fn fit_margin(&self) -> f32 {
+        let enabled = if self.video.state.active {
+            self.settings.video_margin
+        } else {
+            self.settings.image_margin
+        };
+
+        if enabled && !self.fullscreen {
+            FIT_MARGIN
+        } else {
+            0.
+        }
     }
 }
 
@@ -293,8 +311,7 @@ impl ImageCanvas {
             return;
         }
 
-        let padding = if content.fullscreen { 0. } else { 24. };
-        let area = self.rect.size() - Vec2::splat(padding * 2.);
+        let area = self.rect.size() - Vec2::splat(content.fit_margin() * 2.);
 
         // Without enlarging, small images stop at one image pixel per screen pixel
         let max_zoom = if content.fit_enlarges() {
