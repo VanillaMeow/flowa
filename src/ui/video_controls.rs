@@ -404,8 +404,8 @@ fn speed_menu(
     response.on_hover_text(shortcuts);
 }
 
-/// The speed slider, buttons for common speeds, and the pitch choice, for the speed
-/// button and context menus
+/// The pitch choice, buttons for common speeds, and the speed slider, for the speed
+/// button and context menus; the slider ends up nearest the speed button below
 pub fn speed_options(
     ui: &mut egui::Ui,
     rate: f64,
@@ -417,9 +417,9 @@ pub fn speed_options(
 
     let slider_width =
         SPEED_POPUP_WIDTH - speed_width(ui) - ui.spacing().item_spacing.x;
-    ui.horizontal(|ui| speed_slider_contents(ui, rate, slider_width, commands));
-    ui.horizontal(|ui| speed_presets(ui, rate, commands));
     ui.horizontal(|ui| pitch_options(ui, pitch, commands));
+    ui.horizontal(|ui| speed_presets(ui, rate, commands));
+    ui.horizontal(|ui| speed_slider_contents(ui, rate, slider_width, commands));
 }
 
 /// How speed affects pitch, as a compact row of the choices in Preferences
