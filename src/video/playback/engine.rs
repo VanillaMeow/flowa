@@ -155,6 +155,7 @@ impl Engine {
         self.applied_generation = 0;
         self.last_pts = 0.0;
         self.steps_forward = 0;
+
         drop(shared);
     }
 
@@ -172,8 +173,13 @@ impl Engine {
             return Ok(());
         };
 
-        // The clock holds or continues from where playback is now
+        // Steps pause a video that is already paused, which keeps the steps still waiting
         let mut state = shared.lock();
+        if state.paused == paused {
+            return Ok(());
+        }
+
+        // The clock holds or continues from where playback is now
         let now = Instant::now();
         let position = state.position(now)?;
         state.clock.anchor(position, now);
@@ -187,6 +193,7 @@ impl Engine {
         let in_step = heard.is_some_and(|heard| (heard - position).abs() < 0.02);
         let realign =
             !paused && audible && !in_step && !state.realign_audio(position)?;
+
         if let Some(audio) = &state.audio {
             audio.pause(paused || !state.started)?;
         }
@@ -242,7 +249,9 @@ impl Engine {
         info: StreamInfo,
         frames: u32,
     ) -> Result<()> {
+        // Stepping back cancels forward steps still waiting
         self.steps_forward = 0;
+
         let settled = {
             let state = shared.lock();
             state.started && !state.seeking
@@ -264,12 +273,14 @@ impl Engine {
         let remaining = frames - shown;
         let waiting = remaining > 0 && settled && self.stepping.wait_back(remaining);
         self.plan_stepping(shared, info);
+
         if remaining == 0 || waiting && self.stepping.busy() {
             return Ok(());
         }
 
         // Without it, seek back and keep the frames decoded on the way
         self.stepping.stop_waiting();
+
         let shown = self
             .current
             .as_ref()
@@ -1152,6 +1163,35 @@ mod tests {
         ensure!(
             (heard - resumed.video.position).abs() < 0.1,
             "Audio resumed at {heard}, away from the picture"
+        );
+
+        engine.stop();
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "Requires Vulkan and ffmpeg with libx264"]
+    fn forward_steps_sent_before_frames_show_each_move_one_frame() -> Result<()> {
+        let folder = tempfile::tempdir()?;
+        let clip = clip_with_audio(folder.path(), 10)?;
+        let mut engine = audible_engine(&clip)?;
+        pump(&mut engine, |state| state.video.position > 0.5)?;
+
+        engine.toggle_pause()?;
+        let start = shown(&engine)?;
+
+        // Only the next frame is ready, so the later steps wait for decoding
+        for _ in 0..3 {
+            engine.step(1)?;
+        }
+        pump_engine(&mut engine, |engine, _| near(engine, start + 0.3))?;
+
+        // Nothing further is owed once every step has shown
+        idle(&mut engine, Duration::from_millis(200))?;
+        ensure!(
+            near(&engine, start + 0.3),
+            "Steps overshot to {:?}",
+            shown(&engine).ok()
         );
 
         engine.stop();
