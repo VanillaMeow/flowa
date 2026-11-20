@@ -87,6 +87,7 @@ impl Prefetch {
     /// Starts decoding `count` frames on the side `direction` names
     pub fn start(&mut self, direction: Direction, count: usize) -> Result<()> {
         let frame = self.info.frame_duration;
+
         // A forward batch right after the last one keeps the decoder's position
         let continuing = matches!(
             (direction, self.continues_at),
@@ -111,6 +112,7 @@ impl Prefetch {
             collected: VecDeque::with_capacity(count + 1),
             last_position: first - frame,
         });
+
         Ok(())
     }
 
@@ -131,8 +133,10 @@ impl Prefetch {
             if let Some(batch) = self.receive()? {
                 return Ok(Some(batch));
             }
+
             self.send()?;
         }
+
         Ok(None)
     }
 
@@ -144,6 +148,7 @@ impl Prefetch {
             let Some(job) = &mut self.job else {
                 return Ok(None);
             };
+
             let frame = match self.decoder.receive()? {
                 Receive::Item(frame) => frame,
                 Receive::Again => return Ok(None),
@@ -163,16 +168,19 @@ impl Prefetch {
                     if position + frame_duration * 0.5 >= before {
                         return Ok(self.finish(None));
                     }
+
                     job.collected.push_back(TimedFrame { frame, position });
                     if job.collected.len() > job.count {
                         job.collected.pop_front();
                     }
                 }
+
                 // Going forward, frames before the gap only lead up to it
                 Direction::Forward { from } => {
                     if position + frame_duration * 0.5 < from {
                         continue;
                     }
+
                     job.collected.push_back(TimedFrame { frame, position });
                     if job.collected.len() == job.count {
                         return Ok(self.finish(Some(position + frame_duration)));
@@ -187,6 +195,7 @@ impl Prefetch {
         if self.job.is_none() || self.drained {
             return Ok(());
         }
+
         let packet = match self.unsent.take() {
             Some(packet) => Some(packet),
             None => next_video_packet(&mut self.media)?,
@@ -196,9 +205,11 @@ impl Prefetch {
             self.drained = true;
             return Ok(());
         };
+
         if let Sent::Again = self.decoder.send(Some(&packet))? {
             self.unsent = Some(packet);
         }
+
         Ok(())
     }
 
@@ -220,5 +231,6 @@ fn next_video_packet(media: &mut Media) -> Result<Option<Packet>> {
             return Ok(Some(packet));
         }
     }
+
     Ok(None)
 }

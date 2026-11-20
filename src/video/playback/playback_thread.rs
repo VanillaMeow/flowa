@@ -91,9 +91,11 @@ impl PlaybackThread {
                 background = self.background_work();
                 continue;
             }
+
             if work.shutdown {
                 break;
             }
+
             // Any request may give background decoding something to do
             background = true;
             if let Some((generation, path)) = work.source {
@@ -107,10 +109,12 @@ impl PlaybackThread {
                 }
                 continue;
             };
+
             if !self.tick(size, changed) {
                 break;
             }
         }
+
         self.finish()
     }
 
@@ -118,10 +122,12 @@ impl PlaybackThread {
     fn background_work(&mut self) -> bool {
         let deadline = std::time::Instant::now() + BACKGROUND_SLICE;
         let work = self.playback.background_work(deadline);
+
         // Frames that changed show on the next tick
         if work.changed {
             self.ctx.request_repaint();
         }
+
         work.busy
     }
 

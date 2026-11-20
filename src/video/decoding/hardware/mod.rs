@@ -97,6 +97,7 @@ impl Decoder for HardwareDecoder {
 
     fn device(&self) -> Option<HwDevice> {
         let device = self.codec.data().hw_device_ctx;
+
         // SAFETY: The open codec holds its device reference for as long as it lives
         unsafe { HwDevice::from_raw(ffi::av_buffer_ref(device)) }.ok()
     }

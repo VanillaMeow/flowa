@@ -80,11 +80,13 @@ impl CodecSetup for HardwareFormat {
         if let Some(device) = self.device.take() {
             context.hw_device_ctx = device.into_raw();
         }
+
         // The codec context keeps this setup boxed, so the format's address is stable
         context.get_format = Some(hardware_format);
         context.opaque = ptr::from_mut(&mut self.format).cast::<c_void>();
         context.thread_count = 1;
         context.thread_type = 0;
+
         // Frames kept for stepping must not exhaust a pool that cannot grow. NVDEC copies
         // frames out of its surfaces and Vulkan allocates frames as needed, where extra
         // frames would only take memory up front

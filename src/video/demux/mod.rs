@@ -141,6 +141,7 @@ impl Media {
             if index == self.video_index {
                 continue;
             }
+
             // SAFETY: The input owns its streams, and only this reader uses it
             unsafe {
                 let stream = *(*self.input.raw()).streams.add(index);
@@ -157,7 +158,9 @@ impl Media {
         if time_base <= 0. {
             return None;
         }
+
         let timestamp = ((seconds + self.info.origin) / time_base).floor() as i64;
+
         // SAFETY: The input owns the stream and its index, which only this reader uses
         let entry = unsafe {
             let index = ffi::av_index_search_timestamp(
@@ -168,8 +171,10 @@ impl Media {
             if index < 0 {
                 return None;
             }
+
             ffi::avformat_index_get_entry(stream, index).as_ref()?
         };
+
         Some(entry.timestamp as f64 * time_base - self.info.origin)
     }
 

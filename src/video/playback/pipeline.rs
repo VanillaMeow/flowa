@@ -106,6 +106,7 @@ impl Pipeline {
                 self.needs_redraw = false;
                 return Ok(texture);
             }
+
             Err(error) => error,
         };
 

@@ -138,12 +138,14 @@ impl Engine {
         let Some(shared) = self.shared.take() else {
             return;
         };
+
         shared.stop();
         if let Some(worker) = self.worker.take()
             && worker.join().is_err()
         {
             log::warn!("The media worker terminated unexpectedly");
         }
+
         // The demux worker has joined before its frames and audio output are released
         self.pending = None;
         self.current = None;
@@ -169,6 +171,7 @@ impl Engine {
         let Some(shared) = &self.shared else {
             return Ok(());
         };
+
         // The clock holds or continues from where playback is now
         let mut state = shared.lock();
         let now = Instant::now();
@@ -176,6 +179,7 @@ impl Engine {
         state.clock.anchor(position, now);
         state.paused = paused;
         let restart = state.ended && !paused;
+
         // After steps the audio is realigned to the picture, and resuming before the
         // audio still kept, as after stepping far back, reads it again
         let audible = state.audio.is_some() && state.audio_info.is_some();
@@ -189,6 +193,7 @@ impl Engine {
         drop(state);
         shared.notify();
         self.steps_forward = 0;
+
         // Playing reads on from the main decoder, which must not skip dropped frames
         let gap = !paused && self.stepping.resume();
         if restart {
@@ -196,6 +201,7 @@ impl Engine {
         } else if realign || gap {
             self.seek(position)?;
         }
+
         Ok(())
     }
 
@@ -204,22 +210,27 @@ impl Engine {
         let Some(shared) = self.shared.as_ref().map(Arc::clone) else {
             return Ok(());
         };
+
         let Some(info) = stream_info(&shared.lock()) else {
             return Ok(());
         };
+
         self.set_paused(true)?;
         self.stepping.begin(frames > 0);
         if frames < 0 {
             return self.step_back(&shared, info, frames.unsigned_abs());
         }
+
         if shared.lock().ended {
             return Ok(());
         }
+
         // Forward steps show frames as they are ready, kept or decoded
         self.steps_forward =
             (self.steps_forward + frames as u32).min(MAX_WAITING_STEPS);
         self.plan_stepping(&shared, info);
         shared.notify();
+
         Ok(())
     }
 
@@ -236,6 +247,7 @@ impl Engine {
             let state = shared.lock();
             state.started && !state.seeking
         };
+
         // Kept frames show at once
         let shown = if settled {
             self.stepping
@@ -247,6 +259,7 @@ impl Engine {
             self.frame_serial += u64::from(shown);
             self.follow_shown(shared)?;
         }
+
         // The rest wait for the background decoder while it can fetch them
         let remaining = frames - shown;
         let waiting = remaining > 0 && settled && self.stepping.wait_back(remaining);
@@ -254,8 +267,9 @@ impl Engine {
         if remaining == 0 || waiting && self.stepping.busy() {
             return Ok(());
         }
-        self.stepping.stop_waiting();
+
         // Without it, seek back and keep the frames decoded on the way
+        self.stepping.stop_waiting();
         let shown = self
             .current
             .as_ref()
@@ -265,6 +279,7 @@ impl Engine {
         let target = (from - info.frame_duration * f64::from(remaining)).max(0.);
         self.seek(target)?;
         self.stepping.seeking_back(target);
+
         Ok(())
     }
 
@@ -273,11 +288,13 @@ impl Engine {
         let Some(position) = self.current.as_ref().map(|frame| frame.position) else {
             return Ok(());
         };
+
         let mut state = shared.lock();
         state.clock.anchor(position, Instant::now());
         state.realign_audio(position)?;
         drop(state);
         shared.notify();
+
         Ok(())
     }
 
@@ -286,6 +303,7 @@ impl Engine {
         if !paused_and_settled(&shared.lock()) {
             return;
         }
+
         if let Some(current) = &self.current {
             self.stepping
                 .plan(current, info.frame_duration, self.steps_forward);
@@ -298,6 +316,7 @@ impl Engine {
         let Some(shared) = self.shared.as_ref().map(Arc::clone) else {
             return Background::default();
         };
+
         let (info, settled) = {
             let state = shared.lock();
             (stream_info(&state), paused_and_settled(&state))
@@ -305,10 +324,13 @@ impl Engine {
         let Some(info) = info else {
             return Background::default();
         };
+
         // The decoder opens as soon as playback pauses, so the first step back finds it
         if settled && let (Some(path), Some(decoder)) = (&self.path, &self.decoder) {
             self.stepping.open(path, info, || decoder.open_sibling());
         }
+
+        // Finished batches show at once for backward steps that were waiting
         let worked = self.stepping.work(
             deadline,
             &mut self.current,
@@ -321,9 +343,12 @@ impl Engine {
                 shared.fail(format!("{error:#}"));
             }
         }
+
+        // The next batch starts as soon as the decoder is free
         if worked.finished || !self.stepping.busy() {
             self.plan_stepping(&shared, info);
         }
+
         Background {
             busy: self.stepping.busy(),
             changed: worked.stepped_back > 0 || worked.added_ahead,
@@ -332,6 +357,7 @@ impl Engine {
 
     pub fn seek(&mut self, seconds: f64) -> Result<()> {
         ensure!(seconds.is_finite(), "Seek position must be finite");
+
         let shared = self
             .shared
             .as_ref()
@@ -343,6 +369,7 @@ impl Engine {
             .map(|stream| stream.info)
             .ok_or_else(|| anyhow::anyhow!("The media is still opening"))?;
         ensure!(info.duration > 0.0, "The media is not seekable");
+
         // The worker reads from the target, and the clock and audio wait there
         let target = seconds.clamp(0.0, info.duration);
         let floor = target.min((info.duration - info.frame_duration).max(0.0));
@@ -363,9 +390,11 @@ impl Engine {
             audio.clear()?;
         }
         drop(state);
+
         // Keep current and its displayed texture until the requested frame replaces it
         shared.notify();
         self.stepping.forget_position();
+
         Ok(())
     }
 
@@ -505,18 +534,23 @@ impl Engine {
         if self.decoder_preference == preference && !failed {
             return Ok(());
         }
+
         self.decoder_preference = preference;
+
         // A failed video reopens; one still opening picks the decoder up as it starts
         let Some(shared) = self.shared.as_ref().map(Arc::clone) else {
             return Ok(());
         };
+
         if failed {
             return self.reopen(&shared);
         }
+
         let stream = shared.lock().stream.as_ref().map(Arc::clone);
         let Some(stream) = stream.filter(|_| self.decoder.is_some()) else {
             return Ok(());
         };
+
         // A playing video seeks to where it is with the new decoder
         let position = shared.lock().position(Instant::now())?;
         self.seek(position).context(
@@ -529,6 +563,7 @@ impl Engine {
         ));
         self.pending = None;
         self.stepping.close();
+
         Ok(())
     }
 
@@ -637,9 +672,11 @@ impl Engine {
         if state.error.is_some() {
             return Ok(false);
         }
+
         let Some(stream) = state.stream.as_ref().map(Arc::clone) else {
             return Ok(false);
         };
+
         // A reopened video returns to where it was
         if let Some(resume) = self.resume.take() {
             state.paused = resume.paused;
@@ -649,6 +686,7 @@ impl Engine {
             }
             return Ok(false);
         }
+
         // Audio and the decoder open once the worker knows the streams
         if state.audio_info.is_some() && state.audio.is_none() && !state.audio_disabled
         {
@@ -666,6 +704,7 @@ impl Engine {
         if state.seeking {
             return Ok(false);
         }
+
         // A finished seek restarts decoding from its keyframe
         if state.flushed_generation != self.applied_generation {
             if let Some(decoder) = &mut self.decoder {
@@ -676,6 +715,7 @@ impl Engine {
             self.last_pts = state.clock.floor - stream.info.frame_duration;
             self.applied_generation = state.flushed_generation;
         }
+
         Ok(true)
     }
 
@@ -684,11 +724,13 @@ impl Engine {
             Some(stream) => stream.info,
             None => return Ok(()),
         };
+
         for _ in 0..MAX_FRAMES_PER_POLL {
             // Kept frames ahead come before anything the decoder has
             if self.pending.is_none() {
                 self.pending = self.stepping.next_ahead();
             }
+
             // Past dropped frames, frames ahead come from the background decoder until
             // playback resumes, or from a seek if that decoder failed
             if self.pending.is_none()
@@ -700,11 +742,13 @@ impl Engine {
                 }
                 return Ok(());
             }
+
             // Otherwise the decoder supplies the next frame
             if self.pending.is_none() {
                 let Some(decoder) = &mut self.decoder else {
                     return Ok(());
                 };
+
                 let frame = match decoder.next(shared) {
                     Ok(Some(frame)) => frame,
                     Ok(None) => return Ok(()),
@@ -723,14 +767,17 @@ impl Engine {
                 self.last_pts = position;
                 self.pending = Some(TimedFrame { frame, position });
             }
+
             // The frame shows when a seek lands, a step asks, or the clock reaches it
             let Some(pending) = &self.pending else {
                 return Ok(());
             };
+
             let mut state = shared.lock();
             let now = state.position(Instant::now())?;
             let starting = !state.started;
             let stepping = !starting && state.paused && self.steps_forward > 0;
+
             // Frames before a seek's target only lead up to it, unless a backward step's
             // seek keeps them
             if pending.position + info.frame_duration * 0.5 < state.clock.floor {
@@ -741,12 +788,14 @@ impl Engine {
                 }
                 continue;
             }
+
             if !starting
                 && !stepping
                 && (state.paused || pending.position > now + 0.002)
             {
                 return Ok(());
             }
+
             // Show it, keeping the frame it replaces unless a seek came between them
             let position = pending.position;
             let previous = std::mem::replace(&mut self.current, self.pending.take());
@@ -756,12 +805,14 @@ impl Engine {
             {
                 self.stepping.remember(previous);
             }
+
             // A step moves the clock and the audio to the frame, so resuming continues here
             if stepping {
                 self.steps_forward -= 1;
                 state.clock.anchor(position, Instant::now());
                 state.realign_audio(position)?;
             }
+
             // A landed seek starts the clock, and the audio unless paused
             if starting {
                 self.stepping.seek_done();
@@ -775,6 +826,7 @@ impl Engine {
                 }
             }
         }
+
         Ok(())
     }
 
@@ -788,6 +840,7 @@ impl Engine {
         else {
             return Err(error);
         };
+
         // The next decoder starts from a keyframe at the current position
         let position = shared.lock().position(Instant::now())?;
         self.seek(position)?;
@@ -800,6 +853,7 @@ impl Engine {
         }
         self.pending = None;
         self.stepping.close();
+
         Ok(())
     }
 
@@ -1172,6 +1226,7 @@ mod tests {
             state.video.error
         );
         std::thread::sleep(Duration::from_millis(1));
+
         Ok(state)
     }
 
@@ -1203,11 +1258,13 @@ mod tests {
                 playing.video.decoder
             );
         }
+
         // Pausing opens the background decoder before the first step
         engine.toggle_pause()?;
         idle(&mut engine, Duration::from_millis(100))?;
         let start = shown(&engine)?;
         let frame = 1. / 30.;
+
         // Ninety steps at key-repeat speed cross a keyframe two seconds apart
         let mut late = Vec::new();
         for step in 1..=90 {
@@ -1225,6 +1282,7 @@ mod tests {
             );
         }
         ensure!(late.is_empty(), "Backward steps waited: {late:?}");
+
         // Forward steps replay the kept frames, then forward batches past dropped ones
         let back = shown(&engine)?;
         for step in 1..=40 {
@@ -1232,6 +1290,7 @@ mod tests {
             let expected = back + f64::from(step) * frame;
             pump_engine(&mut engine, |engine, _| near(engine, expected))?;
         }
+
         // Playing continues from the shown frame
         let paused_at = shown(&engine)?;
         engine.toggle_pause()?;
@@ -1242,6 +1301,7 @@ mod tests {
             played.video.position
         );
         engine.stop();
+
         Ok(())
     }
 
@@ -1683,6 +1743,7 @@ mod tests {
             generated.success(),
             "Could not generate the audible fixture"
         );
+
         Ok(clip)
     }
 
@@ -1703,6 +1764,7 @@ mod tests {
         engine.set_decoder(decoder)?;
         engine.open(clip)?;
         pump(&mut engine, |state| state.video.position > 0.1)?;
+
         // These tests need the audio clock, so a missing device fails them clearly
         let audible = engine
             .shared
@@ -1712,6 +1774,7 @@ mod tests {
             audible,
             "No audio output opened; set SDL_AUDIO_DRIVER=dummy"
         );
+
         Ok(engine)
     }
 
@@ -1748,6 +1811,7 @@ mod tests {
             if ready(engine, &state) {
                 return Ok(state);
             }
+
             ensure!(
                 Instant::now() < deadline,
                 "Timed out at {:?}",

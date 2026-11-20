@@ -100,6 +100,7 @@ impl Stepping {
         self.forward = None;
         self.history.set_stepping(false);
         self.forget_position();
+
         gap
     }
 
@@ -113,6 +114,7 @@ impl Stepping {
         if self.prefetch.is_some() || self.failed {
             return;
         }
+
         match decoder().and_then(|decoder| Prefetch::open(path, info, decoder)) {
             Ok(prefetch) => self.prefetch = Some(prefetch),
             Err(error) => self.fail(&error),
@@ -162,6 +164,7 @@ impl Stepping {
             }
             shown += 1;
         }
+
         shown
     }
 
@@ -171,6 +174,7 @@ impl Stepping {
         if self.prefetch.is_none() {
             return false;
         }
+
         self.waiting_back = (self.waiting_back + count).min(MAX_WAITING_STEPS);
         true
     }
@@ -212,9 +216,11 @@ impl Stepping {
         let Some(forward) = self.forward else {
             return;
         };
+
         if self.busy() || self.prefetch.is_none() {
             return;
         }
+
         let limit = self.history.limit(&current.frame);
         let wants_forward = self.waiting_back == 0 && (forward || steps_forward > 0);
         let planned = if wants_forward {
@@ -222,6 +228,7 @@ impl Stepping {
         } else {
             self.plan_back(limit, current, frame_duration)
         };
+
         if let Err(error) = planned {
             self.fail(&error);
         }
@@ -232,13 +239,16 @@ impl Stepping {
         let Some(from) = self.gap else {
             return Ok(());
         };
+
         let direction = Direction::Forward { from };
         if self.history.ahead_len() >= KEEP_AHEAD || self.exhausted == Some(direction) {
             return Ok(());
         }
+
         // The oldest frames make room, as stepping forward leaves them furthest behind
         let count = batch_size(limit);
         self.history.drop_oldest(limit.saturating_sub(count));
+
         self.start(direction, count)
     }
 
@@ -252,24 +262,29 @@ impl Stepping {
     ) -> Result<()> {
         let before = self.history.oldest().unwrap_or(current.position);
         let direction = Direction::Back { before };
+
         // Nothing comes before the first frame
         if before < frame_duration * 0.5 || self.exhausted == Some(direction) {
             self.waiting_back = 0;
             return Ok(());
         }
+
         // A few frames are worth decoding once kept frames run low
         let low = self.history.behind_len() <= limit / 3 || self.waiting_back > 0;
         let minimum = if low { 1 } else { batch_size(limit) };
+
         // The frames furthest ahead make room, and the main decoder no longer follows
         if limit.saturating_sub(self.history.len()) < minimum
             && let Some(dropped) = self.history.trim_ahead(KEEP_AHEAD)
         {
             self.gap = Some(self.gap.map_or(dropped, |gap| gap.min(dropped)));
         }
+
         let room = limit.saturating_sub(self.history.len());
         if room < minimum {
             return Ok(());
         }
+
         self.start(direction, room)
     }
 
@@ -293,6 +308,7 @@ impl Stepping {
         else {
             return Worked::default();
         };
+
         let batch = match prefetch.work(deadline) {
             Ok(Some(batch)) => batch,
             Ok(None) => return Worked::default(),
@@ -301,9 +317,11 @@ impl Stepping {
                 return Worked::default();
             }
         };
+
         let Some(shown) = current.as_ref() else {
             return Worked::default();
         };
+
         // A batch that found nothing marks an end of the video
         if batch.frames.is_empty() {
             self.exhausted = Some(batch.direction);
@@ -313,6 +331,8 @@ impl Stepping {
                 ..Worked::default()
             };
         }
+
+        // The batch joins the kept frames only if they have not moved since it started
         let limit = self.history.limit(&shown.frame);
         let tolerance = frame_duration * 0.5;
         let mut worked = Worked {
@@ -334,6 +354,7 @@ impl Stepping {
                 }
             }
         }
+
         worked
     }
 

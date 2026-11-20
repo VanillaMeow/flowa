@@ -47,6 +47,7 @@ pub(super) fn kept_frames(width: i32, height: i32, stepping: bool) -> usize {
         PLAYING_KEPT
     };
     let pixels = (width.max(1) as usize) * (height.max(1) as usize);
+
     // Up to two bytes per pixel covers 4:2:0 video at ten or more bits
     (kept.budget / (pixels * 2)).clamp(*kept.frames.start(), *kept.frames.end())
 }
