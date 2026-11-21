@@ -214,6 +214,7 @@ mod canvas {
             }
         }
     }
+
     #[test]
     fn clicking_a_video_plays_or_pauses_and_a_double_click_cancels_out() {
         let ctx = egui::Context::default();
@@ -277,6 +278,92 @@ mod canvas {
         run(2., vec![button(true)]);
         run(2.05, vec![Event::PointerMoved(center + vec2(80., 0.))]);
         assert_eq!(run(2.1, vec![button(false)]), 0);
+    }
+
+    #[test]
+    fn clicking_the_video_to_close_a_menu_leaves_playback_alone() {
+        let ctx = egui::Context::default();
+        let mut canvas = ImageCanvas::new(ctx.clone(), false);
+        let colors = theme::colors(Theme::Charcoal, Accent::Theme, true);
+        let image = ImageSession::new();
+        let settings = Settings::default();
+        let mut video = VideoSession::default();
+        video.state.active = true;
+        video.state.size = [1920, 1080];
+        video.texture = Some(TextureId::User(7));
+
+        let viewport = Rect::from_min_size(Pos2::ZERO, vec2(1280., 720.));
+        let center = viewport.center();
+        let elsewhere = center - vec2(300., 200.);
+        let mut run = |time: f64, events: Vec<Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(viewport),
+                time: Some(time),
+                events,
+                ..Default::default()
+            };
+            let mut commands = Vec::new();
+
+            let mut output = ctx.run_ui(input, |ui| {
+                let content = CanvasContent {
+                    image: &image,
+                    video: &video,
+                    settings: &settings,
+                    colors,
+                    can_navigate: false,
+                    fullscreen: false,
+                    subtitle_clearance: 0.,
+                };
+
+                if let Some(response) = canvas.show(ui, content, &mut commands) {
+                    response.context_menu(|ui| {
+                        ui.label("Menu");
+                    });
+                }
+            });
+            output.textures_delta.clear();
+
+            commands
+                .iter()
+                .filter(|command| {
+                    **command == Command::Playback(PlaybackCommand::TogglePlay)
+                })
+                .count()
+        };
+        let button = |pos, button, pressed| Event::PointerButton {
+            pos,
+            button,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+
+        // Open the context menu
+        run(0., vec![Event::PointerMoved(center)]);
+        run(0.05, vec![button(center, PointerButton::Secondary, true)]);
+        run(0.1, vec![button(center, PointerButton::Secondary, false)]);
+        run(0.2, Vec::new());
+        assert!(
+            egui::Popup::is_any_open(&ctx),
+            "The context menu did not open"
+        );
+
+        // Clicking elsewhere on the video closes it without playing or pausing
+        run(1., vec![Event::PointerMoved(elsewhere)]);
+        let pressed = run(1.05, vec![button(elsewhere, PointerButton::Primary, true)]);
+        let released = run(1.1, vec![button(elsewhere, PointerButton::Primary, false)]);
+        run(1.2, Vec::new());
+
+        assert!(
+            !egui::Popup::is_any_open(&ctx),
+            "The context menu stayed open"
+        );
+        assert_eq!(pressed + released, 0, "Closing the menu toggled playback");
+
+        // The next click plays or pauses again
+        run(2., vec![button(elsewhere, PointerButton::Primary, true)]);
+        let released =
+            run(2.05, vec![button(elsewhere, PointerButton::Primary, false)]);
+        assert_eq!(released, 1);
     }
 
     #[test]

@@ -224,8 +224,11 @@ impl ImageCanvas {
         self.fit_image(size, content, ui.ctx().pixels_per_point());
 
         // Every click plays or pauses at once, so a double-click's second click undoes
-        // its first while the view resets
-        if response.clicked() && video.state.ready() {
+        // its first while the view resets. A click that closes a menu only closes it;
+        // menus close after the canvas runs, so they still read as open here
+        let closes_menu = egui::Popup::is_any_open(ui.ctx());
+
+        if response.clicked() && !closes_menu && video.state.ready() {
             commands.push(PlaybackCommand::TogglePlay.into());
         }
 
