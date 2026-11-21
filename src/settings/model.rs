@@ -284,6 +284,11 @@ pub const CHECKER_CONTRAST: RangeInclusive<f32> = 0.02..=0.4;
 pub const SLIDESHOW_SECONDS: RangeInclusive<f32> = 1.0..=120.0;
 pub const WINDOW_WIDTH: RangeInclusive<f32> = 640.0..=7680.0;
 pub const WINDOW_HEIGHT: RangeInclusive<f32> = 400.0..=4320.0;
+/// The 58-point toolbar and 32-point status bar leave a 1280 × 720 canvas, which a
+/// 16:9 video fills edge to edge
+const DEFAULT_WINDOW_SIZE: [f32; 2] = [1280.0, 810.0];
+/// The default before it was sized for 16:9 videos
+const OLD_DEFAULT_WINDOW_SIZE: [f32; 2] = [1200.0, 820.0];
 pub const RECENT_LIMIT: usize = 12;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -361,7 +366,7 @@ impl Default for Settings {
             recent: Vec::new(),
             last_viewed: None,
             reopen_last: false,
-            window_size: [1200.0, 820.0],
+            window_size: DEFAULT_WINDOW_SIZE,
         }
     }
 }
@@ -377,6 +382,12 @@ impl Settings {
         self.window_size[0] = clamp(self.window_size[0], &WINDOW_WIDTH);
         self.window_size[1] = clamp(self.window_size[1], &WINDOW_HEIGHT);
         self.recent.truncate(RECENT_LIMIT);
+
+        // A window still at the old default was most likely never resized, so it moves
+        // to the new one; any other size was chosen and stays
+        if self.window_size == OLD_DEFAULT_WINDOW_SIZE {
+            self.window_size = DEFAULT_WINDOW_SIZE;
+        }
 
         if !RendererPreference::SUPPORTED.contains(&self.renderer) {
             self.renderer = RendererPreference::Auto;

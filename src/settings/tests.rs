@@ -43,6 +43,22 @@ mod model {
     }
 
     #[test]
+    fn a_window_left_at_the_old_default_moves_to_the_new_one() -> Result<()> {
+        for (saved, expected) in [
+            ([1200., 820.], [1280., 810.]),
+            ([1000., 700.], [1000., 700.]),
+        ] {
+            let json = format!("{{\"window_size\":[{},{}]}}", saved[0], saved[1]);
+            let mut s: Settings = serde_json::from_str(&json)?;
+            s.validate();
+
+            assert_eq!(s.window_size, expected);
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn display_labels_preserve_the_saved_settings_format() -> Result<()> {
         for (theme, label, saved) in [
             (Theme::System, "System / Qt", "System"),
