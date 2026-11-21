@@ -12,13 +12,14 @@ use crate::{
         folder_scan::FolderScanner,
         image_loader::{LoadRequest, Loader},
     },
-    settings::{Settings, SettingsStore, Theme},
+    settings::{Settings, SettingsStore, Theme, VideoControlsStyle},
     ui::{
         self, ViewerUi,
         canvas::CanvasContent,
         keyboard,
         theme::{self, Colors},
         toolbar::{self, ToolbarState},
+        video_controls::OverlayContent,
     },
     video::VideoSession,
     viewer::{
@@ -27,7 +28,7 @@ use crate::{
     },
 };
 
-use super::{FileCommand, Launch};
+use super::{Command, FileCommand, Launch};
 
 /// How often the System theme is re-read and changed settings are saved
 const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(2);
@@ -340,8 +341,10 @@ impl eframe::App for Flowa {
         let ctx = ui.ctx().clone();
 
         self.update_session(&ctx);
+        let subtitle_clearance = self.update_video_overlay(&ctx);
         self.show_viewer_controls(ui, &ctx);
-        self.show_canvas(ui, &ctx);
+        self.show_canvas(ui, &ctx, subtitle_clearance);
+        self.show_video_overlay(&ctx);
         self.show_preferences(&ctx);
         self.show_dialogs(&ctx);
         self.maintain_settings(&ctx);
@@ -385,6 +388,13 @@ impl Flowa {
 
         let commands =
             keyboard::read(ctx, self.ui.dialogs.is_open(), self.ui.preferences.open);
+
+        // Playback keys briefly show floating controls so their effect can be seen
+        let playback = |command: &Command| matches!(command, Command::Playback(_));
+        if commands.iter().any(playback) {
+            self.ui.video_controls.flash_overlay(Instant::now());
+        }
+
         self.handle_commands(commands, ctx);
 
         self.advance_playback(ctx);
@@ -419,8 +429,66 @@ impl Flowa {
         }
     }
 
+    /// Whether a video's controls float over it rather than docking below
+    fn overlay_controls(&self) -> bool {
+        self.video.state.active
+            && self.settings.values.video_controls == VideoControlsStyle::Overlay
+    }
+
+    /// Decides whether floating controls show this frame and returns how far
+    /// subtitles must keep clear of them
+    fn update_video_overlay(&mut self, ctx: &egui::Context) -> f32 {
+        if !self.overlay_controls() {
+            return 0.;
+        }
+
+        let pinned = self.ui.preferences.open || self.ui.dialogs.is_open();
+
+        self.ui.video_controls.update_overlay(
+            ctx,
+            self.ui.canvas.rect,
+            self.floating_strip(),
+            pinned,
+            Instant::now(),
+        )
+    }
+
+    /// Whether the thumbnail strip floats below overlaid video controls
+    fn floating_strip(&self) -> bool {
+        self.settings.values.filmstrip && !self.browser.entries().is_empty()
+    }
+
+    fn show_video_overlay(&mut self, ctx: &egui::Context) {
+        if !self.overlay_controls() {
+            return;
+        }
+
+        let show_strip = self.floating_strip();
+        let content = OverlayContent {
+            canvas: self.ui.canvas.rect,
+            state: &self.video.state,
+            colors: self.colors,
+            backdrop: self.settings.values.overlay_backdrop,
+            fullscreen: self.ui.fullscreen,
+            strip: show_strip.then_some((&mut self.ui.filmstrip, &self.browser)),
+        };
+        let mut commands = Vec::new();
+
+        self.ui
+            .video_controls
+            .show_overlay(ctx, content, &mut commands);
+        self.handle_commands(commands, ctx);
+    }
+
     fn show_viewer_controls(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        if !self.ui.controls_visible(ctx, self.video.state.active) {
+        let overlay = self.overlay_controls();
+
+        // Fullscreen reveals docked bottom panels from the bottom edge, which floating
+        // controls handle themselves
+        let docked_bottom = self.video.state.active || self.settings.values.filmstrip;
+        let bottom_reveal = docked_bottom && !overlay;
+
+        if !self.ui.controls_visible(ctx, bottom_reveal) {
             return;
         }
 
@@ -431,7 +499,8 @@ impl Flowa {
 
         toolbar::status(ui, &self.toolbar_state());
 
-        if self.settings.values.filmstrip {
+        // Floating controls draw the strip themselves, over the video
+        if self.settings.values.filmstrip && !overlay {
             self.ui
                 .filmstrip
                 .show(ui, &self.browser, self.colors, &mut commands);
@@ -439,12 +508,14 @@ impl Flowa {
         }
 
         // Bottom panels are allocated outside-in, so transport follows the filmstrip
-        if self.video.state.active {
+        if self.video.state.active && !overlay {
+            let compact =
+                self.settings.values.video_controls == VideoControlsStyle::Compact;
             self.ui.video_controls.show(
                 ui,
                 &self.video.state,
                 self.colors,
-                self.settings.values.compact_video_controls,
+                compact,
                 &mut commands,
             );
             self.handle_commands(std::mem::take(&mut commands), ctx);
@@ -463,7 +534,12 @@ impl Flowa {
         }
     }
 
-    fn show_canvas(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+    fn show_canvas(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        subtitle_clearance: f32,
+    ) {
         let mut commands = Vec::new();
         let content = CanvasContent {
             image: &self.image,
@@ -472,6 +548,7 @@ impl Flowa {
             colors: self.colors,
             can_navigate: self.browser.entries().len() > 1,
             fullscreen: self.ui.fullscreen,
+            subtitle_clearance,
         };
         let response = self.ui.canvas.show(ui, content, &mut commands);
 

@@ -163,6 +163,62 @@ pub enum VideoDecoder {
     Software,
 }
 
+/// Where the video controls sit and how they share space with the video
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    AsRefStr,
+    VariantArray,
+)]
+pub enum VideoControlsStyle {
+    /// The timeline on its own row above the buttons, below the video
+    #[strum(to_string = "Two rows")]
+    TwoRows,
+    /// The timeline between the buttons on one row, below the video
+    Compact,
+    /// Floating over the bottom of the video and hidden while the pointer rests
+    #[default]
+    Overlay,
+}
+
+impl VideoControlsStyle {
+    /// One line on how the style looks
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::TwoRows => "A full-width timeline above the buttons, below the video",
+            Self::Compact => "The timeline and buttons on one row, below the video",
+            Self::Overlay => "Floats over the video and hides when the pointer rests",
+        }
+    }
+}
+
+/// The gradient behind overlaid video controls
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    AsRefStr,
+    VariantArray,
+)]
+pub enum OverlayBackdrop {
+    /// Black with light controls, readable over any video
+    #[default]
+    Black,
+    /// The theme's panel color with its own text color
+    Theme,
+}
+
 /// What happens to the pitch of audio when a video plays faster or slower
 #[derive(
     Clone,
@@ -243,7 +299,11 @@ pub struct Settings {
     pub checker_contrast: f32,
 
     pub filmstrip: bool,
-    pub compact_video_controls: bool,
+    pub video_controls: VideoControlsStyle,
+    pub overlay_backdrop: OverlayBackdrop,
+    /// The checkbox that preceded `video_controls`, read once from older preferences
+    #[serde(rename = "compact_video_controls", skip_serializing)]
+    pub(crate) legacy_compact_controls: Option<bool>,
     pub ui_scale: f32,
     pub fit_small: bool,
     /// Fitted images keep a margin from the canvas edges outside fullscreen
@@ -281,7 +341,9 @@ impl Default for Settings {
             checker_size: 12.0,
             checker_contrast: 0.09,
             filmstrip: false,
-            compact_video_controls: true,
+            video_controls: VideoControlsStyle::Overlay,
+            overlay_backdrop: OverlayBackdrop::Black,
+            legacy_compact_controls: None,
             ui_scale: 1.0,
             fit_small: false,
             image_margin: true,
@@ -318,6 +380,16 @@ impl Settings {
 
         if !RendererPreference::SUPPORTED.contains(&self.renderer) {
             self.renderer = RendererPreference::Auto;
+        }
+
+        // Older preferences saved a checkbox that was on by default, so only turning it
+        // off was a choice; that keeps two rows and the default moves to the overlay
+        if let Some(compact) = self.legacy_compact_controls.take() {
+            self.video_controls = if compact {
+                VideoControlsStyle::Overlay
+            } else {
+                VideoControlsStyle::TwoRows
+            };
         }
     }
 

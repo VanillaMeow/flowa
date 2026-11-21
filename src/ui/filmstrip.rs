@@ -32,7 +32,7 @@ const ITEM_WIDTH: f32 = 108.;
 const ITEM_HEIGHT: f32 = 86.;
 /// Items between equal top and bottom margins; the floating scroll bar draws in the
 /// bottom one
-const STRIP_HEIGHT: f32 = ITEM_HEIGHT + margin::BOTTOM_PANEL.sum().y;
+pub(super) const STRIP_HEIGHT: f32 = ITEM_HEIGHT + margin::BOTTOM_PANEL.sum().y;
 
 pub struct Filmstrip {
     worker: ThumbnailWorker,
@@ -147,6 +147,33 @@ impl Filmstrip {
             });
     }
 
+    /// Shows the thumbnails in `rect` without a panel, for floating over a video
+    ///
+    /// They land exactly where the docked strip puts them, so moving between an image
+    /// and a video never shifts them
+    pub fn show_floating(
+        &mut self,
+        ui: &mut egui::Ui,
+        rect: Rect,
+        browser: &Browser,
+        colors: Colors,
+        commands: &mut Vec<Command>,
+    ) {
+        // The docked panel keeps its separator line inside its height, above the margin
+        let separator = ui.visuals().widgets.noninteractive.bg_stroke.width.round();
+        let top = separator + f32::from(margin::BOTTOM_PANEL.top);
+
+        // The scroll bar draws in the bottom margin, as in the docked strip
+        let inner = Rect::from_min_max(
+            rect.min + vec2(f32::from(margin::BOTTOM_PANEL.left), top),
+            rect.max - vec2(f32::from(margin::BOTTOM_PANEL.right), 0.),
+        );
+
+        ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
+            self.show_scroll_area(ui, browser, colors, commands);
+        });
+    }
+
     fn show_scroll_area(
         &mut self,
         ui: &mut egui::Ui,
@@ -156,12 +183,16 @@ impl Filmstrip {
     ) {
         ui.style_mut().always_scroll_the_only_direction = true;
 
-        egui::ScrollArea::horizontal()
-            .id_salt("thumbnails")
-            .auto_shrink([false, false])
-            .show_viewport(ui, |ui, viewport| {
-                self.show_visible_items(ui, viewport, browser, colors, commands);
-            });
+        // A fixed ID shares the scroll position between the docked and floating strips
+        let builder = egui::UiBuilder::new().scope_id(thumbnails_id());
+        ui.scope_builder(builder, |ui| {
+            egui::ScrollArea::horizontal()
+                .id_salt("thumbnails")
+                .auto_shrink([false, false])
+                .show_viewport(ui, |ui, viewport| {
+                    self.show_visible_items(ui, viewport, browser, colors, commands);
+                });
+        });
     }
 
     fn show_visible_items(
@@ -294,6 +325,10 @@ impl Filmstrip {
             self.pending.insert(path.clone());
         }
     }
+}
+
+fn thumbnails_id() -> egui::Id {
+    egui::Id::unique("filmstrip-thumbnails")
 }
 
 fn item_rect(origin: Pos2, index: usize) -> Rect {

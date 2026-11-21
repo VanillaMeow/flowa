@@ -1,4 +1,5 @@
-//! Compact or two-row video controls above the filmstrip
+//! Video controls docked above the filmstrip in one or two rows, or floating over the
+//! video
 
 use std::time::{Duration, Instant};
 
@@ -24,6 +25,10 @@ use super::{
     tracks, widgets,
 };
 
+mod overlay;
+
+pub use overlay::OverlayContent;
+
 const TIMELINE_HEIGHT: f32 = 22.;
 const ROW_SPACING: f32 = space::XS;
 const INLINE_VOLUME_WIDTH: f32 = 104.;
@@ -48,6 +53,7 @@ const SEEK_HINT_GAP: f32 = space::XS;
 pub struct VideoControls {
     seek: Option<SeekPreview>,
     audible_volume: f64,
+    overlay: overlay::OverlayState,
 }
 
 impl Default for VideoControls {
@@ -55,6 +61,7 @@ impl Default for VideoControls {
         Self {
             seek: None,
             audible_volume: 100.,
+            overlay: overlay::OverlayState::default(),
         }
     }
 }
@@ -188,7 +195,7 @@ impl VideoControls {
         state: &VideoState,
         mut position: f64,
         commands: &mut Vec<Command>,
-    ) {
+    ) -> Response {
         let duration = state.duration.max(0.);
         let enabled = state.ready() && duration > 0.;
         position = position.clamp(0., duration);
@@ -225,6 +232,8 @@ impl VideoControls {
         if enabled {
             seek_hint(ui.ctx(), &response, duration);
         }
+
+        response
     }
 
     fn compact_row(
@@ -588,7 +597,7 @@ fn volume_slider(
     mut volume: f64,
     width: f32,
     commands: &mut Vec<Command>,
-) {
+) -> Response {
     ui.spacing_mut().slider_width = width;
     ui.spacing_mut().interact_size.y = 22.;
     let response = ui.add(
@@ -603,7 +612,7 @@ fn volume_slider(
         commands.push(PlaybackCommand::SetVolume(volume).into());
     }
 
-    response.on_hover_text(format!("Volume · {volume:.0}%"));
+    response.on_hover_text(format!("Volume · {volume:.0}%"))
 }
 
 fn volume_icon(volume: f64) -> Icon {
@@ -649,14 +658,20 @@ fn seek_hint(ctx: &egui::Context, response: &Response, duration: f64) {
 /// Where the timeline handle would sit for a pointer at `pointer_x`, and the time
 /// clicking there seeks to
 fn seek_target(rect: Rect, pointer_x: f32, duration: f64) -> (f32, f64) {
-    // Egui's slider insets the handle's center from the ends by its radius
-    let handle_radius = rect.height() / 2.5;
-    let rail = rect.x_range().shrink(handle_radius);
+    let rail = slider_rail(rect);
 
     let x = pointer_x.clamp(rail.min, rail.max);
     let fraction = f64::from((x - rail.min) / rail.span());
 
     (x, fraction * duration)
+}
+
+/// The stretch of a slider that the handle's center travels
+fn slider_rail(rect: Rect) -> egui::Rangef {
+    // Egui's slider insets the handle's center from the ends by its radius
+    let handle_radius = rect.height() / 2.5;
+
+    rect.x_range().shrink(handle_radius)
 }
 
 fn text_width(ui: &egui::Ui, text: &str) -> f32 {

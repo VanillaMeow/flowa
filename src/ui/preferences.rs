@@ -5,8 +5,9 @@ use strum::{AsRefStr, VariantArray};
 
 use crate::{
     settings::{
-        Accent, CHECKER_CONTRAST, CHECKER_SIZE, Canvas, MEMORY_MB, RendererPreference,
-        SLIDESHOW_SECONDS, Settings, SpeedPitch, Theme, UI_SCALE, VideoDecoder,
+        Accent, CHECKER_CONTRAST, CHECKER_SIZE, Canvas, MEMORY_MB, OverlayBackdrop,
+        RendererPreference, SLIDESHOW_SECONDS, Settings, SpeedPitch, Theme, UI_SCALE,
+        VideoControlsStyle, VideoDecoder,
     },
     video::VideoSession,
 };
@@ -153,10 +154,10 @@ fn viewing(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors) {
 
     section(ui, "Panels", colors, |ui| {
         ui.checkbox(&mut settings.filmstrip, "Show thumbnail strip");
-        ui.checkbox(
-            &mut settings.compact_video_controls,
-            "Compact video controls",
-        );
+    });
+
+    section(ui, "Video controls", colors, |ui| {
+        video_controls_picker(ui, settings, colors);
     });
 
     section(ui, "Pitch at other speeds", colors, |ui| {
@@ -562,6 +563,27 @@ fn canvas_picker(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors) {
         .iter()
         .map(|canvas| (*canvas, canvas.as_ref()));
     widgets::segmented(ui, &mut settings.canvas, canvases, colors);
+}
+
+fn video_controls_picker(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors) {
+    let styles = VideoControlsStyle::VARIANTS
+        .iter()
+        .map(|style| (*style, style.as_ref()));
+    widgets::segmented(ui, &mut settings.video_controls, styles, colors);
+    hint(ui, settings.video_controls.description(), colors);
+
+    if settings.video_controls != VideoControlsStyle::Overlay {
+        return;
+    }
+
+    // The backdrop only exists for the overlay, so it appears only once chosen
+    ui.add_space(space::SM);
+    widgets::caption(ui, "Overlay background", colors);
+
+    let backdrops = OverlayBackdrop::VARIANTS
+        .iter()
+        .map(|backdrop| (*backdrop, backdrop.as_ref()));
+    widgets::segmented(ui, &mut settings.overlay_backdrop, backdrops, colors);
 }
 
 fn custom_canvas_color(ui: &mut egui::Ui, settings: &mut Settings) {

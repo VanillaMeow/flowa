@@ -4,7 +4,8 @@ mod model {
     use anyhow::Result;
 
     use crate::settings::{
-        Canvas, RendererPreference, Settings, SortOrder, Theme, VideoDecoder,
+        Canvas, OverlayBackdrop, RendererPreference, Settings, SortOrder, Theme,
+        VideoControlsStyle, VideoDecoder,
     };
 
     #[test]
@@ -12,9 +13,32 @@ mod model {
         let s: Settings = serde_json::from_str("{\"filmstrip\":true}")?;
         assert!(s.filmstrip);
         assert!(!s.checkerboard);
-        assert!(s.compact_video_controls);
+        assert_eq!(s.video_controls, VideoControlsStyle::Overlay);
+        assert_eq!(s.overlay_backdrop, OverlayBackdrop::Black);
         assert_eq!(s.renderer, RendererPreference::Auto);
         assert_eq!(s.video_decoder, VideoDecoder::Auto);
+        Ok(())
+    }
+
+    #[test]
+    fn the_old_compact_checkbox_moves_to_the_new_styles_once() -> Result<()> {
+        // The checkbox was on by default, so only turning it off was a choice
+        for (compact, expected) in [
+            (true, VideoControlsStyle::Overlay),
+            (false, VideoControlsStyle::TwoRows),
+        ] {
+            let json = format!("{{\"compact_video_controls\":{compact}}}");
+            let mut s: Settings = serde_json::from_str(&json)?;
+            s.validate();
+
+            assert_eq!(s.video_controls, expected);
+            assert_eq!(s.legacy_compact_controls, None);
+
+            // Only the new setting is written back
+            let saved = serde_json::to_value(&s)?;
+            assert!(saved.get("compact_video_controls").is_none());
+        }
+
         Ok(())
     }
 
@@ -55,7 +79,8 @@ mod store {
     use anyhow::Result;
 
     use crate::settings::{
-        Accent, RendererPreference, Settings, SettingsStore, Theme, VideoDecoder,
+        Accent, OverlayBackdrop, RendererPreference, Settings, SettingsStore, Theme,
+        VideoControlsStyle, VideoDecoder,
     };
 
     #[test]
@@ -64,7 +89,8 @@ mod store {
         let path = dir.path().join("settings.json");
         let mut s = Settings {
             theme: Theme::Sweet,
-            compact_video_controls: false,
+            video_controls: VideoControlsStyle::Compact,
+            overlay_backdrop: OverlayBackdrop::Theme,
             checkerboard: true,
             video_decoder: VideoDecoder::Vulkan,
             renderer: RendererPreference::SUPPORTED
@@ -81,7 +107,8 @@ mod store {
 
         let loaded = SettingsStore::load(&path)?;
         assert_eq!(loaded.theme, Theme::Sweet);
-        assert!(!loaded.compact_video_controls);
+        assert_eq!(loaded.video_controls, VideoControlsStyle::Compact);
+        assert_eq!(loaded.overlay_backdrop, OverlayBackdrop::Theme);
         assert_eq!(loaded.accent, Accent::Rose);
         assert_eq!(loaded.renderer, store.values.renderer);
         assert_eq!(loaded.video_decoder, VideoDecoder::Vulkan);

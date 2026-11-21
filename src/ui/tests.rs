@@ -143,9 +143,10 @@ mod actions {
 }
 
 mod canvas {
-    use egui::{Pos2, Rect, TextureId, vec2};
+    use egui::{Event, Modifiers, PointerButton, Pos2, Rect, TextureId, vec2};
 
     use crate::{
+        app::{Command, PlaybackCommand},
         settings::{Accent, Settings, Theme},
         ui::{
             canvas::{CanvasContent, ImageCanvas},
@@ -195,6 +196,7 @@ mod canvas {
                         colors,
                         can_navigate: false,
                         fullscreen,
+                        subtitle_clearance: 0.,
                     },
                     &mut Vec::new(),
                 );
@@ -210,6 +212,177 @@ mod canvas {
                 assert!((displayed.min - viewport.min).length() < 0.01);
                 assert!((displayed.max - viewport.max).length() < 0.01);
             }
+        }
+    }
+    #[test]
+    fn clicking_a_video_plays_or_pauses_and_a_double_click_cancels_out() {
+        let ctx = egui::Context::default();
+        let mut canvas = ImageCanvas::new(ctx.clone(), false);
+        let colors = theme::colors(Theme::Charcoal, Accent::Theme, true);
+        let image = ImageSession::new();
+        let settings = Settings::default();
+        let mut video = VideoSession::default();
+        video.state.active = true;
+        video.state.size = [1920, 1080];
+        video.texture = Some(TextureId::User(7));
+
+        let viewport = Rect::from_min_size(Pos2::ZERO, vec2(1280., 720.));
+        let center = viewport.center();
+        let mut run = |time: f64, events: Vec<Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(viewport),
+                time: Some(time),
+                events,
+                ..Default::default()
+            };
+            let mut commands = Vec::new();
+
+            let mut output = ctx.run_ui(input, |ui| {
+                let content = CanvasContent {
+                    image: &image,
+                    video: &video,
+                    settings: &settings,
+                    colors,
+                    can_navigate: false,
+                    fullscreen: false,
+                    subtitle_clearance: 0.,
+                };
+                canvas.show(ui, content, &mut commands);
+            });
+            output.textures_delta.clear();
+
+            commands
+                .iter()
+                .filter(|command| {
+                    **command == Command::Playback(PlaybackCommand::TogglePlay)
+                })
+                .count()
+        };
+        let button = |pressed| Event::PointerButton {
+            pos: center,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+
+        run(0., vec![Event::PointerMoved(center)]);
+        run(0.05, vec![button(true)]);
+        assert_eq!(run(0.1, vec![button(false)]), 1, "A click toggles at once");
+
+        // The second click of a double-click toggles back
+        run(0.15, vec![button(true)]);
+        assert_eq!(run(0.2, vec![button(false)]), 1);
+
+        // Dragging pans instead
+        run(2., vec![button(true)]);
+        run(2.05, vec![Event::PointerMoved(center + vec2(80., 0.))]);
+        assert_eq!(run(2.1, vec![button(false)]), 0);
+    }
+
+    #[test]
+    fn a_video_waiting_for_its_first_frame_shows_the_spinner_only_after_a_delay() {
+        let ctx = egui::Context::default();
+        let mut canvas = ImageCanvas::new(ctx.clone(), false);
+        let colors = theme::colors(Theme::Charcoal, Accent::Theme, true);
+        let image = ImageSession::new();
+        let settings = Settings::default();
+        let mut video = VideoSession::default();
+        video.state.active = true;
+        video.state.loading = true;
+
+        let viewport = Rect::from_min_size(Pos2::ZERO, vec2(1280., 720.));
+        let mut shapes = || {
+            let input = egui::RawInput {
+                screen_rect: Some(viewport),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                let content = CanvasContent {
+                    image: &image,
+                    video: &video,
+                    settings: &settings,
+                    colors,
+                    can_navigate: false,
+                    fullscreen: false,
+                    subtitle_clearance: 0.,
+                };
+                canvas.show(ui, content, &mut Vec::new());
+            });
+            output.textures_delta.clear();
+
+            output.shapes.len()
+        };
+
+        let quick = shapes();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let slow = shapes();
+
+        assert!(
+            slow > quick,
+            "No spinner after waiting: {quick} -> {slow} shapes"
+        );
+    }
+
+    #[test]
+    fn the_context_menu_stays_open_when_it_reveals_fullscreen_panels() {
+        let ctx = egui::Context::default();
+        let mut canvas = ImageCanvas::new(ctx.clone(), false);
+        let colors = theme::colors(Theme::Charcoal, Accent::Theme, true);
+        let image = ImageSession::new();
+        let settings = Settings::default();
+        let mut video = VideoSession::default();
+        video.state.active = true;
+        video.state.size = [1920, 1080];
+        video.texture = Some(TextureId::User(7));
+
+        let viewport = Rect::from_min_size(Pos2::ZERO, vec2(1280., 720.));
+        let center = viewport.center();
+        let mut run = |events: Vec<Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(viewport),
+                events,
+                ..Default::default()
+            };
+
+            let mut output = ctx.run_ui(input, |ui| {
+                // Fullscreen shows the panels while any popup is open
+                if egui::Popup::is_any_open(ui.ctx()) {
+                    egui::Panel::top("toolbar").exact_size(58.).show(ui, |ui| {
+                        ui.label("Toolbar");
+                    });
+                }
+
+                let content = CanvasContent {
+                    image: &image,
+                    video: &video,
+                    settings: &settings,
+                    colors,
+                    can_navigate: false,
+                    fullscreen: true,
+                    subtitle_clearance: 0.,
+                };
+                if let Some(response) = canvas.show(ui, content, &mut Vec::new()) {
+                    response.context_menu(|ui| {
+                        ui.label("Menu");
+                    });
+                }
+            });
+            output.textures_delta.clear();
+        };
+        let button = |pressed| Event::PointerButton {
+            pos: center,
+            button: PointerButton::Secondary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+
+        run(vec![Event::PointerMoved(center)]);
+        run(vec![button(true)]);
+        run(vec![button(false)]);
+
+        for _ in 0..4 {
+            run(Vec::new());
+            assert!(egui::Popup::is_any_open(&ctx), "The context menu closed");
         }
     }
 }
@@ -335,6 +508,100 @@ mod filmstrip {
             );
         }
     }
+
+    /// Where the third thumbnail's caption lands with the strip docked or floating
+    fn caption_pos(
+        ctx: &egui::Context,
+        strip: &mut Filmstrip,
+        browser: &Browser,
+        floating: bool,
+        events: Vec<Event>,
+    ) -> Pos2 {
+        let colors = theme::colors(Theme::Charcoal, Accent::Theme, true);
+        theme::apply(ctx, colors);
+        let screen = Rect::from_min_size(Pos2::ZERO, vec2(640., 600.));
+        let input = egui::RawInput {
+            screen_rect: Some(screen),
+            events,
+            ..Default::default()
+        };
+
+        let mut output = ctx.run_ui(input, |ui| {
+            if !floating {
+                strip.show(ui, browser, colors, &mut Vec::new());
+                return;
+            }
+
+            let top = screen.bottom() - crate::ui::filmstrip::STRIP_HEIGHT;
+            let rect = Rect::from_x_y_ranges(screen.x_range(), top..=screen.bottom());
+            strip.show_floating(ui, rect, browser, colors, &mut Vec::new());
+        });
+        output.textures_delta.clear();
+
+        output
+            .shapes
+            .iter()
+            .find_map(|shape| {
+                let egui::Shape::Text(text) = &shape.shape else {
+                    return None;
+                };
+                (text.galley.job.text == "clip-2.mp4").then_some(text.pos)
+            })
+            .expect("Third thumbnail should be visible")
+    }
+
+    #[test]
+    fn thumbnails_stay_put_when_the_strip_starts_floating() {
+        let mut browser = Browser::new();
+        let entries = (0..20)
+            .map(|index| {
+                let name = format!("clip-{index}.mp4");
+                Entry {
+                    path: name.clone().into(),
+                    name,
+                    kind: MediaKind::Video,
+                    size: 0,
+                    modified: SystemTime::UNIX_EPOCH,
+                }
+            })
+            .collect();
+        browser.replace(
+            ScannedFolder {
+                folder: PathBuf::from("."),
+                selected: None,
+                entries,
+            },
+            SortOrder::Name,
+            false,
+        );
+
+        let ctx = egui::Context::default();
+        let mut strip =
+            Filmstrip::new(ctx.clone(), Settings::default().memory_budget());
+        caption_pos(&ctx, &mut strip, &browser, false, Vec::new());
+
+        // A scrolled strip keeps its scroll position too
+        let wheel = Event::MouseWheel {
+            unit: MouseWheelUnit::Point,
+            delta: vec2(-40., 0.),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Trackpad,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let events = vec![Event::PointerMoved(egui::pos2(100., 540.)), wheel];
+        caption_pos(&ctx, &mut strip, &browser, false, events);
+
+        // Smooth scrolling spreads the wheel over several frames
+        for _ in 0..30 {
+            caption_pos(&ctx, &mut strip, &browser, false, Vec::new());
+        }
+        let docked = caption_pos(&ctx, &mut strip, &browser, false, Vec::new());
+
+        caption_pos(&ctx, &mut strip, &browser, true, Vec::new());
+        let floating = caption_pos(&ctx, &mut strip, &browser, true, Vec::new());
+
+        assert_eq!(docked, floating);
+    }
 }
 
 mod toolbar {
@@ -454,7 +721,7 @@ mod subtitles {
             ..Default::default()
         };
         let mut output = ctx.run_ui(input, |ui| {
-            overlay.paint(ui.painter(), picture, picture, &active);
+            overlay.paint(ui.painter(), picture, picture, f32::INFINITY, &active);
         });
         output.textures_delta.clear();
 
@@ -691,7 +958,7 @@ mod screenshots {
     use egui::{Pos2, Rect, vec2};
 
     use crate::{
-        settings::{Accent, Theme},
+        settings::{Accent, OverlayBackdrop, Theme},
         ui::{adjustments, theme, video_controls},
         video::VideoState,
         viewer::adjustments::Adjustments,
@@ -939,7 +1206,7 @@ mod screenshots {
                 0.,
                 egui::Color32::from_rgb(170, 160, 140),
             );
-            overlay.paint(ui.painter(), picture, picture, &subtitles);
+            overlay.paint(ui.painter(), picture, picture, f32::INFINITY, &subtitles);
         })?;
 
         let tracked = VideoState {
@@ -1011,6 +1278,90 @@ mod screenshots {
             })?;
         }
 
+        for (name, theme_name, backdrop, width) in [
+            (
+                "overlay-black",
+                Theme::Charcoal,
+                OverlayBackdrop::Black,
+                1200,
+            ),
+            (
+                "overlay-black-light-video",
+                Theme::Paper,
+                OverlayBackdrop::Black,
+                1200,
+            ),
+            (
+                "overlay-theme",
+                Theme::Charcoal,
+                OverlayBackdrop::Theme,
+                1200,
+            ),
+            (
+                "overlay-theme-paper",
+                Theme::Paper,
+                OverlayBackdrop::Theme,
+                1200,
+            ),
+            (
+                "overlay-narrow",
+                Theme::Charcoal,
+                OverlayBackdrop::Black,
+                480,
+            ),
+        ] {
+            let mut controls = video_controls::VideoControls::default();
+            let colors = theme::colors(theme_name, Accent::Theme, true);
+            let bright = name.contains("light-video");
+            screenshot(&graphics, name, [width, 420], |ui| {
+                theme::apply(ui.ctx(), colors);
+                let canvas = ui.max_rect();
+                paint_fake_video(ui.painter(), canvas, bright);
+
+                let now = std::time::Instant::now();
+                controls.update_overlay(ui.ctx(), canvas, false, true, now);
+
+                let content = video_controls::OverlayContent {
+                    canvas,
+                    state: &tracked,
+                    colors,
+                    backdrop,
+                    fullscreen: false,
+                    strip: None,
+                };
+                controls.show_overlay(ui.ctx(), content, &mut Vec::new());
+            })?;
+        }
+
         Ok(())
+    }
+
+    /// A sky over a pale beach, so the overlay's gradient is judged over bright and
+    /// busy footage rather than a flat backdrop
+    fn paint_fake_video(painter: &egui::Painter, rect: Rect, bright: bool) {
+        let (sky, ground) = if bright {
+            (
+                egui::Color32::from_rgb(214, 232, 246),
+                egui::Color32::from_rgb(247, 241, 226),
+            )
+        } else {
+            (
+                egui::Color32::from_rgb(70, 130, 190),
+                egui::Color32::from_rgb(222, 196, 150),
+            )
+        };
+        let horizon = rect.top() + rect.height() * 0.55;
+
+        painter.rect_filled(rect, 0., sky);
+        painter.rect_filled(
+            Rect::from_min_max(egui::pos2(rect.left(), horizon), rect.max),
+            0.,
+            ground,
+        );
+        painter.circle_filled(
+            egui::pos2(rect.left() + rect.width() * 0.7, rect.top() + 80.),
+            36.,
+            egui::Color32::from_rgb(255, 240, 180),
+        );
     }
 }

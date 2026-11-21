@@ -21,6 +21,8 @@ const MIN_TEXT: f32 = 15.;
 const MAX_TEXT: f32 = 64.;
 /// Space between the picture's edge and the nearest line, relative to text size
 const EDGE_MARGIN: f32 = 1.2;
+/// Space between the floor and the lowest line, relative to text size
+const FLOOR_MARGIN: f32 = 0.5;
 const OUTLINE: Color32 = Color32::from_rgba_premultiplied(0, 0, 0, 220);
 
 /// Textures of the bitmap cues on screen, released when their cues end
@@ -30,13 +32,15 @@ pub struct SubtitleOverlay {
 }
 
 impl SubtitleOverlay {
-    /// Paints the cues; `picture` is where the whole frame lands, and `visible` the
-    /// part of it inside the canvas
+    /// Paints the cues; `picture` is where the whole frame lands, `visible` the part
+    /// of it inside the canvas, and `floor` the lowest text may reach, such as the top
+    /// of controls floating over the video
     pub fn paint(
         &mut self,
         painter: &egui::Painter,
         picture: Rect,
         visible: Rect,
+        floor: f32,
         subtitles: &ActiveSubtitles,
     ) {
         self.release_unused(subtitles);
@@ -46,7 +50,8 @@ impl SubtitleOverlay {
         }
 
         let size = (visible.height() * TEXT_SCALE).clamp(MIN_TEXT, MAX_TEXT);
-        let mut bottom = visible.bottom() - size * EDGE_MARGIN;
+        let mut bottom =
+            (visible.bottom() - size * EDGE_MARGIN).min(floor - size * FLOOR_MARGIN);
         let mut top = visible.top() + size * EDGE_MARGIN;
 
         // Later cues sit closer to the edge, so earlier ones stack outward

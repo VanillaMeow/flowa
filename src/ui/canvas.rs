@@ -1,11 +1,11 @@
 //! Image interaction and the canvas's loading, error, and welcome states
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use egui::{Rect, RichText, Sense, Stroke, Vec2, vec2};
+use egui::{Id, Rect, RichText, Sense, Stroke, Vec2, vec2};
 
 use crate::{
-    app::{BrowseCommand, Command, FileCommand},
+    app::{BrowseCommand, Command, FileCommand, PlaybackCommand},
     settings::Settings,
     video::VideoSession,
     viewer::{
@@ -38,6 +38,8 @@ pub struct CanvasContent<'a> {
     pub colors: Colors,
     pub can_navigate: bool,
     pub fullscreen: bool,
+    /// How far up from the canvas bottom subtitles keep clear of floating controls
+    pub subtitle_clearance: f32,
 }
 
 impl CanvasContent<'_> {
@@ -77,6 +79,11 @@ pub struct ImageCanvas {
     pub rect: Rect,
     pub renderer: ImageRenderer,
     previous: Option<FrozenPreview>,
+    /// Where the canvas was when the preview froze, so it stays put if the canvas
+    /// changes size, such as when a video's controls float instead of docking
+    previous_canvas: Rect,
+    /// When the current video started waiting for its first frame
+    video_wait: Option<Instant>,
     displayed_size: Option<Vec2>,
     subtitles: SubtitleOverlay,
 }
@@ -89,6 +96,8 @@ impl ImageCanvas {
             rect: Rect::NOTHING,
             renderer: ImageRenderer::new(ctx, nearest),
             previous: None,
+            previous_canvas: Rect::NOTHING,
+            video_wait: None,
             displayed_size: None,
             subtitles: SubtitleOverlay::default(),
         }
@@ -100,6 +109,7 @@ impl ImageCanvas {
                 self.renderer.freeze(size, &self.view, self.adjustments)
         {
             self.previous = Some(preview);
+            self.previous_canvas = self.rect;
         }
 
         self.renderer.reset(generation);
@@ -144,16 +154,28 @@ impl ImageCanvas {
         content: &CanvasContent<'_>,
         commands: &mut Vec<Command>,
     ) -> Option<egui::Response> {
-        let (rect, response) =
-            ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
+        let (rect, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
         self.rect = rect;
 
-        // Only the loading state keeps painting the previous file's frozen preview
-        let loading_image = !content.video.state.active
+        // Panels shown before the canvas shift egui's automatic IDs, which would close
+        // the context menu when fullscreen reveals them for it
+        let response = ui.interact(rect, canvas_id(), Sense::click_and_drag());
+
+        // Only loading keeps painting the previous file's frozen preview
+        let video = &content.video;
+        let waiting_video = video.state.active
+            && video.texture.is_none()
+            && video.state.error.is_none();
+        let loading_image = !video.state.active
             && content.image.decoded.is_none()
             && content.image.loading;
-        if !loading_image {
+
+        if !loading_image && !waiting_video {
             self.previous = None;
+        }
+
+        if !waiting_video {
+            self.video_wait = None;
         }
 
         let context_menu = if content.video.state.active {
@@ -163,7 +185,7 @@ impl ImageCanvas {
             self.show_image(ui, &response, content, decoded);
             Some(response)
         } else if loading_image {
-            self.show_loading(ui, content);
+            self.show_waiting(ui, content, content.image.loading_age());
             None
         } else {
             show_empty_state(ui, rect, content, commands);
@@ -191,7 +213,8 @@ impl ImageCanvas {
         }
 
         let Some(texture) = video.texture else {
-            show_loading(ui, self.rect, content.colors, 1.);
+            let since = *self.video_wait.get_or_insert_with(Instant::now);
+            self.show_waiting(ui, content, since.elapsed());
             return;
         };
 
@@ -199,6 +222,12 @@ impl ImageCanvas {
         self.displayed_size = Some(size);
         self.handle_pointer(response, ui.ctx());
         self.fit_image(size, content, ui.ctx().pixels_per_point());
+
+        // Every click plays or pauses at once, so a double-click's second click undoes
+        // its first while the view resets
+        if response.clicked() && video.state.ready() {
+            commands.push(PlaybackCommand::TogglePlay.into());
+        }
 
         let painter = ui.painter().with_clip_rect(self.rect);
         let placement = renderer::Placement {
@@ -211,8 +240,9 @@ impl ImageCanvas {
 
         let picture = Rect::from_points(&placement.corners());
         let visible = picture.intersect(self.rect);
+        let floor = self.rect.bottom() - content.subtitle_clearance;
         self.subtitles
-            .paint(&painter, picture, visible, &video.state.subtitles);
+            .paint(&painter, picture, visible, floor, &video.state.subtitles);
     }
 
     fn show_image(
@@ -242,13 +272,24 @@ impl ImageCanvas {
         self.renderer.paint(&painter, ctx, frame);
     }
 
-    fn show_loading(&self, ui: &mut egui::Ui, content: &CanvasContent<'_>) {
+    /// Keeps the previous file in place while the next one loads, and shows the
+    /// spinner only once loading takes long enough to notice
+    fn show_waiting(
+        &self,
+        ui: &mut egui::Ui,
+        content: &CanvasContent<'_>,
+        elapsed: Duration,
+    ) {
         if let Some(preview) = &self.previous {
             let painter = ui.painter().with_clip_rect(self.rect);
-            preview.paint(&painter, self.rect, content.settings, content.colors);
-        }
+            let canvas = if self.previous_canvas.is_positive() {
+                self.previous_canvas
+            } else {
+                self.rect
+            };
 
-        let elapsed = content.image.loading_age();
+            preview.paint(&painter, canvas, content.settings, content.colors);
+        }
 
         if elapsed < LOADING_DELAY {
             ui.ctx().request_repaint_after(LOADING_DELAY - elapsed);
@@ -507,4 +548,8 @@ fn paint_drop_target(ui: &egui::Ui, rect: Rect, colors: Colors) {
         egui::FontId::proportional(26.),
         colors.text,
     );
+}
+
+fn canvas_id() -> Id {
+    Id::unique("canvas")
 }

@@ -4,8 +4,9 @@ mod model;
 mod store;
 
 pub(crate) use model::{
-    Accent, CHECKER_CONTRAST, CHECKER_SIZE, Canvas, MEMORY_MB, RendererPreference,
-    SLIDESHOW_SECONDS, Settings, SortOrder, SpeedPitch, Theme, UI_SCALE, VideoDecoder,
+    Accent, CHECKER_CONTRAST, CHECKER_SIZE, Canvas, MEMORY_MB, OverlayBackdrop,
+    RendererPreference, SLIDESHOW_SECONDS, Settings, SortOrder, SpeedPitch, Theme,
+    UI_SCALE, VideoControlsStyle, VideoDecoder,
 };
 pub(crate) use store::SettingsStore;
 

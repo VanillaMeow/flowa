@@ -40,7 +40,9 @@ impl ViewerUi {
         }
     }
 
-    pub fn controls_visible(&self, ctx: &egui::Context, video_active: bool) -> bool {
+    /// Whether the docked panels show; in fullscreen they reveal near the top edge, and
+    /// near the bottom too while `bottom_reveal` asks for the docked strip or controls
+    pub fn controls_visible(&self, ctx: &egui::Context, bottom_reveal: bool) -> bool {
         if !self.fullscreen
             || self.preferences.open
             || self.dialogs.is_open()
@@ -54,6 +56,6 @@ impl ViewerUi {
             return false;
         };
 
-        pointer.y < TOOLBAR_REVEAL_HEIGHT || video_active && pointer.y > bottom_edge
+        pointer.y < TOOLBAR_REVEAL_HEIGHT || bottom_reveal && pointer.y > bottom_edge
     }
 }
