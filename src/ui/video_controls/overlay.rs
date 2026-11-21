@@ -312,6 +312,7 @@ impl VideoControls {
 
         if opacity <= 0. {
             self.overlay.menus.clear();
+            self.close_volume(ctx);
             hide_cursor(ctx, content.canvas);
             return;
         }
@@ -459,7 +460,7 @@ impl VideoControls {
         }
 
         let openness = ui.ctx().animate_bool_with_time(
-            overlay_id().with("volume"),
+            volume_id(),
             self.overlay.volume_open,
             motion::FADE_IN,
         );
@@ -491,6 +492,13 @@ impl VideoControls {
 
         let hovered = ui.rect_contains_pointer(group.response.rect.expand(space::XS));
         self.overlay.volume_open = room > 0. && (hovered || group.inner);
+    }
+
+    /// Shuts the volume slider at once while the controls are hidden, since the pointer
+    /// can leave the window straight from it and the controls should return closed
+    fn close_volume(&mut self, ctx: &egui::Context) {
+        self.overlay.volume_open = false;
+        ctx.animate_bool_with_time(volume_id(), false, 0.);
     }
 }
 
@@ -732,6 +740,10 @@ fn overlay_id() -> Id {
     Id::unique("video-overlay")
 }
 
+fn volume_id() -> Id {
+    overlay_id().with("volume")
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::{Duration, Instant};
@@ -744,7 +756,7 @@ mod tests {
         settings::{Accent, OverlayBackdrop, Theme},
         ui::{
             filmstrip,
-            style::{margin, size},
+            style::{margin, size, space},
             theme,
             video_controls::{
                 SliderFocus, VideoControls, seek_target, slider_focus_id,
@@ -944,6 +956,62 @@ mod tests {
         controls.leave_overlay();
         let back = frame(&ctx, &mut controls, start, 4., 800., Vec::new());
         assert_eq!(back.clearance, full);
+    }
+
+    #[test]
+    fn the_volume_slider_returns_closed_after_the_pointer_leaves_from_it() {
+        let ctx = egui::Context::default();
+        let mut controls = VideoControls::default();
+        let start = Instant::now();
+        let over_video = Pos2::new(400., 200.);
+
+        // The mute button follows the play button
+        let inset = f32::from(margin::BOTTOM_PANEL.left);
+        let row_center =
+            HEIGHT - f32::from(margin::BOTTOM_PANEL.bottom) - size::CONTROL / 2.;
+        let mute = Pos2::new(inset + size::CONTROL * 1.5 + space::XS, row_center);
+
+        // Hovering the mute button slides the volume open
+        frame(
+            &ctx,
+            &mut controls,
+            start,
+            0.,
+            800.,
+            vec![Event::PointerMoved(mute)],
+        );
+
+        for step in 1..=30 {
+            let seconds = f64::from(step) * 0.02;
+            frame(&ctx, &mut controls, start, seconds, 800., Vec::new());
+        }
+
+        assert!(controls.overlay.volume_open, "The volume did not open");
+
+        // The pointer leaves the window from the slider, and the controls hide
+        frame(
+            &ctx,
+            &mut controls,
+            start,
+            1.,
+            800.,
+            vec![Event::PointerGone],
+        );
+        frame(&ctx, &mut controls, start, 3., 800., Vec::new());
+        let hidden = frame(&ctx, &mut controls, start, 3.5, 800., Vec::new());
+        assert_eq!(hidden.clearance, 0.);
+
+        // Back over the video, the controls return with the slider closed
+        let moved = vec![Event::PointerMoved(over_video)];
+        frame(&ctx, &mut controls, start, 4., 800., moved);
+        frame(&ctx, &mut controls, start, 4.05, 800., Vec::new());
+
+        let openness = ctx.animate_bool_with_time(
+            super::volume_id(),
+            false,
+            super::motion::FADE_IN,
+        );
+        assert_eq!(openness, 0., "The volume slider showed open");
     }
 
     #[test]
