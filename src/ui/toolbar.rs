@@ -22,6 +22,13 @@ use super::{
 
 /// The flower fills most of its button, like an app icon
 const MENU_LOGO_SIZE: f32 = 24.;
+/// Below this row width, the view buttons fold into one menu
+const COMPACT_WIDTH: f32 = 600.;
+/// Below this row width, rotate and actual size give way
+const NARROW_WIDTH: f32 = 984.;
+/// The file name's slot at its widest, and the least room worth showing it in
+const TITLE_WIDTH: f32 = 260.;
+const MIN_TITLE_WIDTH: f32 = 40.;
 
 pub struct ToolbarState<'a> {
     pub browser: &'a Browser,
@@ -57,17 +64,41 @@ fn toolbar_row(
     state: &ToolbarState<'_>,
     commands: &mut Vec<Command>,
 ) {
-    ui.horizontal_centered(|ui| toolbar_contents(ui, state, commands));
+    let width = ui.available_width();
+    let layout = ViewLayout {
+        compact: width < COMPACT_WIDTH,
+        narrow: width < NARROW_WIDTH,
+    };
+    let mut view_commands = Vec::new();
+
+    // The right-hand buttons take their room first, so the file name truncates to
+    // whatever is left rather than guessing how wide they are
+    egui::Sides::new()
+        .height(ui.available_height())
+        .shrink_left()
+        .truncate()
+        .show(
+            ui,
+            |ui| file_controls(ui, state, commands),
+            |ui| view_controls(ui, state, layout, &mut view_commands),
+        );
+
+    commands.append(&mut view_commands);
 }
 
-fn toolbar_contents(
+/// Which view controls fit, decided from the whole row's width
+#[derive(Clone, Copy)]
+struct ViewLayout {
+    compact: bool,
+    narrow: bool,
+}
+
+/// The menu, folder, and navigation buttons, then the file name
+fn file_controls(
     ui: &mut egui::Ui,
     state: &ToolbarState<'_>,
     commands: &mut Vec<Command>,
 ) {
-    let ctx = ui.ctx().clone();
-    let compact = ui.available_width() < 600.;
-
     app_menu(ui, state, commands);
 
     actions::OPEN_FOLDER.button(ui, Icon::Open, false, commands);
@@ -78,24 +109,29 @@ fn toolbar_contents(
         navigation_buttons(ui, state, commands);
     });
 
-    let narrow = ui.available_width() < 760.;
+    image_title(ui, state);
+}
 
-    if !narrow {
-        image_title(ui, state);
+/// The window buttons at the far right, with the view buttons before them
+fn view_controls(
+    ui: &mut egui::Ui,
+    state: &ToolbarState<'_>,
+    layout: ViewLayout,
+    commands: &mut Vec<Command>,
+) {
+    if layout.compact {
+        ui.menu_button("View", |ui| compact_view_menu(ui, state, commands));
+        return;
     }
 
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        if compact {
-            ui.menu_button("View", |ui| compact_view_menu(ui, state, commands));
-            return;
-        }
+    window_buttons(ui, state, commands);
+    ui.separator();
 
-        window_buttons(ui, state, commands);
-        ui.separator();
+    let ctx = ui.ctx().clone();
+    let ready = state.image.decoded.is_some() || state.video.ready();
 
-        ui.add_enabled_ui(state.image.decoded.is_some() || state.video.ready(), |ui| {
-            view_buttons(ui, state, commands, &ctx, narrow);
-        });
+    ui.add_enabled_ui(ready, |ui| {
+        view_buttons(ui, state, commands, &ctx, layout.narrow);
     });
 }
 
@@ -167,7 +203,14 @@ fn navigation_buttons(
 fn image_title(ui: &mut egui::Ui, state: &ToolbarState<'_>) {
     let entry = state.browser.current();
     let title = entry.map(|entry| entry.name.as_str()).unwrap_or("");
-    let width = (ui.available_width() - 480.).clamp(40., 260.);
+
+    // The name is centered in its slot and hidden once too little room is left
+    let width = ui.available_width().min(TITLE_WIDTH);
+
+    if width < MIN_TITLE_WIDTH {
+        return;
+    }
+
     let label = egui::Label::new(RichText::new(title).size(text::BUTTON)).truncate();
 
     let response = ui.add_sized([width, size::CONTROL], label);

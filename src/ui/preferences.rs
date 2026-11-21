@@ -377,7 +377,8 @@ fn about_contents(ui: &mut egui::Ui, colors: Colors) {
     icon_licenses(ui);
 }
 
-/// "Made with ♥ by …", with the heart drawn as an icon since egui has no emoji font
+/// "Made with ♥ by …", with the heart drawn as the Lucide icon, which looks better
+/// than the emoji font's glyph
 fn credit(ui: &mut egui::Ui, colors: Colors) {
     let label = |text: &str| RichText::new(text).size(text::LABEL).color(colors.muted);
 
