@@ -299,6 +299,10 @@ impl VideoControls {
         content: OverlayContent<'_>,
         commands: &mut Vec<Command>,
     ) {
+        // A seek settles even while the controls are hidden, so the timeline follows
+        // playback again afterwards
+        self.acknowledge_seek(content.state.position);
+
         // A file opened partway through the frame floats its controls from the next
         if !self.overlay.active {
             return;
@@ -767,10 +771,23 @@ mod tests {
         width: f32,
         events: Vec<Event>,
     ) -> Frame {
+        frame_at(ctx, controls, start, seconds, width, 70., events)
+    }
+
+    /// Like `frame`, with playback at `position` seconds
+    fn frame_at(
+        ctx: &egui::Context,
+        controls: &mut VideoControls,
+        start: Instant,
+        seconds: f64,
+        width: f32,
+        position: f64,
+        events: Vec<Event>,
+    ) -> Frame {
         let canvas = Rect::from_min_size(Pos2::ZERO, vec2(width, HEIGHT));
         let state = VideoState {
             active: true,
-            position: 70.,
+            position,
             duration: 7200.,
             ..Default::default()
         };
@@ -1020,6 +1037,52 @@ mod tests {
             panic!("No seek in {:?}", released.commands);
         };
         assert!((seconds - expected).abs() < 1e-3, "{seconds} != {expected}");
+    }
+
+    #[test]
+    fn the_timeline_follows_playback_again_once_a_seek_lands() {
+        let ctx = egui::Context::default();
+        let mut controls = VideoControls::default();
+        let start = Instant::now();
+
+        frame(&ctx, &mut controls, start, 0., 800., Vec::new());
+        let timeline = timeline_rect(&ctx);
+        let pos = timeline.center();
+
+        let events = vec![Event::PointerMoved(pos), press(pos, true)];
+        frame(&ctx, &mut controls, start, 0.1, 800., events);
+        let released = frame(
+            &ctx,
+            &mut controls,
+            start,
+            0.2,
+            800.,
+            vec![press(pos, false)],
+        );
+        let Some(Command::Playback(PlaybackCommand::Seek(target))) =
+            released.commands.last().cloned()
+        else {
+            panic!("No seek in {:?}", released.commands);
+        };
+
+        // Playback reaches the target, then moves on from it
+        frame_at(&ctx, &mut controls, start, 0.3, 800., target, Vec::new());
+        frame_at(
+            &ctx,
+            &mut controls,
+            start,
+            0.4,
+            800.,
+            target + 5.,
+            Vec::new(),
+        );
+
+        let state = VideoState {
+            position: target + 5.,
+            ..Default::default()
+        };
+        assert!(controls.seek.is_none(), "The seek preview never settled");
+        assert_eq!(controls.displayed_position(&state), target + 5.);
     }
 
     #[test]
