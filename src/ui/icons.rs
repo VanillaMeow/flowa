@@ -1,6 +1,6 @@
 //! Lucide control icons, reusable widgets, and the Flowa flower logo
 
-use egui::{Color32, Pos2, Response, Sense, Ui, Vec2, vec2};
+use egui::{Color32, Pos2, Response, Sense, Ui, Vec2};
 
 use super::{
     rendering::icon_cache,
@@ -9,6 +9,9 @@ use super::{
 };
 
 pub const LICENSE: &str = include_str!("../../assets/icons/lucide/LICENSE");
+
+/// The diameter of a color swatch
+const SWATCH_SIZE: f32 = 33.;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Icon {
@@ -114,11 +117,21 @@ pub fn button(ui: &mut Ui, icon: Icon, label: &str, selected: bool) -> Response 
 /// A borderless icon button for secondary actions inside compact surfaces
 pub fn small_button(ui: &mut Ui, icon: Icon, label: &str) -> Response {
     let side = size::SMALL_ICON + space::SM;
-    let response = ui.add(
-        egui::Button::new("")
-            .min_size(Vec2::splat(side))
-            .frame_when_inactive(false),
-    );
+
+    // Small buttons skip the theme's control height, and without padding the square
+    // stays exactly `side` wide
+    let response = ui
+        .scope(|ui| {
+            ui.spacing_mut().button_padding = Vec2::ZERO;
+
+            ui.add(
+                egui::Button::new("")
+                    .small()
+                    .min_size(Vec2::splat(side))
+                    .frame_when_inactive(false),
+            )
+        })
+        .inner;
 
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label)
@@ -152,12 +165,16 @@ pub fn paint(
     icon_cache::paint(painter, icon, center, size, color);
 }
 
+/// A round button filled with `color`, checked when selected
 pub fn swatch(ui: &mut Ui, color: Color32, selected: bool, label: &str) -> Response {
+    // A small button skips the theme's control height, which would stretch the circle
+    // into a pill; egui caps the corner radius at half the side, making it round
     let response = ui.add(
         egui::Button::new("")
+            .small()
             .fill(color)
-            .min_size(vec2(31., 31.))
-            .corner_radius(16.),
+            .min_size(Vec2::splat(SWATCH_SIZE))
+            .corner_radius(SWATCH_SIZE / 2.),
     );
 
     if selected {
