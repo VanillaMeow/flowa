@@ -4,7 +4,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 
-use super::{PlayerCommand, VideoState, playback};
+use super::{PlayerCommand, VideoState, VideoTexture, playback};
 use crate::{
     settings::{SpeedPitch, VideoDecoder},
     viewer::adjustments::Adjustments,
@@ -14,7 +14,11 @@ use crate::{
 #[derive(Default)]
 pub struct VideoSession {
     pub state: VideoState,
+    /// The texture the canvas shows, sampled as `nearest` asks
     pub texture: Option<egui::TextureId>,
+    /// Both registrations of the shown frame
+    textures: Option<VideoTexture>,
+    nearest: bool,
     player: Option<playback::Player>,
     unavailable: Option<String>,
     notice: Option<String>,
@@ -86,7 +90,18 @@ impl VideoSession {
             pitch: self.state.pitch,
             ..Default::default()
         };
-        self.texture = None;
+        self.show_texture(None);
+    }
+
+    /// Samples frames with nearest-neighbor filtering instead of linear, at once
+    pub fn set_nearest(&mut self, nearest: bool) {
+        self.nearest = nearest;
+        self.show_texture(self.textures);
+    }
+
+    fn show_texture(&mut self, textures: Option<VideoTexture>) {
+        self.textures = textures;
+        self.texture = textures.map(|textures| textures.sampled(self.nearest));
     }
 
     /// Advances playback and prepares a frame without waiting for GPU completion
@@ -107,7 +122,7 @@ impl VideoSession {
 
         if self.state.ready() {
             match player.render(self.state.size) {
-                Ok(texture) => self.texture = texture,
+                Ok(textures) => self.show_texture(textures),
                 Err(error) => self.fail(error),
             }
         }
@@ -228,7 +243,7 @@ impl VideoSession {
         log::error!("Video playback: {error:#}");
         self.state.loading = false;
         self.state.error = Some(format!("{error:#}"));
-        self.texture = None;
+        self.show_texture(None);
     }
 }
 

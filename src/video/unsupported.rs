@@ -21,7 +21,7 @@ pub(super) mod playback {
 
     use crate::{
         settings::VideoDecoder,
-        video::{PlayerCommand, VideoState},
+        video::{PlayerCommand, VideoState, VideoTexture},
     };
 
     pub(in crate::video) enum Player {}
@@ -51,7 +51,7 @@ pub(super) mod playback {
             match *self {}
         }
 
-        pub fn render(&mut self, _size: [u32; 2]) -> Result<Option<egui::TextureId>> {
+        pub fn render(&mut self, _size: [u32; 2]) -> Result<Option<VideoTexture>> {
             match *self {}
         }
 

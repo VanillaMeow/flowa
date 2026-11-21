@@ -92,6 +92,7 @@ impl Flowa {
 
         if video_device {
             app.video = VideoSession::new(cc);
+            app.video.set_nearest(app.settings.values.nearest);
 
             if app.video.available() {
                 let values = &app.settings.values;
@@ -621,12 +622,20 @@ impl Flowa {
             self.ui.filmstrip.set_budget(budget);
         }
 
-        let nearest = self.settings.values.nearest;
-        if nearest != previous.nearest {
-            self.ui.canvas.renderer.set_sampling(&self.image, nearest);
+        if self.settings.values.nearest != previous.nearest {
+            self.apply_sampling();
         }
 
         self.preload_neighbors();
+    }
+
+    /// Samples images and videos with nearest-neighbor or linear filtering, as the
+    /// preference asks
+    pub(super) fn apply_sampling(&mut self) {
+        let nearest = self.settings.values.nearest;
+
+        self.ui.canvas.renderer.set_sampling(&self.image, nearest);
+        self.video.set_nearest(nearest);
     }
 
     fn show_dialogs(&mut self, ctx: &egui::Context) {

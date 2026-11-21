@@ -23,7 +23,7 @@ use super::{
 use crate::{
     settings::VideoDecoder,
     video::{
-        PlayerCommand, VideoState,
+        PlayerCommand, VideoState, VideoTexture,
         audio::AudioRuntime,
         decoding::available_decoders,
         gpu::{self, NativeGpu},
@@ -132,7 +132,7 @@ pub(in crate::video) struct Player {
     generation: u64,
     requested_size: Option<[u32; 2]>,
     status: Snapshot,
-    displayed: Option<egui::TextureId>,
+    displayed: Option<VideoTexture>,
     target: Option<Target>,
     decoders: DecoderDetection,
     audio_name: String,
@@ -268,7 +268,7 @@ impl Player {
         let Some(completed) = completed else { return };
         if completed.generation == self.generation {
             self.status = completed.status;
-            self.displayed = completed.target.as_ref().map(|target| target.id);
+            self.displayed = completed.target.as_ref().map(Target::textures);
             self.target = completed.target;
         }
         self.free_targets(completed.retired);
@@ -291,12 +291,12 @@ impl Player {
         self.apply_state(state);
     }
 
-    pub fn render(&mut self, size: [u32; 2]) -> Result<Option<egui::TextureId>> {
+    pub fn render(&mut self, size: [u32; 2]) -> Result<Option<VideoTexture>> {
         self.requested_size = Some(size);
         if let Driver::Inline(playback) = &mut self.driver {
             playback.render(size)?;
             let completed = Completed::new(playback, self.generation);
-            self.displayed = completed.target.as_ref().map(|target| target.id);
+            self.displayed = completed.target.as_ref().map(Target::textures);
             self.target = completed.target;
             self.free_targets(completed.retired);
         } else if self.target.as_ref().is_none_or(|target| {
@@ -368,6 +368,7 @@ impl Player {
 
         for target in targets {
             renderer.free_texture(&target.id);
+            renderer.free_texture(&target.nearest_id);
         }
     }
 }

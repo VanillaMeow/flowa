@@ -52,6 +52,21 @@ pub fn thumbnail(
     thumbnail::extract(path, generation, expected)
 }
 
+/// A video frame's texture, registered once per sampling filter so the canvas can
+/// switch between them at once, even while paused
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VideoTexture {
+    pub linear: egui::TextureId,
+    pub nearest: egui::TextureId,
+}
+
+impl VideoTexture {
+    /// The registration that samples with nearest-neighbor or linear filtering
+    pub fn sampled(self, nearest: bool) -> egui::TextureId {
+        if nearest { self.nearest } else { self.linear }
+    }
+}
+
 /// One audio or subtitle stream the user can choose
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Track {

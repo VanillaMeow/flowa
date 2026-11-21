@@ -81,6 +81,12 @@ impl Flowa {
             return;
         }
 
+        if command == ViewCommand::ToggleNearest {
+            self.settings.values.nearest = !self.settings.values.nearest;
+            self.apply_sampling();
+            return;
+        }
+
         let canvas = &mut self.ui.canvas;
 
         match command {
@@ -95,7 +101,7 @@ impl Flowa {
             }
             ViewCommand::FlipHorizontal => canvas.view.flip_horizontal(),
             ViewCommand::FlipVertical => canvas.view.flip_vertical(),
-            ViewCommand::Adjust(_) => {}
+            ViewCommand::ToggleNearest | ViewCommand::Adjust(_) => {}
         }
     }
 

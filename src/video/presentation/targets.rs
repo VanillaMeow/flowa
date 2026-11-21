@@ -8,14 +8,28 @@ use eframe::{
     wgpu::{self, hal},
 };
 
+use crate::video::VideoTexture;
+
 /// How many presentation textures the player cycles through
 pub(in crate::video) const TARGET_SLOTS: usize = 3;
 
-/// A presentation texture and its egui registration
+/// A presentation texture and its egui registrations
 #[derive(Clone)]
 pub(in crate::video) struct Target {
     pub texture: wgpu::Texture,
+    /// The linear registration, which identifies the target
     pub id: egui::TextureId,
+    /// The same texture sampled with nearest-neighbor filtering
+    pub nearest_id: egui::TextureId,
+}
+
+impl Target {
+    pub fn textures(&self) -> VideoTexture {
+        VideoTexture {
+            linear: self.id,
+            nearest: self.nearest_id,
+        }
+    }
 }
 
 /// A wgpu texture to draw into, lent between two values of a timeline semaphore
@@ -157,12 +171,26 @@ impl TargetRing {
                     ..Default::default()
                 });
             }
-            let id = self.graphics.renderer.write().register_native_texture(
-                &self.graphics.device,
+            // One registration per filter, so changing sampling needs no new frame
+            let mut renderer = self.graphics.renderer.write();
+            let device = &self.graphics.device;
+            let id = renderer.register_native_texture(
+                device,
                 &view,
                 wgpu::FilterMode::Linear,
             );
-            self.targets.push(Target { texture, id });
+            let nearest_id = renderer.register_native_texture(
+                device,
+                &view,
+                wgpu::FilterMode::Nearest,
+            );
+            drop(renderer);
+
+            self.targets.push(Target {
+                texture,
+                id,
+                nearest_id,
+            });
         }
 
         self.graphics.queue.submit([clear.finish()]);

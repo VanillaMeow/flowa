@@ -214,6 +214,11 @@ pub const FLIP_VERTICAL: Action = Action::new(
     Command::View(ViewCommand::FlipVertical),
     &[key(Key::V)],
 );
+pub const NEAREST: Action = Action::new(
+    "Nearest-neighbor sampling",
+    Command::View(ViewCommand::ToggleNearest),
+    &[key(Key::N)],
+);
 pub const FIT: Action = Action::new(
     "Fit to window",
     Command::View(ViewCommand::Fit),
@@ -317,6 +322,7 @@ pub const VIEWER: &[Action] = &[
     ROTATE,
     FLIP_HORIZONTAL,
     FLIP_VERTICAL,
+    NEAREST,
     FIT,
     ACTUAL_PIXELS,
     ZOOM_IN,

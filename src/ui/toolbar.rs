@@ -440,6 +440,9 @@ pub fn context_menu(
         action.menu(ui, true, commands);
     }
 
+    let nearest = &actions::NEAREST;
+    nearest.menu_label(ui, nearest.label, true, state.settings.nearest, commands);
+
     adjustments_menu(ui, state, commands);
 
     ui.separator();

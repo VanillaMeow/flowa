@@ -59,6 +59,8 @@ pub enum ViewCommand {
     RotateCounterclockwise,
     FlipHorizontal,
     FlipVertical,
+    /// Switches between nearest-neighbor and linear sampling, saved in the preferences
+    ToggleNearest,
     /// Brightness, contrast, saturation, and gamma for images and videos
     Adjust(Adjustments),
 }
