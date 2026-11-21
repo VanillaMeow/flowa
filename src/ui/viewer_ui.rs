@@ -42,11 +42,21 @@ impl ViewerUi {
 
     /// Whether the docked panels show; in fullscreen they reveal near the top edge, and
     /// near the bottom too while `bottom_reveal` asks for the docked strip or controls
-    pub fn controls_visible(&self, ctx: &egui::Context, bottom_reveal: bool) -> bool {
+    ///
+    /// Open menus keep them up so their buttons stay put, except menus opened from the
+    /// floating video controls, named by `overlay_menu`, which stay up on their own
+    pub fn controls_visible(
+        &self,
+        ctx: &egui::Context,
+        bottom_reveal: bool,
+        overlay_menu: bool,
+    ) -> bool {
+        let docked_menu = egui::Popup::is_any_open(ctx) && !overlay_menu;
+
         if !self.fullscreen
             || self.preferences.open
             || self.dialogs.is_open()
-            || egui::Popup::is_any_open(ctx)
+            || docked_menu
         {
             return true;
         }

@@ -24,7 +24,7 @@ pub fn button(
     state: &VideoState,
     colors: Colors,
     commands: &mut Vec<Command>,
-) {
+) -> egui::Response {
     let button = egui::Button::new("").min_size(Vec2::splat(size::CONTROL));
     let (response, _) = egui::containers::menu::MenuButton::from_button(button)
         .ui(ui, |ui| menu(ui, state, colors, commands));
@@ -50,7 +50,7 @@ pub fn button(
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), "Tracks")
     });
-    response.on_hover_text("Tracks");
+    response.on_hover_text("Tracks")
 }
 
 /// Every track list, each under a caption

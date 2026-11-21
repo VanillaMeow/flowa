@@ -8,8 +8,8 @@
 use std::time::{Duration, Instant};
 
 use egui::{
-    Align, Color32, CursorIcon, Id, Layout, Mesh, Order, Pos2, Rangef, Rect, Response,
-    RichText, Stroke, UiBuilder, pos2,
+    Align, AreaState, Color32, CursorIcon, Id, LayerId, Layout, Mesh, Order, Pos2,
+    Rangef, Rect, Response, RichText, Stroke, UiBuilder, pos2,
 };
 
 use crate::{
@@ -49,6 +49,8 @@ const BACKDROP_STEPS: usize = 16;
 /// Whether the floating controls are up and when they were last asked for
 #[derive(Default)]
 pub(super) struct OverlayState {
+    /// Whether this frame floats the controls, decided before anything is drawn
+    active: bool,
     /// When the pointer last moved or pressed over the video
     pointer_activity: Option<Instant>,
     /// Where the pointer was last frame, so entering the window counts as a move
@@ -59,6 +61,8 @@ pub(super) struct OverlayState {
     /// How far up from the canvas bottom subtitles keep clear this frame
     clearance: f32,
     volume_open: bool,
+    /// Popups the row's menu buttons open, which must not reveal fullscreen panels
+    menus: Vec<Id>,
 }
 
 /// Everything the floating controls show, and the thumbnail strip below them
@@ -193,6 +197,24 @@ impl VideoControls {
         self.overlay.flashed = Some(now);
     }
 
+    /// Notes a frame without floating controls, so the next frame that floats them
+    /// starts fully shown
+    pub fn leave_overlay(&mut self) {
+        self.overlay.active = false;
+        self.overlay.menus.clear();
+    }
+
+    /// Whether a menu opened from the floating controls is open, which needs no
+    /// docked panels revealed around it
+    pub fn overlay_menu_open(&self, ctx: &egui::Context) -> bool {
+        self.overlay.active
+            && self
+                .overlay
+                .menus
+                .iter()
+                .any(|&popup| egui::Popup::is_id_open(ctx, popup))
+    }
+
     /// Decides whether the floating controls are up this frame, before the canvas
     /// paints subtitles around them
     ///
@@ -206,13 +228,22 @@ impl VideoControls {
         pinned: bool,
         now: Instant,
     ) -> f32 {
+        // Arriving from docked panels, such as an image's strip, shows the controls at
+        // once, so the strip stays on screen rather than fading back in
+        let arriving = !self.overlay.active;
+        self.overlay.active = true;
+
+        if arriving {
+            self.overlay.flashed = Some(now);
+        }
+
         let layout = OverlayLayout::new(canvas, strip);
         let visible = self.overlay_wanted(ctx, canvas, &layout, pinned, now);
 
-        let (target, duration) = if visible {
-            (1., motion::FADE_IN)
-        } else {
-            (0., HIDE_FADE)
+        let (target, duration) = match (visible, arriving) {
+            (true, true) => (1., 0.),
+            (true, false) => (1., motion::FADE_IN),
+            (false, _) => (0., HIDE_FADE),
         };
         let opacity =
             ctx.animate_value_with_time(overlay_id().with("opacity"), target, duration);
@@ -268,15 +299,22 @@ impl VideoControls {
         content: OverlayContent<'_>,
         commands: &mut Vec<Command>,
     ) {
+        // A file opened partway through the frame floats its controls from the next
+        if !self.overlay.active {
+            return;
+        }
+
         let opacity = self.overlay.opacity;
 
         if opacity <= 0. {
+            self.overlay.menus.clear();
             hide_cursor(ctx, content.canvas);
             return;
         }
 
         let layout = OverlayLayout::new(content.canvas, content.strip.is_some());
         let palette = Palette::new(content.backdrop, content.colors);
+        presize_area(ctx, &layout);
 
         // Background order keeps the overlay above the canvas but below windows such
         // as preferences, while still taking the pointer from the canvas beneath
@@ -378,17 +416,25 @@ impl VideoControls {
         self.overlay_volume(ui, state, volume_room, palette, commands);
         time_readout(ui, &time, palette);
 
+        self.overlay.menus.clear();
+
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             fullscreen_button(ui, row.fullscreen, commands);
 
             ui.add_enabled_ui(state.ready(), |ui| {
                 // The track menu opens as a themed popup, so it takes the theme colors
                 if show_tracks {
-                    tracks::button(ui, state, row.colors, commands);
+                    let button = tracks::button(ui, state, row.colors, commands);
+                    self.overlay
+                        .menus
+                        .push(egui::Popup::default_response_id(&button));
                 }
 
                 if show_speed {
-                    speed_menu(ui, state.rate, state.pitch, commands);
+                    let button = speed_menu(ui, state.rate, state.pitch, commands);
+                    self.overlay
+                        .menus
+                        .push(egui::Popup::default_response_id(&button));
                 }
             });
         });
@@ -641,6 +687,23 @@ fn paint_backdrop(
     ui.painter().with_clip_rect(canvas).add(mesh);
 }
 
+/// Gives egui the overlay's size before it first shows, since an area of unknown size
+/// spends its first frame measuring itself invisibly, which would blink the strip
+fn presize_area(ctx: &egui::Context, layout: &OverlayLayout) {
+    if AreaState::load(ctx, overlay_id()).is_some() {
+        return;
+    }
+
+    let state = AreaState {
+        pivot_pos: Some(layout.controls.min),
+        size: Some(layout.controls.size()),
+        ..Default::default()
+    };
+    let layer = LayerId::new(Order::Background, overlay_id());
+
+    ctx.memory_mut(|memory| memory.areas_mut().set_state(layer, state));
+}
+
 /// Hides the pointer over the video while the controls are hidden, as players do
 fn hide_cursor(ctx: &egui::Context, canvas: Rect) {
     let over_canvas = ctx
@@ -830,20 +893,79 @@ mod tests {
         let mut controls = VideoControls::default();
         let start = Instant::now();
 
+        // Let the controls shown on arrival time out first
         frame(&ctx, &mut controls, start, 0., 800., Vec::new());
+        frame(&ctx, &mut controls, start, 3., 800., Vec::new());
         assert_eq!(
-            frame(&ctx, &mut controls, start, 0.5, 800., Vec::new()).clearance,
+            frame(&ctx, &mut controls, start, 3.5, 800., Vec::new()).clearance,
             0.
         );
 
-        controls.flash_overlay(start + Duration::from_secs(1));
-        frame(&ctx, &mut controls, start, 1., 800., Vec::new());
-        let flashed = frame(&ctx, &mut controls, start, 1.5, 800., Vec::new());
+        controls.flash_overlay(start + Duration::from_secs(4));
+        frame(&ctx, &mut controls, start, 4., 800., Vec::new());
+        let flashed = frame(&ctx, &mut controls, start, 4.5, 800., Vec::new());
         assert!(flashed.clearance > 0.);
 
-        frame(&ctx, &mut controls, start, 4., 800., Vec::new());
-        let faded = frame(&ctx, &mut controls, start, 4.5, 800., Vec::new());
+        frame(&ctx, &mut controls, start, 7., 800., Vec::new());
+        let faded = frame(&ctx, &mut controls, start, 7.5, 800., Vec::new());
         assert_eq!(faded.clearance, 0.);
+    }
+
+    #[test]
+    fn arriving_from_docked_panels_shows_the_controls_at_once() {
+        let ctx = egui::Context::default();
+        let mut controls = VideoControls::default();
+        let start = Instant::now();
+
+        let first = frame(&ctx, &mut controls, start, 0., 800., Vec::new());
+        let full = OverlayLayout::new(first.canvas, false).controls.height();
+        assert_eq!(first.clearance, full, "The controls faded in");
+
+        // Leaving and coming back shows them at once again, even after they hid
+        frame(&ctx, &mut controls, start, 3., 800., Vec::new());
+        frame(&ctx, &mut controls, start, 3.5, 800., Vec::new());
+        controls.leave_overlay();
+        let back = frame(&ctx, &mut controls, start, 4., 800., Vec::new());
+        assert_eq!(back.clearance, full);
+    }
+
+    #[test]
+    fn menus_opened_from_the_controls_are_known_as_theirs() {
+        let ctx = egui::Context::default();
+        let mut controls = VideoControls::default();
+        let start = Instant::now();
+        let width = 800.;
+
+        frame(&ctx, &mut controls, start, 0., width, Vec::new());
+        assert!(!controls.overlay_menu_open(&ctx));
+
+        // The speed button sits just left of the fullscreen button
+        let inset = f32::from(margin::BOTTOM_PANEL.left);
+        let row_center =
+            HEIGHT - f32::from(margin::BOTTOM_PANEL.bottom) - size::CONTROL / 2.;
+        let speed = Pos2::new(width - inset - size::CONTROL - 24., row_center);
+
+        let events = vec![Event::PointerMoved(speed), press(speed, true)];
+        frame(&ctx, &mut controls, start, 0.1, width, events);
+        frame(
+            &ctx,
+            &mut controls,
+            start,
+            0.2,
+            width,
+            vec![press(speed, false)],
+        );
+        frame(&ctx, &mut controls, start, 0.3, width, Vec::new());
+
+        assert!(
+            egui::Popup::is_any_open(&ctx),
+            "The speed menu did not open"
+        );
+        assert!(controls.overlay_menu_open(&ctx));
+
+        // Leaving the overlay disowns its menus
+        controls.leave_overlay();
+        assert!(!controls.overlay_menu_open(&ctx));
     }
 
     #[test]

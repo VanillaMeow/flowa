@@ -439,6 +439,7 @@ impl Flowa {
     /// subtitles must keep clear of them
     fn update_video_overlay(&mut self, ctx: &egui::Context) -> f32 {
         if !self.overlay_controls() {
+            self.ui.video_controls.leave_overlay();
             return 0.;
         }
 
@@ -458,11 +459,9 @@ impl Flowa {
         self.settings.values.filmstrip && !self.browser.entries().is_empty()
     }
 
+    /// Draws the floating controls when the frame started with them, even if a click
+    /// since opened another file, so the strip never skips a frame
     fn show_video_overlay(&mut self, ctx: &egui::Context) {
-        if !self.overlay_controls() {
-            return;
-        }
-
         let show_strip = self.floating_strip();
         let content = OverlayContent {
             canvas: self.ui.canvas.rect,
@@ -481,14 +480,18 @@ impl Flowa {
     }
 
     fn show_viewer_controls(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        // Decided once per frame, before a toolbar or strip click can open another file
         let overlay = self.overlay_controls();
+        let docked_controls =
+            self.settings.values.video_controls != VideoControlsStyle::Overlay;
 
         // Fullscreen reveals docked bottom panels from the bottom edge, which floating
         // controls handle themselves
         let docked_bottom = self.video.state.active || self.settings.values.filmstrip;
         let bottom_reveal = docked_bottom && !overlay;
+        let overlay_menu = self.ui.video_controls.overlay_menu_open(ctx);
 
-        if !self.ui.controls_visible(ctx, bottom_reveal) {
+        if !self.ui.controls_visible(ctx, bottom_reveal, overlay_menu) {
             return;
         }
 
@@ -508,7 +511,7 @@ impl Flowa {
         }
 
         // Bottom panels are allocated outside-in, so transport follows the filmstrip
-        if self.video.state.active && !overlay {
+        if self.video.state.active && docked_controls {
             let compact =
                 self.settings.values.video_controls == VideoControlsStyle::Compact;
             self.ui.video_controls.show(

@@ -269,7 +269,7 @@ impl VideoControls {
 
         if show_speed {
             ui.add_enabled_ui(state.ready(), |ui| {
-                speed_menu(ui, state.rate, state.pitch, commands)
+                speed_menu(ui, state.rate, state.pitch, commands);
             });
         }
 
@@ -403,7 +403,7 @@ fn speed_menu(
     rate: f64,
     pitch: SpeedPitch,
     commands: &mut Vec<Command>,
-) {
+) -> Response {
     let label = RichText::new(rate_label(rate)).monospace();
     let button =
         egui::Button::new(label).min_size(vec2(speed_width(ui), size::CONTROL));
@@ -419,7 +419,7 @@ fn speed_menu(
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), "Playback speed")
     });
-    response.on_hover_text(shortcuts);
+    response.on_hover_text(shortcuts)
 }
 
 /// The pitch choice, buttons for common speeds, and the speed slider, for the speed
