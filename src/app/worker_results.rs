@@ -156,6 +156,7 @@ mod tests {
             filmstrip: false,
             info: false,
             zoom: None,
+            reset_window_size: false,
         };
         let mut app = Flowa::create(
             ctx.clone(),

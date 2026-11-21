@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Context, Result};
 
-use crate::settings::Settings;
+use crate::settings::{Settings, migrations};
 
 pub struct SettingsStore {
     pub values: Settings,
@@ -23,12 +23,22 @@ impl SettingsStore {
             .map(|p| p.config_dir().join("settings.json"))
     }
 
+    /// Reads the preferences, bringing older ones up to date
+    ///
+    /// Updated preferences are written back at once, since the store treats what it
+    /// starts with as saved; current ones are not rewritten
     pub fn load(path: &Path) -> Result<Settings> {
         let contents = std::fs::read(path).context("Could not read preferences")?;
         let mut settings: Settings =
             serde_json::from_slice(&contents).context("Could not parse preferences")?;
 
         settings.validate();
+
+        if migrations::migrate(&mut settings)
+            && let Err(error) = Self::save(&settings, path)
+        {
+            log::warn!("Could not save updated preferences: {error:#}");
+        }
 
         Ok(settings)
     }

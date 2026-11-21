@@ -32,7 +32,13 @@ pub fn run(
         loader.preload(path);
     }
 
-    let window_size = settings.window_size;
+    // The saved size stays as it was, so the store sees the new window differ from it
+    // and saves it like any resize
+    let window_size = if launch.reset_window_size {
+        settings.default_window_size()
+    } else {
+        settings.window_size
+    };
     let mut options = native_options(window_size);
     let renderer = settings.renderer;
 
@@ -241,6 +247,7 @@ mod tests {
                 filmstrip: false,
                 info: false,
                 zoom: None,
+                reset_window_size: false,
             },
             loader: Loader::new(Settings::default().memory_budget()),
         });

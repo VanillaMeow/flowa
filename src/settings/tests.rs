@@ -5,7 +5,7 @@ mod model {
 
     use crate::settings::{
         Canvas, OverlayBackdrop, RendererPreference, Settings, SortOrder, Theme,
-        VideoControlsStyle, VideoDecoder,
+        VideoControlsStyle, VideoDecoder, migrations,
     };
 
     #[test]
@@ -43,19 +43,39 @@ mod model {
     }
 
     #[test]
-    fn a_window_left_at_the_old_default_moves_to_the_new_one() -> Result<()> {
+    fn older_preferences_migrate_to_the_current_version() -> Result<()> {
+        // Files from before versions are version 0; only an untouched old default
+        // window moves to the new one
         for (saved, expected) in [
             ([1200., 820.], [1280., 810.]),
             ([1000., 700.], [1000., 700.]),
         ] {
             let json = format!("{{\"window_size\":[{},{}]}}", saved[0], saved[1]);
             let mut s: Settings = serde_json::from_str(&json)?;
-            s.validate();
 
+            assert_eq!(s.version, 0);
+            assert!(migrations::migrate(&mut s));
+            assert_eq!(s.version, migrations::CURRENT);
             assert_eq!(s.window_size, expected);
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn current_and_newer_preferences_are_left_alone() {
+        let mut current = Settings::default();
+        assert!(!migrations::migrate(&mut current));
+
+        // A newer build's preferences keep their version for when it runs again
+        let mut newer = Settings {
+            version: migrations::CURRENT + 1,
+            window_size: [1200., 820.],
+            ..Default::default()
+        };
+        assert!(!migrations::migrate(&mut newer));
+        assert_eq!(newer.version, migrations::CURRENT + 1);
+        assert_eq!(newer.window_size, [1200., 820.]);
     }
 
     #[test]
@@ -98,6 +118,28 @@ mod store {
         Accent, OverlayBackdrop, RendererPreference, Settings, SettingsStore, Theme,
         VideoControlsStyle, VideoDecoder,
     };
+
+    #[test]
+    fn loading_writes_migrated_preferences_back_once() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, "{\"window_size\":[1200,820]}")?;
+
+        // The store treats what it loads as saved, so the update is written at once
+        let loaded = SettingsStore::load(&path)?;
+        let written: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path)?)?;
+        assert_eq!(written["version"], loaded.version);
+        assert_eq!(written["window_size"], serde_json::json!([1280., 810.]));
+
+        // Current preferences are not rewritten
+        std::fs::write(&path, serde_json::to_vec(&loaded)?)?;
+        let before = std::fs::read(&path)?;
+        SettingsStore::load(&path)?;
+        assert_eq!(std::fs::read(&path)?, before);
+
+        Ok(())
+    }
 
     #[test]
     fn persisting_changed_settings_preserves_user_preferences() -> Result<()> {

@@ -10,6 +10,8 @@ pub struct Launch {
     pub filmstrip: bool,
     pub info: bool,
     pub zoom: Option<f32>,
+    /// Opens the window at its default size instead of the saved one
+    pub reset_window_size: bool,
 }
 
 impl Launch {

@@ -287,13 +287,14 @@ pub const WINDOW_HEIGHT: RangeInclusive<f32> = 400.0..=4320.0;
 /// The 58-point toolbar and 32-point status bar leave a 1280 × 720 canvas, which a
 /// 16:9 video fills edge to edge
 const DEFAULT_WINDOW_SIZE: [f32; 2] = [1280.0, 810.0];
-/// The default before it was sized for 16:9 videos
-const OLD_DEFAULT_WINDOW_SIZE: [f32; 2] = [1200.0, 820.0];
 pub const RECENT_LIMIT: usize = 12;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    /// Which migrations the preferences have had; files from before versions are 0
+    #[serde(default)]
+    pub version: u32,
     pub theme: Theme,
     pub accent: Accent,
     pub canvas: Canvas,
@@ -338,6 +339,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            version: super::migrations::CURRENT,
             theme: Theme::System,
             accent: Accent::Theme,
             canvas: Canvas::Theme,
@@ -383,12 +385,6 @@ impl Settings {
         self.window_size[1] = clamp(self.window_size[1], &WINDOW_HEIGHT);
         self.recent.truncate(RECENT_LIMIT);
 
-        // A window still at the old default was most likely never resized, so it moves
-        // to the new one; any other size was chosen and stays
-        if self.window_size == OLD_DEFAULT_WINDOW_SIZE {
-            self.window_size = DEFAULT_WINDOW_SIZE;
-        }
-
         if !RendererPreference::SUPPORTED.contains(&self.renderer) {
             self.renderer = RendererPreference::Auto;
         }
@@ -402,6 +398,17 @@ impl Settings {
                 VideoControlsStyle::TwoRows
             };
         }
+    }
+
+    /// The default window size in native points, enlarged with the interface so the
+    /// canvas below the toolbar stays 16:9
+    pub fn default_window_size(&self) -> [f32; 2] {
+        let [width, height] = DEFAULT_WINDOW_SIZE;
+
+        [
+            clamp(width * self.ui_scale, &WINDOW_WIDTH),
+            clamp(height * self.ui_scale, &WINDOW_HEIGHT),
+        ]
     }
 
     /// The decoded image memory limit in bytes

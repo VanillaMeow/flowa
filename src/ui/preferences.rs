@@ -178,6 +178,15 @@ fn viewing(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors) {
         );
     });
 
+    section(ui, "Window", colors, |ui| {
+        reset_window_button(ui, settings);
+        hint(
+            ui,
+            "The default size fits a 16:9 video in the canvas",
+            colors,
+        );
+    });
+
     section(ui, "History", colors, |ui| {
         ui.checkbox(&mut settings.reopen_last, "Reopen the last image on launch");
         ui.add_space(space::XS);
@@ -188,6 +197,29 @@ fn viewing(ui: &mut egui::Ui, settings: &mut Settings, colors: Colors) {
             settings.recent.clear();
         }
     });
+}
+
+/// Returns the window to its default size at once
+fn reset_window_button(ui: &mut egui::Ui, settings: &Settings) {
+    let fullscreen = ui.input(|input| input.viewport().fullscreen.unwrap_or(false));
+    let button = egui::Button::new("Reset window size");
+    let response = ui
+        .add_enabled(!fullscreen, button)
+        .on_disabled_hover_text("Leave fullscreen first");
+
+    if !response.clicked() {
+        return;
+    }
+
+    // The default is in native points and viewport commands take interface points,
+    // which grow with the interface size just as the toolbar does
+    let size =
+        egui::Vec2::from(settings.default_window_size()) / ui.ctx().zoom_factor();
+
+    ui.ctx()
+        .send_viewport_cmd(egui::ViewportCommand::Maximized(false));
+    ui.ctx()
+        .send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
 }
 
 fn performance(

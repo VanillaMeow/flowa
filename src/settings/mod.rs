@@ -1,5 +1,6 @@
 //! Configuration values, validation, and persistence
 
+mod migrations;
 mod model;
 mod store;
 

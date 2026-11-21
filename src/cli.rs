@@ -29,6 +29,10 @@ pub struct Cli {
     #[arg(long, value_name = "NAME", value_parser = parse_theme)]
     pub theme: Option<Theme>,
 
+    /// Open the window at its default size
+    #[arg(long)]
+    reset_window_size: bool,
+
     #[arg(long, hide = true, value_name = "PERCENT", value_parser = parse_zoom)]
     zoom: Option<f32>,
 }
@@ -41,6 +45,7 @@ impl Cli {
             filmstrip: self.filmstrip,
             info: self.info,
             zoom: self.zoom,
+            reset_window_size: self.reset_window_size,
         }
     }
 }
