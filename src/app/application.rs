@@ -341,8 +341,15 @@ impl eframe::App for Flowa {
         let ctx = ui.ctx().clone();
 
         self.update_session(&ctx);
-        let subtitle_clearance = self.update_video_overlay(&ctx);
-        self.show_viewer_controls(ui, &ctx);
+
+        // Decided once per frame, before a toolbar or strip click can open another file
+        let overlay = self.overlay_controls();
+        self.show_viewer_controls(ui, &ctx, overlay);
+
+        // The canvas fills what the panels leave, so the overlay is placed in this
+        // frame's canvas rather than the last one's
+        let canvas = ui.available_rect_before_wrap();
+        let subtitle_clearance = self.update_video_overlay(&ctx, canvas, overlay);
         self.show_canvas(ui, &ctx, subtitle_clearance);
         self.show_video_overlay(&ctx);
         self.show_preferences(&ctx);
@@ -437,8 +444,13 @@ impl Flowa {
 
     /// Decides whether floating controls show this frame and returns how far
     /// subtitles must keep clear of them
-    fn update_video_overlay(&mut self, ctx: &egui::Context) -> f32 {
-        if !self.overlay_controls() {
+    fn update_video_overlay(
+        &mut self,
+        ctx: &egui::Context,
+        canvas: egui::Rect,
+        overlay: bool,
+    ) -> f32 {
+        if !overlay {
             self.ui.video_controls.leave_overlay();
             return 0.;
         }
@@ -447,7 +459,7 @@ impl Flowa {
 
         self.ui.video_controls.update_overlay(
             ctx,
-            self.ui.canvas.rect,
+            canvas,
             self.floating_strip(),
             pinned,
             Instant::now(),
@@ -479,9 +491,14 @@ impl Flowa {
         self.handle_commands(commands, ctx);
     }
 
-    fn show_viewer_controls(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        // Decided once per frame, before a toolbar or strip click can open another file
-        let overlay = self.overlay_controls();
+    /// Shows the docked panels; `overlay` says whether this frame floats the video
+    /// controls instead
+    fn show_viewer_controls(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        overlay: bool,
+    ) {
         let docked_controls =
             self.settings.values.video_controls != VideoControlsStyle::Overlay;
 
@@ -489,7 +506,7 @@ impl Flowa {
         // controls handle themselves
         let docked_bottom = self.video.state.active || self.settings.values.filmstrip;
         let bottom_reveal = docked_bottom && !overlay;
-        let overlay_menu = self.ui.video_controls.overlay_menu_open(ctx);
+        let overlay_menu = overlay && self.ui.video_controls.overlay_menu_open(ctx);
 
         if !self.ui.controls_visible(ctx, bottom_reveal, overlay_menu) {
             return;

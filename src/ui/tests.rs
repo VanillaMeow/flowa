@@ -367,6 +367,52 @@ mod canvas {
     }
 
     #[test]
+    fn the_canvas_fills_exactly_the_space_the_panels_leave() {
+        let ctx = egui::Context::default();
+        let mut canvas = ImageCanvas::new(ctx.clone(), false);
+        let colors = theme::colors(Theme::Charcoal, Accent::Theme, true);
+        let image = ImageSession::new();
+        let settings = Settings::default();
+        let video = VideoSession::default();
+
+        let viewport = Rect::from_min_size(Pos2::ZERO, vec2(1280., 720.));
+        let input = egui::RawInput {
+            screen_rect: Some(viewport),
+            ..Default::default()
+        };
+        let mut remaining = Rect::NOTHING;
+
+        // The app places floating video controls in the space left after the panels,
+        // before the canvas claims it
+        let mut output = ctx.run_ui(input, |ui| {
+            egui::Panel::top("toolbar").exact_size(58.).show(ui, |ui| {
+                ui.label("Toolbar");
+            });
+            egui::Panel::bottom("strip")
+                .exact_size(120.)
+                .show(ui, |ui| {
+                    ui.label("Strip");
+                });
+            remaining = ui.available_rect_before_wrap();
+
+            let content = CanvasContent {
+                image: &image,
+                video: &video,
+                settings: &settings,
+                colors,
+                can_navigate: false,
+                fullscreen: false,
+                subtitle_clearance: 0.,
+            };
+            canvas.show(ui, content, &mut Vec::new());
+        });
+        output.textures_delta.clear();
+
+        assert!(remaining.height() < viewport.height(), "{remaining:?}");
+        assert_eq!(canvas.rect, remaining);
+    }
+
+    #[test]
     fn a_video_waiting_for_its_first_frame_shows_the_spinner_only_after_a_delay() {
         let ctx = egui::Context::default();
         let mut canvas = ImageCanvas::new(ctx.clone(), false);
